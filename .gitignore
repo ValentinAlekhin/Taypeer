@@ -1,0 +1,78 @@
+# Build output, including future isolated spikes.
+**/target/
+/dist/
+/artifacts/
+**/node_modules/
+**/.gradle/
+**/.kotlin/
+**/local.properties
+**/.cxx/
+**/.externalNativeBuild/
+*.apk
+*.aab
+*.dmg
+
+# Python tooling used by design and spike scripts.
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local caches and temporary/editor files.
+.pnpm-store/
+.cache/
+/tmp/
+/temp/
+*.tmp
+*.swp
+*.swo
+*~
+
+# Local upstream checkouts: provenance is tracked in docs/references.md.
+/ref/
+
+# Local configuration and credentials.
+.DS_Store
+.idea/
+.vscode/
+.env
+.env.*
+!.env.example
+.envrc
+.direnv/
+.npmrc
+.pypirc
+.cargo/credentials
+.cargo/credentials.toml
+# Keep the shared MCP setup; other Codex state belongs to the local session.
+/.codex/*
+!/.codex/config.toml
+*.log
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.mobileprovision
+*.provisionprofile
+
+# Never commit personal vaults, key files, drafts or backup copies.
+*.taypeer
+*.taypeer.*
+# Keep protecting files created under the former project name.
+*.pass2p
+*.pass2p.*
+*.kdbx
+*.kdbx.*
+*.keyx
+/local-data/
+
+# Reproducible synthetic fixtures may be committed deliberately here.
+!tests/fixtures/**/
+!tests/fixtures/**/*.taypeer
+!tests/fixtures/**/*.pass2p
+!tests/fixtures/**/*.kdbx
+!tests/fixtures/**/*.keyx

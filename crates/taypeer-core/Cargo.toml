@@ -1,0 +1,10 @@
+[package]
+name = "taypeer-core"
+description = "Platform-independent Taypeer domain core (scaffold)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,13 @@
+[package]
+name = "taypeer"
+description = "Taypeer application bootstrap (no vault functionality yet)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+taypeer-core.workspace = true
+
+[lints]
+workspace = true

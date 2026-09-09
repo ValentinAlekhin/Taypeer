@@ -1,0 +1,6 @@
+* text=auto eol=lf
+*.png binary
+*.fig binary
+*.taypeer binary
+*.pass2p binary
+*.kdbx binary

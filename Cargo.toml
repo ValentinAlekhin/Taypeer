@@ -1,0 +1,25 @@
+[workspace]
+members = ["crates/taypeer-core", "apps/taypeer"]
+default-members = ["apps/taypeer"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.93"
+publish = false
+
+[workspace.dependencies]
+taypeer-core = { path = "crates/taypeer-core" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
