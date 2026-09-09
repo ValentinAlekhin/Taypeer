@@ -25,6 +25,10 @@ rtk sh scripts/build-macos.sh
 rtk open -n "target/Taypeer Demo.app"
 ```
 
+Скрипт включает [иконку Taypeer](../wireframes/assets/taypeer-app-icon-v1.md)
+в ресурсы `.app`. Штатные `sips` и `iconutil` создают `.icns` из исходного PNG
+для обычных и Retina-экранов; производные файлы остаются в `target/`.
+
 Сборка требует macOS 15+ ARM64; проверка на более новой macOS не заменяет
 отдельную приёмку macOS 15. Это локальная демонстрационная сборка, не DMG
 и не подписанный выпуск.
