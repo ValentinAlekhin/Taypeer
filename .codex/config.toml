@@ -1,0 +1,7 @@
+[mcp_servers.likec4]
+command = "pnpm"
+args = ["exec", "likec4", "mcp", "--stdio", "architecture"]
+# Project config paths are relative to this .codex directory.
+cwd = ".."
+startup_timeout_sec = 30
+tool_timeout_sec = 60

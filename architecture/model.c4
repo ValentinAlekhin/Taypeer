@@ -1,0 +1,189 @@
+model {
+  owner = person 'Владелец' { #external }
+  peer = external 'Другое устройство владельца' {
+    #external
+    description 'Другая установка Taypeer; связь требует одновременной доступности.'
+  }
+  relay = external 'Разрешённый relay' {
+    #external
+    description 'Маршрут обмена при разрешении пользователя; не хранилище БД.'
+  }
+  macos = external 'macOS' { #external }
+  androidos = external 'Android' { #external }
+  files = external 'Выбранные файлы' { #external }
+  websites = external 'Источники иконок' { #external }
+
+  taypeer = system 'Taypeer' {
+    #planned
+    description 'Архитектура первой версии. Статусы и evidence относятся к разным видам доказательств.'
+    metadata { contract 'spec.md' }
+
+    mac = app 'Приложение macOS' {
+      #scaffold
+      technology 'Rust; целевой UI: GPUI + GPUI Kit'
+      style { color amber; border solid }
+      description 'Существует только bootstrap; продуктовый интерфейс ещё не реализован.'
+      metadata {
+        source 'apps/taypeer/src/main.rs'
+        evidence 'spikes/gpui-android/MACOS-2026-09-09.md'
+        contract 'docs/architecture.md'
+      }
+    }
+    android = app 'Приложение Android' {
+      #planned
+      technology 'Kotlin + Jetpack Compose / AndroidX'
+      description 'Отдельный UI с общими Rust-сценариями. APK в spike — исследовательский стенд.'
+      metadata { evidence 'spikes/android-compose/REPORT.md'; contract 'docs/architecture.md' }
+    }
+    ffi = component 'Адаптер UniFFI' {
+      #planned
+      technology 'Rust + UniFFI'
+      description 'Команды, ограниченные представления и события для Android.'
+      metadata { evidence 'spikes/android-compose/REPORT.md'; contract 'docs/architecture.md' }
+    }
+    core = component 'Ядро предметной области' {
+      #scaffold
+      technology 'Rust'
+      style { color amber; border solid }
+      description 'Crate существует, типов и публичного API пока нет. Будущие правила объектов и конфликтов.'
+      metadata { source 'crates/taypeer-core/src/lib.rs'; contract 'docs/data-model.md' }
+    }
+    sessions = component 'Сессии и сценарии БД' {
+      #planned
+      technology 'Rust'
+      description 'Координация локальных команд, блокировки, применения и восстановления.'
+      metadata { contract 'docs/architecture.md' }
+    }
+    document = component 'Документ и объединение' {
+      #planned
+      technology 'Rust + Automerge'
+      description 'Адаптер CRDT, история и конфликтующие варианты.'
+      metadata { contract 'docs/data-model.md'; evidence 'spikes/encrypted-sync/REPORT.md' }
+    }
+    crypto = component 'Защита содержимого' {
+      #planned
+      technology 'Rust; KDF: Argon2id'
+      description 'Подготовка ключей, шифрование и расшифровка в разблокированной сессии.'
+      metadata { contract 'docs/architecture.md'; evidence 'spikes/encrypted-sync/REPORT.md' }
+    }
+    storage = component 'Хранение контейнера' {
+      #planned
+      technology 'Rust'
+      description 'Чтение, надёжная запись, зашифрованная очередь и резервные снимки.'
+      metadata { contract 'docs/data-model.md'; evidence 'spikes/encrypted-sync/REPORT.md' }
+    }
+    sync = component 'Зашифрованный обмен' {
+      #planned
+      technology 'Rust + Iroh'
+      description 'Получение и пересылка, включая заблокированную БД; без ключей чтения.'
+      metadata { contract 'docs/architecture.md'; evidence 'spikes/encrypted-sync/REPORT.md' }
+    }
+    trust = component 'Допуск и управление' {
+      #planned
+      technology 'Rust'
+      description 'Проверка подписанного управления, приглашения и переходы доверия.'
+      metadata { contract 'docs/compatibility.md'; evidence 'spikes/encrypted-sync/REPORT.md' }
+    }
+    evolution = component 'Эволюция и восстановление' {
+      #planned
+      technology 'Rust'
+      description 'Совместимость, переходы схемы и обработка отложенных источников.'
+      metadata { contract 'docs/compatibility.md' }
+    }
+    kdbx = component 'Перенос KDBX' {
+      #planned
+      technology 'Rust'
+      description 'Преобразование поддерживаемых данных и отчёт потерь.'
+      metadata { contract 'spec.md#импорт-и-экспорт-kdbx' }
+    }
+    generator = component 'Генератор секретов' {
+      #planned
+      technology 'Rust'
+      description 'Пароли и фразы из встроенного словаря с криптографическим источником случайности.'
+      metadata { contract 'spec.md' }
+    }
+    theme = component 'Тема и локальные настройки' {
+      #planned
+      description 'Общий источник палитр; адаптация к каждому фронтенду.'
+      metadata { contract 'spec.md#тема-интерфейса' }
+    }
+    iconLoader = component 'Загрузка иконок' {
+      #planned
+      description 'Загрузка только по явному действию, результат входит в правки записи.'
+      metadata { contract 'spec.md' }
+    }
+    macPlatform = component 'Адаптеры macOS' {
+      #planned
+      technology 'Rust + API macOS'
+      description 'Файлы, биометрия, ключи устройства, буфер и lifecycle.'
+      metadata { contract 'docs/architecture.md' }
+    }
+    androidPlatform = component 'Адаптеры Android' {
+      #planned
+      technology 'Kotlin + AndroidX'
+      description 'SAF, Keystore, биометрия, буфер, lifecycle и фоновые задания.'
+      metadata { contract 'docs/architecture.md' }
+    }
+    vault = store 'Рабочий файл .taypeer' {
+      #planned
+      description 'Переносимое зашифрованное состояние одной БД.'
+      metadata { contract 'docs/data-model.md#1-границы-хранения' }
+    }
+    local = store 'Локальное состояние устройства' {
+      #planned
+      description 'Раздельное хранение приватных допусков, биометрии, зашифрованных черновиков и настроек.'
+      metadata { contract 'docs/data-model.md#8-локальная-модель' }
+    }
+    backups = store 'Резервные снимки' {
+      #planned
+      description 'Отдельные зашифрованные файлы; правила хранения задаёт спецификация.'
+      metadata { contract 'spec.md#резервные-копии' }
+    }
+  }
+
+  owner -> taypeer.mac 'Работает с БД'
+  owner -> taypeer.android 'Работает с БД'
+  taypeer.mac -> taypeer.core 'Зависимость существующего Cargo workspace' { #scaffold }
+  taypeer.mac -> taypeer.sessions 'Команды Rust'
+  taypeer.android -> taypeer.ffi 'Команды и события'
+  taypeer.ffi -> taypeer.sessions 'Сценарии Rust'
+  taypeer.sessions -> taypeer.core 'Правила предметной области'
+  taypeer.sessions -> taypeer.document 'Правки и объединение'
+  taypeer.sessions -> taypeer.crypto 'Защита содержимого'
+  taypeer.sessions -> taypeer.storage 'Чтение и фиксация'
+  taypeer.sessions -> taypeer.trust 'Управление БД'
+  taypeer.sessions -> taypeer.evolution 'Миграция и восстановление'
+  taypeer.sessions -> taypeer.kdbx 'Импорт и экспорт'
+  taypeer.sessions -> taypeer.generator 'Создание секрета'
+  taypeer.sessions -> taypeer.iconLoader 'Явная загрузка'
+  taypeer.sessions -> taypeer.local 'Зашифрованный черновик'
+  taypeer.document -> taypeer.core 'Значения и конфликты'
+  taypeer.evolution -> taypeer.document 'Преобразование представления'
+  taypeer.evolution -> taypeer.trust 'Проверка полномочий и происхождения'
+  taypeer.sync -> taypeer.trust 'Проверка допуска'
+  taypeer.sync -> taypeer.storage 'Зашифрованная очередь'
+  taypeer.sync -> taypeer.local 'Сетевые учётные данные'
+  taypeer.trust -> taypeer.local 'Приватные полномочия устройства'
+  taypeer.trust -> taypeer.storage 'Подписанное состояние управления'
+  taypeer.storage -> taypeer.vault 'Надёжная запись и чтение'
+  taypeer.storage -> taypeer.backups 'Снимки и исходные копии'
+  taypeer.kdbx -> taypeer.core 'Представимые данные'
+  taypeer.kdbx -> files 'Отдельный импорт или экспорт'
+  taypeer.iconLoader -> websites 'Запрос по действию пользователя'
+  taypeer.mac -> taypeer.macPlatform 'Платформенные действия'
+  taypeer.android -> taypeer.androidPlatform 'Платформенные действия'
+  taypeer.macPlatform -> macos 'API ОС'
+  taypeer.androidPlatform -> androidos 'API ОС'
+  taypeer.macPlatform -> taypeer.local 'Защита локальных данных'
+  taypeer.androidPlatform -> taypeer.local 'Защита локальных данных'
+  taypeer.macPlatform -> taypeer.sessions 'Lifecycle и блокировка'
+  taypeer.androidPlatform -> taypeer.ffi 'Lifecycle и блокировка'
+  taypeer.ffi -> taypeer.sync 'Фоновое получение'
+  taypeer.macPlatform -> taypeer.sync 'Фоновое получение'
+  taypeer.mac -> taypeer.theme 'Палитра GPUI Kit'
+  taypeer.android -> taypeer.theme 'Палитра Compose'
+  taypeer.theme -> taypeer.local 'Выбор темы устройства'
+  taypeer.sync -> peer 'Обмен зашифрованными данными' { technology 'Iroh direct' }
+  taypeer.sync -> relay 'Разрешённый маршрут' { technology 'Iroh relay' }
+  relay -> peer 'Передача трафика'
+}

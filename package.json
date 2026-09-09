@@ -1,0 +1,30 @@
+{
+  "name": "taypeer-architecture",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.17.1",
+  "devEngines": {
+    "runtime": {
+      "name": "node",
+      "version": "22.22.3",
+      "onFail": "download"
+    }
+  },
+  "scripts": {
+    "arch:dev": "likec4 serve architecture --listen 127.0.0.1",
+    "arch:check": "likec4 format --check architecture && likec4 validate architecture && node scripts/check-architecture.mjs && node --test scripts/check-doc-links.test.mjs",
+    "arch:build": "likec4 build architecture -o artifacts/architecture --base ./ --use-hash-history",
+    "arch:format": "likec4 format architecture",
+    "arch:mcp": "likec4 mcp --stdio architecture"
+  },
+  "devDependencies": {
+    "github-slugger": "2.0.0",
+    "likec4": "1.59.3",
+    "markdown-it": "14.1.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}

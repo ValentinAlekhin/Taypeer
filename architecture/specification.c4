@@ -1,0 +1,15 @@
+specification {
+  element person { style { shape person; color amber } }
+  element system { style { color primary; border dashed } }
+  element app { style { color blue; border dashed } }
+  element component { style { color secondary; border dashed } }
+  element store { style { shape storage; color green; border dashed } }
+  element external { style { color gray } }
+  element entity { style { color green } }
+  element namespace { style { color muted } }
+  deploymentNode device
+  tag scaffold
+  tag planned
+  tag external
+  tag conceptual
+}

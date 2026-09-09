@@ -1,0 +1,4 @@
+interface:
+  display_name: "Taypeer Architecture"
+  short_description: "Check architecture impact and update LikeC4 before code"
+  default_prompt: "Use $taypeer-architecture to assess this Taypeer change and update the model before implementation when needed."

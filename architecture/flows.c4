@@ -1,0 +1,92 @@
+// Steps show architectural interactions, not exhaustive state machines or wire protocols.
+// mac is the desktop entry point; Android reaches the same sessions through ffi.
+views 'Сценарии' {
+  dynamic view save {
+    title 'Подтверждение записи'
+    description 'Путь macOS; Android вызывает те же сценарии через UniFFI. При ошибке записи форма остаётся доступной.'
+    taypeer.mac -> taypeer.sessions 'Подтвердить черновик'
+    taypeer.sessions -> taypeer.core 'Проверить команду'
+    taypeer.sessions -> taypeer.document 'Подготовить изменение'
+    taypeer.sessions -> taypeer.crypto 'Зашифровать'
+    taypeer.sessions -> taypeer.storage 'Зафиксировать'
+    taypeer.storage -> taypeer.vault 'Надёжно сохранить'
+    taypeer.sessions <- taypeer.storage 'Запись завершена'
+    taypeer.mac <- taypeer.sessions 'Показать сохранённую версию'
+  }
+  dynamic view lock {
+    title 'Блокировка с черновиком'
+    taypeer.androidPlatform -> taypeer.ffi 'Уход в фон'
+    taypeer.ffi -> taypeer.sessions 'Заблокировать сессию'
+    taypeer.sessions -> taypeer.local 'Попытаться сохранить зашифрованный черновик'
+    taypeer.sessions -> taypeer.document 'Освободить открытое состояние'
+    taypeer.sessions -> taypeer.crypto 'Закрыть доступ к ключам чтения'
+    taypeer.ffi <- taypeer.sessions 'Закрытая сессия, в том числе при ошибке черновика'
+    taypeer.android <- taypeer.ffi 'Очистить UI и отклонять старые результаты'
+  }
+  dynamic view receive {
+    title 'Получение при заблокированной БД'
+    description 'ACK относится только к надёжно сохранённой единице. Полное применение может ждать blobs и зависимостей.'
+    peer -> taypeer.sync 'Зашифрованный пакет'
+    taypeer.sync -> taypeer.trust 'Проверить внешний допуск'
+    taypeer.sync -> taypeer.storage 'Сохранить пакет в очереди'
+    taypeer.storage -> taypeer.vault 'Надёжная запись'
+    taypeer.sync <- taypeer.storage 'Пакет сохранён'
+    peer <- taypeer.sync 'Подтверждение получения'
+  }
+  dynamic view unlockApply {
+    title 'Открытие и применение после разблокировки'
+    description 'Создание/выбор файла предшествуют этому пути. На Android используется внутренняя рабочая копия. Получение не означает применения.'
+    taypeer.mac -> taypeer.sessions 'Открыть рабочую копию'
+    taypeer.sessions -> taypeer.storage 'Прочитать контейнер и очередь'
+    taypeer.sessions -> taypeer.crypto 'Разблокировать и проверить содержимое'
+    taypeer.sessions -> taypeer.evolution 'Проверить совместимость'
+    taypeer.evolution -> taypeer.trust 'Проверить происхождение'
+    taypeer.sessions -> taypeer.document 'Применить допустимые изменения'
+    taypeer.document -> taypeer.core 'Получить конфликты и представления'
+    taypeer.sessions -> taypeer.storage 'Зафиксировать результат'
+    taypeer.mac <- taypeer.sessions 'Данные, конфликты и ожидающие источники'
+  }
+  dynamic view admission {
+    title 'Подключение устройства'
+    description 'Со стороны управляющего устройства. Приглашение одноразовое; пароль для чтения передаётся отдельно.'
+    taypeer.mac -> taypeer.sessions 'Подтвердить подключение'
+    taypeer.sessions -> taypeer.trust 'Проверить приглашение и получателя'
+    taypeer.trust -> taypeer.storage 'Надёжно зафиксировать новый допуск'
+    taypeer.sync -> taypeer.trust 'Проверить допуск получателя'
+    taypeer.sync -> taypeer.storage 'Прочитать зашифрованные данные'
+    taypeer.sync -> peer 'Передать БД'
+  }
+  dynamic view trustChange {
+    title 'Ротация или отзыв устройства'
+    description 'После отзыва требуется новый пароль. Офлайн-пиры узнают переход при следующем обмене; это не удалённое стирание.'
+    taypeer.mac -> taypeer.sessions 'Подтвердить операцию управления'
+    taypeer.sessions -> taypeer.trust 'Проверить управляющего'
+    taypeer.sessions -> taypeer.storage 'Сохранить отдельную исходную копию'
+    taypeer.sessions -> taypeer.crypto 'Подготовить новую эпоху'
+    taypeer.sessions -> taypeer.trust 'Подготовить переход'
+    taypeer.sessions -> taypeer.storage 'Атомарно зафиксировать новое состояние'
+    taypeer.sync -> peer 'Распространить подписанный переход'
+  }
+  dynamic view migrate {
+    title 'Миграция схемы'
+    description 'Явная команда управляющего после разблокировки. Преобразование поздних источников следует контракту совместимости.'
+    taypeer.mac -> taypeer.sessions 'Начать миграцию'
+    taypeer.sessions -> taypeer.evolution 'Подготовить переход'
+    taypeer.evolution -> taypeer.trust 'Проверить полномочия'
+    taypeer.sessions -> taypeer.storage 'Надёжно сохранить исходную копию'
+    taypeer.evolution -> taypeer.document 'Преобразовать представление'
+    taypeer.sessions -> taypeer.storage 'Атомарно записать результат и отметки'
+    taypeer.mac <- taypeer.sessions 'Показать завершение'
+  }
+  dynamic view recover {
+    title 'Восстановление выбранных данных'
+    description 'Снимок становится источником новых изменений текущей БД. Восстановление управляющего устройства — отдельное действие по спецификации.'
+    taypeer.mac -> taypeer.sessions 'Подтвердить выбранный снимок'
+    taypeer.sessions -> taypeer.storage 'Прочитать источник и сохранить копию текущего состояния'
+    taypeer.sessions -> taypeer.crypto 'Проверить и расшифровать источник'
+    taypeer.sessions -> taypeer.evolution 'Подготовить выбранные данные'
+    taypeer.evolution -> taypeer.document 'Новые изменения с происхождением'
+    taypeer.sessions -> taypeer.storage 'Зафиксировать данные и отметку обработки'
+    taypeer.mac <- taypeer.sessions 'Восстановление завершено'
+  }
+}

@@ -1,0 +1,54 @@
+deployment {
+  mac = device 'Mac владельца' {
+    technology 'macOS 15+; Apple Silicon'
+    ui = instanceOf taypeer.mac
+    sessions = instanceOf taypeer.sessions
+    core = instanceOf taypeer.core
+    document = instanceOf taypeer.document
+    crypto = instanceOf taypeer.crypto
+    storage = instanceOf taypeer.storage
+    sync = instanceOf taypeer.sync
+    trust = instanceOf taypeer.trust
+    platform = instanceOf taypeer.macPlatform
+    vault = instanceOf taypeer.vault
+    local = instanceOf taypeer.local
+  }
+  android = device 'Телефон владельца' {
+    technology 'Android 12+; ARM64'
+    ui = instanceOf taypeer.android
+    ffi = instanceOf taypeer.ffi
+    sessions = instanceOf taypeer.sessions
+    core = instanceOf taypeer.core
+    document = instanceOf taypeer.document
+    crypto = instanceOf taypeer.crypto
+    storage = instanceOf taypeer.storage
+    sync = instanceOf taypeer.sync
+    trust = instanceOf taypeer.trust
+    platform = instanceOf taypeer.androidPlatform
+    vault = instanceOf taypeer.vault
+    local = instanceOf taypeer.local
+  }
+  mac.sync -> android.sync 'P2P между установками'
+}
+
+views 'Развёртывание' {
+  deployment view devices {
+    title 'Два устройства — общее Rust-ядро'
+    description 'Целевое размещение v1. Два экземпляра сервиса используют одно определение; схема не подтверждает готовность сборок приложения.'
+    include
+      mac.ui,
+      mac.sessions,
+      mac.core,
+      mac.storage,
+      mac.sync,
+      mac.vault,
+      android.ui,
+      android.ffi,
+      android.sessions,
+      android.core,
+      android.storage,
+      android.sync,
+      android.vault
+    autoLayout TopBottom
+  }
+}

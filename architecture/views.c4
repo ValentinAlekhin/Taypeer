@@ -1,0 +1,74 @@
+views 'Обзор' {
+  view index {
+    title 'Контекст Taypeer'
+    description 'Один человек и его устройства. Вся v1 — целевая архитектура; состояние реализации показано отдельно.'
+    include owner, taypeer, peer, relay, files, websites
+    autoLayout LeftRight
+  }
+  view applications {
+    title 'Приложения и общие сервисы'
+    description 'Сервисы — логические ответственности, не требование создавать отдельный crate на каждый блок.'
+    include
+      owner,
+      taypeer.mac,
+      taypeer.android,
+      taypeer.ffi,
+      taypeer.sessions,
+      taypeer.core,
+      taypeer.document,
+      taypeer.crypto,
+      taypeer.storage,
+      taypeer.sync,
+      taypeer.trust,
+      taypeer.evolution
+    autoLayout LeftRight
+  }
+  view platform {
+    title 'Границы платформ и дополнительные функции'
+    include
+      taypeer.mac,
+      taypeer.android,
+      taypeer.ffi,
+      taypeer.sessions,
+      taypeer.macPlatform,
+      taypeer.androidPlatform,
+      macos,
+      androidos,
+      taypeer.theme,
+      taypeer.generator,
+      taypeer.iconLoader,
+      taypeer.kdbx,
+      files,
+      websites
+    autoLayout LeftRight
+  }
+  view storage {
+    title 'Хранение и обмен'
+    description 'Локальное состояние включает несколько областей защиты. Это границы ответственности, не байтовая раскладка контейнера.'
+    include
+      taypeer.sessions,
+      taypeer.crypto,
+      taypeer.document,
+      taypeer.storage,
+      taypeer.sync,
+      taypeer.trust,
+      taypeer.vault,
+      taypeer.local,
+      taypeer.backups,
+      peer,
+      relay
+    autoLayout LeftRight
+  }
+  view domain of data {
+    title 'Основные сущности данных'
+    description 'Нормальное активное состояние. Корзина, очистка и конфликты описаны в контракте; поля типов здесь не перечисляются.'
+    include *
+    autoLayout TopBottom
+  }
+  view implementation {
+    title 'Что существует в основном workspace'
+    description 'Только bootstrap macOS и пустой crate ядра. Ни одна продуктовая функция не считается реализованной; evidence в метаданных ссылается на отдельные исследования.'
+    include taypeer.mac, taypeer.core
+    autoLayout LeftRight
+  }
+}

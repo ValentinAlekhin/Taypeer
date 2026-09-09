@@ -1,0 +1,28 @@
+// Conceptual entities, not Rust types or a physical file schema.
+model {
+  data = namespace 'Предметная модель' {
+    #conceptual
+    metadata { contract 'docs/data-model.md' }
+    database = entity 'База данных' { #conceptual }
+    group = entity 'Группа' {
+      #conceptual
+      description '0..1 родитель; 0..* подгрупп. Циклы и конфликты размещения определены контрактом.'
+    }
+    entry = entity 'Запись' { #conceptual }
+    attribute = entity 'Атрибут' { #conceptual }
+    attachment = entity 'Вложение' { #conceptual }
+    revision = entity 'Сохранённая версия' { #conceptual }
+    blob = entity 'Бинарный объект' { #conceptual }
+    trustSet = entity 'Доверенный набор' { #conceptual }
+    workingCopy = entity 'Рабочая копия' { #conceptual }
+  }
+  data.database -> data.group '0..* групп'
+  data.group -> data.entry '0..* активных записей'
+  data.entry -> data.attribute '0..* атрибутов'
+  data.entry -> data.attachment '0..* вложений'
+  data.entry -> data.revision 'История'
+  data.attachment -> data.blob 'Одно содержимое; много ссылок'
+  data.revision -> data.blob 'Удерживает содержимое'
+  data.database -> data.trustSet 'Линии доверия'
+  data.database -> data.workingCopy 'Локальные копии'
+}
