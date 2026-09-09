@@ -5,12 +5,15 @@
 //! encryption. Lock revokes access through this API; it does not prove erasure of
 //! Automerge allocations. No file format, storage, or network transport is used.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::fmt;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use taypeer_core::{Attribute, AttributeValue, EntryFields, EntrySnapshot, Group, SavedRevision};
-use taypeer_document::{Document, EntryDraft};
+use taypeer_core::SavedRevision;
+use taypeer_document::Document;
+
+mod draft;
+use draft::{DraftKind, DraftState};
 
 pub use taypeer_core::{AttributeId, DatabaseId, EntryId, GroupId, RevisionId};
 
@@ -36,219 +39,12 @@ pub struct SessionValue<T> {
     pub value: T,
 }
 
-/// Non-secret catalog data available while a database is locked.
-#[derive(Clone)]
-pub struct DatabaseSummary {
-    /// Stable database identifier.
-    pub id: DatabaseId,
-    /// Public demonstration database label.
-    pub name: String,
-    /// Whether a new unlock is needed for document access.
-    pub locked: bool,
-}
-
-/// A group visible within an unlocked database.
-#[derive(Clone)]
-pub struct GroupSummary {
-    /// Stable group identifier.
-    pub id: GroupId,
-    /// Group label.
-    pub name: String,
-    /// Parent group, or no parent for the visible top level.
-    pub parent: Option<GroupId>,
-}
-
-/// A table/search row; password and protected attributes are never included.
-#[derive(Clone)]
-pub struct EntrySummary {
-    /// Stable entry identifier.
-    pub id: EntryId,
-    /// Owning group.
-    pub group_id: GroupId,
-    /// Entry label; empty if unresolved conflicts prevent a unique view.
-    pub title: String,
-    /// Ordinary username, if present.
-    pub username: Option<String>,
-    /// Ordinary URL, if present.
-    pub url: Option<String>,
-    /// Whether the row requires conflict resolution before editing.
-    pub has_conflicts: bool,
-}
-
-/// A search row with the database and group needed to navigate to its source.
-#[derive(Clone)]
-pub struct SearchResult {
-    /// Public database label.
-    pub database_name: String,
-    /// Source group label.
-    pub group_name: String,
-    /// Matching entry without secret values.
-    pub entry: EntrySummary,
-}
-
-/// Editable form retaining the distinction between absent and explicitly empty fields.
-#[derive(Clone, Default, PartialEq, Eq)]
-pub struct EditableEntry {
-    /// Required entry label.
-    pub title: String,
-    /// Optional ordinary username.
-    pub username: Option<String>,
-    /// Optional secret; omitted from Debug output.
-    pub password: Option<String>,
-    /// Optional ordinary URL.
-    pub url: Option<String>,
-    /// Optional notes.
-    pub notes: Option<String>,
-    /// Tags; saved as a set by the domain model.
-    pub tags: Vec<String>,
-    /// Optional expiration timestamp in UTC milliseconds since the Unix epoch.
-    pub expires_at: Option<i64>,
-    /// Attributes with stable identifiers and atomic value/protection pairs.
-    pub attributes: Vec<EditableAttribute>,
-}
-
-impl fmt::Debug for EditableEntry {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("EditableEntry { fields: [REDACTED] }")
-    }
-}
-
-/// One editable attribute; new attributes receive an identifier on draft update.
-#[derive(Clone, PartialEq, Eq)]
-pub struct EditableAttribute {
-    /// Existing identifier, or None only for a new attribute.
-    pub id: Option<AttributeId>,
-    /// Attribute label.
-    pub name: String,
-    /// Attribute value; never included in Debug output.
-    pub value: String,
-    /// Whether list/search/read-only views must hide the value.
-    pub protected: bool,
-}
-
-impl fmt::Debug for EditableAttribute {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("EditableAttribute { fields: [REDACTED] }")
-    }
-}
-
-/// The single local form currently associated with a database.
-#[derive(Clone)]
-pub struct DraftView {
-    /// Existing entry identifier; None denotes a not-yet-saved entry.
-    pub entry_id: Option<EntryId>,
-    /// Group in which the entry is being edited or created.
-    pub group_id: GroupId,
-    /// Form fields, including explicitly edited secrets.
-    pub fields: EditableEntry,
-    /// Whether the form differs from its starting state.
-    pub dirty: bool,
-    /// Unparsed expiration input retained for restoring an interrupted invalid form.
-    /// None means the platform has supplied a valid optional timestamp.
-    pub expiry_input: Option<String>,
-}
-
-/// Non-secret identity of an interrupted editor awaiting explicit restoration.
-#[derive(Clone, Debug)]
-pub struct PendingDraftSummary {
-    /// Existing entry, or None for a not-yet-saved entry.
-    pub entry_id: Option<EntryId>,
-    /// Group containing the interrupted form.
-    pub group_id: GroupId,
-}
-
-/// An attribute in a read-only view; protected values remain absent.
-#[derive(Clone)]
-pub struct AttributeView {
-    /// Stable attribute identifier.
-    pub id: AttributeId,
-    /// Attribute label.
-    pub name: String,
-    /// Value only when the attribute is not protected.
-    pub value: Option<String>,
-    /// Whether explicit reveal is required.
-    pub protected: bool,
-}
-
-/// Read-only entry details with masked password and protected attributes.
-#[derive(Clone)]
-pub struct EntryView {
-    /// Stable entry identifier.
-    pub id: EntryId,
-    /// Owning group.
-    pub group_id: GroupId,
-    /// Entry label; empty for an ambiguous snapshot.
-    pub title: String,
-    /// Optional ordinary username.
-    pub username: Option<String>,
-    /// Optional ordinary URL.
-    pub url: Option<String>,
-    /// Optional ordinary notes.
-    pub notes: Option<String>,
-    /// Tags.
-    pub tags: Vec<String>,
-    /// Optional expiration timestamp in UTC milliseconds since the Unix epoch.
-    pub expires_at: Option<i64>,
-    /// Attributes with protected values removed.
-    pub attributes: Vec<AttributeView>,
-    /// Whether a password field exists, including an explicitly empty one.
-    pub has_password: bool,
-    /// Whether conflict resolution is required before editing or revealing.
-    pub has_conflicts: bool,
-    /// Creation timestamp in UTC milliseconds since the Unix epoch.
-    pub created_at: i64,
-    /// Modification timestamp in UTC milliseconds since the Unix epoch.
-    pub modified_at: i64,
-}
-
-/// A history row with no secret values.
-#[derive(Clone)]
-pub struct RevisionSummary {
-    /// Stable saved revision identifier.
-    pub id: RevisionId,
-    /// Saved entry title, or empty when ambiguous.
-    pub title: String,
-    /// Explicit-save timestamp in UTC milliseconds since the Unix epoch.
-    pub saved_at: i64,
-}
-
-macro_rules! redacted_debug {
-    ($($kind:ty),+ $(,)?) => {
-        $(impl fmt::Debug for $kind {
-            fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-                formatter.write_str(concat!(stringify!($kind), " { contents: [REDACTED] }"))
-            }
-        })+
-    };
-}
-
-redacted_debug!(
-    DatabaseSummary,
-    GroupSummary,
-    EntrySummary,
-    SearchResult,
-    DraftView,
-    AttributeView,
-    EntryView,
-    RevisionSummary,
-);
-
-/// A value returned only by explicit reveal; formatting never prints its contents.
-#[derive(Clone)]
-pub struct SecretValue(String);
-
-impl SecretValue {
-    /// Borrow the revealed text for a current, explicitly requested UI presentation.
-    pub fn expose(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Debug for SecretValue {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("SecretValue([REDACTED])")
-    }
-}
+mod views;
+pub use views::{
+    AttributeView, DatabaseSummary, DraftView, EditableAttribute, EditableEntry, EntrySummary,
+    EntryView, GroupSummary, PendingDraftSummary, RevisionSummary, SearchResult, SecretValue,
+};
+use views::{attribute_value, entry_summary, entry_view, group_summary, matches_query, password};
 
 /// Structured error categories containing no form values or credentials.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -309,43 +105,6 @@ impl From<taypeer_document::Error> for ServiceError {
             taypeer_document::Error::InvalidContext => Self::InvalidContext,
             taypeer_document::Error::DuplicateId => Self::InvalidInput,
             taypeer_document::Error::InvalidDocument => Self::InvalidDocument,
-        }
-    }
-}
-
-struct DraftState {
-    document: EntryDraft,
-    baseline: EditableEntry,
-    is_new: bool,
-    needs_restore: bool,
-    attribute_order: Vec<AttributeId>,
-    expiry_input: Option<String>,
-}
-
-impl DraftState {
-    fn view(&self) -> DraftView {
-        let mut fields = editable(self.document.fields());
-        let dirty = fields != self.baseline;
-        let order: BTreeMap<_, _> = self
-            .attribute_order
-            .iter()
-            .enumerate()
-            .map(|(index, id)| (id, index))
-            .collect();
-        fields.attributes.sort_by_key(|attribute| {
-            attribute
-                .id
-                .as_ref()
-                .and_then(|id| order.get(id))
-                .copied()
-                .unwrap_or(usize::MAX)
-        });
-        DraftView {
-            entry_id: (!self.is_new).then(|| self.document.entry_id().clone()),
-            group_id: self.document.group_id().clone(),
-            dirty: dirty || self.expiry_input.is_some(),
-            fields,
-            expiry_input: self.expiry_input.clone(),
         }
     }
 }
@@ -654,15 +413,7 @@ impl DemoService {
             return Err(editor_open_error(state));
         }
         let document = state.document.begin_create_entry(group)?;
-        let attribute_order = document.fields().attributes.keys().cloned().collect();
-        let draft = DraftState {
-            baseline: editable(document.fields()),
-            document,
-            is_new: true,
-            needs_restore: false,
-            attribute_order,
-            expiry_input: None,
-        };
+        let draft = DraftState::new(document, DraftKind::New);
         let view = draft.view();
         state.draft = Some(draft);
         Ok(stamped(session, view))
@@ -676,24 +427,16 @@ impl DemoService {
     ) -> Result<SessionValue<DraftView>, ServiceError> {
         let state = self.checked_mut(session)?;
         if let Some(draft) = &state.draft {
-            if draft.needs_restore {
+            if draft.needs_restore() {
                 return Err(ServiceError::DraftNeedsRestore);
             }
-            if !draft.is_new && draft.document.entry_id() == id {
+            if draft.entry_id() == Some(id) {
                 return Ok(stamped(session, draft.view()));
             }
             return Err(ServiceError::EditorAlreadyOpen);
         }
         let document = state.document.begin_edit_entry(id)?;
-        let attribute_order = document.fields().attributes.keys().cloned().collect();
-        let draft = DraftState {
-            baseline: editable(document.fields()),
-            document,
-            is_new: false,
-            needs_restore: false,
-            attribute_order,
-            expiry_input: None,
-        };
+        let draft = DraftState::new(document, DraftKind::Existing);
         let view = draft.view();
         state.draft = Some(draft);
         Ok(stamped(session, view))
@@ -709,7 +452,7 @@ impl DemoService {
             self.checked(session)?
                 .draft
                 .as_ref()
-                .filter(|draft| !draft.needs_restore)
+                .filter(|draft| !draft.needs_restore())
                 .map(DraftState::view),
         ))
     }
@@ -723,11 +466,8 @@ impl DemoService {
             .checked(session)?
             .draft
             .as_ref()
-            .filter(|draft| draft.needs_restore)
-            .map(|draft| PendingDraftSummary {
-                entry_id: (!draft.is_new).then(|| draft.document.entry_id().clone()),
-                group_id: draft.document.group_id().clone(),
-            });
+            .filter(|draft| draft.needs_restore())
+            .map(DraftState::pending_summary);
         Ok(stamped(session, pending))
     }
 
@@ -741,11 +481,7 @@ impl DemoService {
             .draft
             .as_mut()
             .ok_or(ServiceError::NoDraft)?;
-        if !draft.needs_restore {
-            return Err(ServiceError::InvalidContext);
-        }
-        draft.needs_restore = false;
-        Ok(stamped(session, draft.view()))
+        Ok(stamped(session, draft.restore()?))
     }
 
     /// Replace local form values without creating a document change or history row.
@@ -759,55 +495,7 @@ impl DemoService {
             .draft
             .as_mut()
             .ok_or(ServiceError::NoDraft)?;
-        if draft.needs_restore {
-            return Err(ServiceError::DraftNeedsRestore);
-        }
-        // Work on a clone so invalid identities or duplicate attributes leave the editor intact.
-        let mut candidate = draft.document.clone();
-        let known: BTreeSet<_> = candidate.fields().attributes.keys().cloned().collect();
-        let mut attributes = BTreeMap::new();
-        let mut attribute_order = Vec::new();
-        for attribute in fields.attributes {
-            let id = match attribute.id {
-                Some(id) if known.contains(&id) => id,
-                Some(_) => return Err(ServiceError::InvalidContext),
-                None => candidate.add_attribute(
-                    attribute.name.clone(),
-                    attribute.value.clone(),
-                    attribute.protected,
-                ),
-            };
-            attribute_order.push(id.clone());
-            if attributes
-                .insert(
-                    id.clone(),
-                    Attribute {
-                        id,
-                        name: attribute.name,
-                        value: AttributeValue {
-                            value: attribute.value,
-                            protected: attribute.protected,
-                        },
-                    },
-                )
-                .is_some()
-            {
-                return Err(ServiceError::InvalidInput);
-            }
-        }
-        *candidate.fields_mut() = EntryFields {
-            title: fields.title,
-            username: fields.username,
-            password: fields.password,
-            url: fields.url,
-            notes: fields.notes,
-            tags: fields.tags.into_iter().collect(),
-            expires_at: fields.expires_at,
-            attributes,
-        };
-        draft.document = candidate;
-        draft.attribute_order = attribute_order;
-        Ok(stamped(session, draft.view()))
+        Ok(stamped(session, draft.update(fields)?))
     }
 
     /// Retain invalid platform date input without pretending it is a valid domain timestamp.
@@ -822,11 +510,7 @@ impl DemoService {
             .draft
             .as_mut()
             .ok_or(ServiceError::NoDraft)?;
-        if draft.needs_restore {
-            return Err(ServiceError::DraftNeedsRestore);
-        }
-        draft.expiry_input = input;
-        Ok(stamped(session, draft.view()))
+        Ok(stamped(session, draft.set_expiry_input(input)?))
     }
 
     /// Confirm the form in memory; failed validation retains the draft and saved document.
@@ -837,17 +521,7 @@ impl DemoService {
         let now = (self.clock)();
         let state = self.checked_mut(session)?;
         let draft = state.draft.as_ref().ok_or(ServiceError::NoDraft)?;
-        if draft.needs_restore {
-            return Err(ServiceError::DraftNeedsRestore);
-        }
-        if draft.expiry_input.is_some() {
-            return Err(ServiceError::InvalidInput);
-        }
-        let id = if !draft.is_new && !draft.view().dirty {
-            draft.document.entry_id().clone()
-        } else {
-            state.document.save_entry(draft.document.clone(), now)?
-        };
+        let id = draft.save(&mut state.document, now)?;
         state.draft = None;
         Ok(stamped(session, id))
     }
@@ -1000,7 +674,7 @@ fn editor_open_error(state: &DatabaseState) -> ServiceError {
     if state
         .draft
         .as_ref()
-        .is_some_and(|draft| draft.needs_restore)
+        .is_some_and(|draft| draft.needs_restore())
     {
         ServiceError::DraftNeedsRestore
     } else {
@@ -1010,8 +684,8 @@ fn editor_open_error(state: &DatabaseState) -> ServiceError {
 
 fn stash_draft(state: &mut DatabaseState) {
     if let Some(draft) = &mut state.draft {
-        if draft.view().dirty {
-            draft.needs_restore = true;
+        if draft.is_dirty() {
+            draft.interrupt();
         } else {
             state.draft = None;
         }
@@ -1025,119 +699,6 @@ fn stamped<T>(session: &SessionToken, value: T) -> SessionValue<T> {
     }
 }
 
-fn group_summary(group: Group) -> GroupSummary {
-    GroupSummary {
-        id: group.id,
-        name: group.name,
-        parent: group.parent,
-    }
-}
-
-fn editable(fields: &EntryFields) -> EditableEntry {
-    EditableEntry {
-        title: fields.title.clone(),
-        username: fields.username.clone(),
-        password: fields.password.clone(),
-        url: fields.url.clone(),
-        notes: fields.notes.clone(),
-        tags: fields.tags.iter().cloned().collect(),
-        expires_at: fields.expires_at,
-        attributes: fields
-            .attributes
-            .values()
-            .map(|attribute| EditableAttribute {
-                id: Some(attribute.id.clone()),
-                name: attribute.name.clone(),
-                value: attribute.value.value.clone(),
-                protected: attribute.value.protected,
-            })
-            .collect(),
-    }
-}
-
-fn matches_query(entry: &EntrySnapshot, query: &str) -> bool {
-    if query.is_empty() {
-        return true;
-    }
-    let Some(fields) = &entry.fields else {
-        return false;
-    };
-    let contains = |value: &str| value.to_lowercase().contains(query);
-    contains(&fields.title)
-        || fields.username.as_deref().is_some_and(contains)
-        || fields.url.as_deref().is_some_and(contains)
-        || fields.notes.as_deref().is_some_and(contains)
-        || fields.tags.iter().any(|tag| contains(tag))
-        || fields
-            .attributes
-            .values()
-            .any(|attribute| !attribute.value.protected && contains(&attribute.value.value))
-}
-
-fn entry_summary(entry: EntrySnapshot) -> EntrySummary {
-    let has_conflicts = entry.fields.is_none();
-    let fields = entry.fields.unwrap_or_default();
-    EntrySummary {
-        id: entry.id,
-        group_id: entry.group_id,
-        title: fields.title,
-        username: fields.username,
-        url: fields.url,
-        has_conflicts,
-    }
-}
-
-fn entry_view(entry: EntrySnapshot) -> EntryView {
-    let has_conflicts = entry.fields.is_none();
-    let fields = entry.fields.unwrap_or_default();
-    EntryView {
-        id: entry.id,
-        group_id: entry.group_id,
-        title: fields.title,
-        username: fields.username,
-        url: fields.url,
-        notes: fields.notes,
-        tags: fields.tags.into_iter().collect(),
-        expires_at: fields.expires_at,
-        attributes: fields
-            .attributes
-            .into_values()
-            .map(|attribute| AttributeView {
-                id: attribute.id,
-                name: attribute.name,
-                value: (!attribute.value.protected).then_some(attribute.value.value),
-                protected: attribute.value.protected,
-            })
-            .collect(),
-        has_password: fields.password.is_some(),
-        has_conflicts,
-        created_at: entry.created_at,
-        modified_at: entry.modified_at,
-    }
-}
-
-fn password(entry: EntrySnapshot) -> Result<SecretValue, ServiceError> {
-    entry
-        .fields
-        .ok_or(ServiceError::Conflict)?
-        .password
-        .map(SecretValue)
-        .ok_or(ServiceError::NotFound)
-}
-
-fn attribute_value(
-    entry: EntrySnapshot,
-    attribute: &AttributeId,
-) -> Result<SecretValue, ServiceError> {
-    entry
-        .fields
-        .ok_or(ServiceError::Conflict)?
-        .attributes
-        .remove(attribute)
-        .map(|attribute| SecretValue(attribute.value.value))
-        .ok_or(ServiceError::NotFound)
-}
-
 fn now_millis() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1149,6 +710,7 @@ fn now_millis() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeSet;
 
     #[test]
     fn conflicted_snapshots_never_leak_an_implicit_winner_into_ui_views() {

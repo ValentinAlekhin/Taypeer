@@ -607,3 +607,95 @@ fn global_search_retains_each_source_and_excludes_independently_locked_databases
         )
     );
 }
+
+#[test]
+fn presentation_order_and_duplicate_tags_do_not_create_unsaved_domain_changes() {
+    let (mut service, session, group) = setup();
+    let (entry, _) = save_example(&mut service, &session, &group, "PUBLIC order fixture");
+    let mut fields = service
+        .start_edit_entry(&session, &entry)
+        .unwrap()
+        .value
+        .fields;
+    fields.attributes.reverse();
+    fields.tags.reverse();
+    fields.tags.push(fields.tags[0].clone());
+    let expected_order: Vec<_> = fields
+        .attributes
+        .iter()
+        .map(|attr| attr.id.clone())
+        .collect();
+    let draft = service.update_draft(&session, fields).unwrap().value;
+    assert!(!draft.dirty);
+    assert_eq!(
+        draft
+            .fields
+            .attributes
+            .iter()
+            .map(|attr| attr.id.clone())
+            .collect::<Vec<_>>(),
+        expected_order
+    );
+    service.save_draft(&session).unwrap();
+    assert_eq!(service.history(&session, &entry).unwrap().value.len(), 1);
+
+    let original = service
+        .start_edit_entry(&session, &entry)
+        .unwrap()
+        .value
+        .fields;
+    let mut changed = original.clone();
+    changed.password = Some("PUBLIC temporary change".into());
+    assert!(service.update_draft(&session, changed).unwrap().value.dirty);
+    assert!(
+        !service
+            .update_draft(&session, original)
+            .unwrap()
+            .value
+            .dirty
+    );
+    service.lock(&session).unwrap();
+    let reopened = service.unlock(&session.database, DEMO_PASSWORD).unwrap();
+    assert!(service.pending_draft(&reopened).unwrap().value.is_none());
+}
+
+#[test]
+fn foreign_attribute_after_new_attribute_leaves_the_entire_draft_unchanged() {
+    let (mut service, session, group) = setup();
+    let (entry, _) = save_example(&mut service, &session, &group, "PUBLIC identity fixture");
+    let original = service
+        .start_edit_entry(&session, &entry)
+        .unwrap()
+        .value
+        .fields;
+    service
+        .set_draft_expiry_input(&session, Some("PUBLIC invalid date".into()))
+        .unwrap();
+    let mut invalid = original.clone();
+    invalid.title = "PUBLIC rejected title".into();
+    invalid.attributes.push(EditableAttribute {
+        id: None,
+        name: "PUBLIC new attribute".into(),
+        value: "PUBLIC new value".into(),
+        protected: true,
+    });
+    invalid.attributes.push(EditableAttribute {
+        id: Some(taypeer_services::AttributeId::new(
+            "PUBLIC foreign identity",
+        )),
+        name: "PUBLIC foreign attribute".into(),
+        value: "PUBLIC foreign value".into(),
+        protected: true,
+    });
+    assert_eq!(
+        service.update_draft(&session, invalid).unwrap_err(),
+        ServiceError::InvalidContext
+    );
+    let retained = service.draft(&session).unwrap().value.unwrap();
+    assert_eq!(retained.fields, original);
+    assert_eq!(
+        retained.expiry_input.as_deref(),
+        Some("PUBLIC invalid date")
+    );
+    assert_eq!(service.history(&session, &entry).unwrap().value.len(), 1);
+}

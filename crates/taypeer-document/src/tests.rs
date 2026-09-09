@@ -1,4 +1,5 @@
 use super::*;
+use taypeer_core::FieldState;
 
 fn setup() -> (Document, GroupId, EntryId) {
     let mut document = Document::new("PUBLIC test database", 1_000).unwrap();
