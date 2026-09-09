@@ -15,4 +15,4 @@ cargo lint
 cargo test-all
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked
 cargo build --workspace --release --locked
-cargo run --locked --quiet -p taypeer
+cargo run --locked --quiet -p taypeer -- --smoke-test

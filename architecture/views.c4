@@ -67,8 +67,8 @@ views 'Обзор' {
   }
   view implementation {
     title 'Что существует в основном workspace'
-    description 'Только bootstrap macOS и пустой crate ядра. Ни одна продуктовая функция не считается реализованной; evidence в метаданных ссылается на отдельные исследования.'
-    include taypeer.mac, taypeer.core
+    description 'Первый реализуемый срез: macOS, Rust-правила, Automerge и сессии с искусственными данными в памяти. Не подтверждает безопасность или готовность полной v1.'
+    include taypeer.mac, taypeer.core, taypeer.sessions, taypeer.document, taypeer.demo, taypeer.theme
     autoLayout LeftRight
   }
 }

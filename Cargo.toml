@@ -1,16 +1,25 @@
 [workspace]
-members = ["crates/taypeer-core", "apps/taypeer"]
+members = ["crates/taypeer-core", "crates/taypeer-document", "crates/taypeer-services", "apps/taypeer"]
 default-members = ["apps/taypeer"]
 resolver = "3"
 
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.93"
+rust-version = "1.97.1"
 publish = false
 
 [workspace.dependencies]
 taypeer-core = { path = "crates/taypeer-core" }
+taypeer-document = { path = "crates/taypeer-document" }
+taypeer-services = { path = "crates/taypeer-services" }
+automerge = "=0.7.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rust-i18n = "3"
+toml = "0.9"
+chrono = "0.4"
+gpui-kit = { git = "https://github.com/longbridge/gpui-kit", rev = "21f6ce6097c686e98e0ca62ff6178bb4612541a1" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
@@ -23,3 +32,6 @@ todo = "deny"
 [profile.release]
 lto = "thin"
 codegen-units = 1
+
+[profile.dev]
+debug = 0

@@ -19,10 +19,10 @@ model {
     metadata { contract 'spec.md' }
 
     mac = app 'Приложение macOS' {
-      #scaffold
+      #partial
       technology 'Rust; целевой UI: GPUI + GPUI Kit'
-      style { color amber; border solid }
-      description 'Существует только bootstrap; продуктовый интерфейс ещё не реализован.'
+      style { color blue; border solid }
+      description 'Первый срез: демонстрационный macOS UI поверх общих Rust-команд. Только искусственные данные; полная v1 остаётся впереди.'
       metadata {
         source 'apps/taypeer/src/main.rs'
         evidence 'spikes/gpui-android/MACOS-2026-09-09.md'
@@ -42,23 +42,25 @@ model {
       metadata { evidence 'spikes/android-compose/REPORT.md'; contract 'docs/architecture.md' }
     }
     core = component 'Ядро предметной области' {
-      #scaffold
+      #partial
       technology 'Rust'
-      style { color amber; border solid }
-      description 'Crate существует, типов и публичного API пока нет. Будущие правила объектов и конфликтов.'
+      style { color blue; border solid }
+      description 'Предметные типы, адресные правки и проверки групп, записей и атрибутов первого среза. Без UI, ОС и Automerge.'
       metadata { source 'crates/taypeer-core/src/lib.rs'; contract 'docs/data-model.md' }
     }
     sessions = component 'Сессии и сценарии БД' {
-      #planned
+      #partial
+      style { border solid }
       technology 'Rust'
-      description 'Координация локальных команд, блокировки, применения и восстановления.'
-      metadata { contract 'docs/architecture.md' }
+      description 'Rust-команды и поколения сессий. Первый срез использует временные демонстрационные БД; надёжное хранение и защита остаются запланированы.'
+      metadata { source 'crates/taypeer-services/src/lib.rs'; contract 'docs/architecture.md' }
     }
     document = component 'Документ и объединение' {
-      #planned
+      #partial
+      style { border solid }
       technology 'Rust + Automerge'
-      description 'Адаптер CRDT, история и конфликтующие варианты.'
-      metadata { contract 'docs/data-model.md'; evidence 'spikes/encrypted-sync/REPORT.md' }
+      description 'Адаптер Automerge: адресные изменения от контекста черновика, атомарная история и все конфликтующие варианты. Первый срез работает в памяти.'
+      metadata { source 'crates/taypeer-document/src/lib.rs'; contract 'docs/data-model.md'; evidence 'spikes/encrypted-sync/REPORT.md' }
     }
     crypto = component 'Защита содержимого' {
       #planned
@@ -103,9 +105,10 @@ model {
       metadata { contract 'spec.md' }
     }
     theme = component 'Тема и локальные настройки' {
-      #planned
+      #partial
+      style { border solid }
       description 'Общий источник палитр; адаптация к каждому фронтенду.'
-      metadata { contract 'spec.md#тема-интерфейса' }
+      metadata { source 'resources/theme.toml'; contract 'spec.md#тема-интерфейса' }
     }
     iconLoader = component 'Загрузка иконок' {
       #planned
@@ -134,6 +137,12 @@ model {
       description 'Раздельное хранение приватных допусков, биометрии, зашифрованных черновиков и настроек.'
       metadata { contract 'docs/data-model.md#8-локальная-модель' }
     }
+    demo = store 'Демонстрационные данные в памяти' {
+      #partial
+      style { border solid }
+      description 'Только искусственные документы и черновики на время процесса. Тестовая разблокировка не является аутентификацией; подтверждение не означает надёжную запись.'
+      metadata { source 'crates/taypeer-services/src/lib.rs'; contract 'docs/architecture.md' }
+    }
     backups = store 'Резервные снимки' {
       #planned
       description 'Отдельные зашифрованные файлы; правила хранения задаёт спецификация.'
@@ -143,7 +152,6 @@ model {
 
   owner -> taypeer.mac 'Работает с БД'
   owner -> taypeer.android 'Работает с БД'
-  taypeer.mac -> taypeer.core 'Зависимость существующего Cargo workspace' { #scaffold }
   taypeer.mac -> taypeer.sessions 'Команды Rust'
   taypeer.android -> taypeer.ffi 'Команды и события'
   taypeer.ffi -> taypeer.sessions 'Сценарии Rust'
@@ -157,6 +165,7 @@ model {
   taypeer.sessions -> taypeer.generator 'Создание секрета'
   taypeer.sessions -> taypeer.iconLoader 'Явная загрузка'
   taypeer.sessions -> taypeer.local 'Зашифрованный черновик'
+  taypeer.sessions -> taypeer.demo 'Временные документы и черновики режима demo'
   taypeer.document -> taypeer.core 'Значения и конфликты'
   taypeer.evolution -> taypeer.document 'Преобразование представления'
   taypeer.evolution -> taypeer.trust 'Проверка полномочий и происхождения'

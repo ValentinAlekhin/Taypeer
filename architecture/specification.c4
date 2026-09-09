@@ -9,6 +9,7 @@ specification {
   element namespace { style { color muted } }
   deploymentNode device
   tag scaffold
+  tag partial
   tag planned
   tag external
   tag conceptual

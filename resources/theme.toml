@@ -1,0 +1,31 @@
+# Shared product palette; both platform adapters consume these semantic roles.
+[light]
+background = 0xf7f7f8
+panel = 0xffffff
+chrome = 0xf1f1f3
+foreground = 0x242426
+muted = 0x6c6c73
+border = 0xdcdce0
+primary = 0x315faf
+on_primary = 0xffffff
+selection = 0xe6e6ea
+focus = 0x315faf
+danger = 0xb42318
+warning = 0x8b6508
+success = 0x247744
+disabled = 0x929298
+[dark]
+background = 0x19191c
+panel = 0x202023
+chrome = 0x252528
+foreground = 0xe8e8ec
+muted = 0xa1a1aa
+border = 0x36363d
+primary = 0x99bbff
+on_primary = 0x172c50
+selection = 0x34343b
+focus = 0x99bbff
+danger = 0xffb4ab
+warning = 0xefcc76
+success = 0x85d7a3
+disabled = 0x787880

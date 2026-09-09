@@ -1,13 +1,16 @@
 [package]
-name = "taypeer-core"
-description = "Platform-independent Taypeer domain values and validation"
+name = "taypeer-document"
+description = "Volatile Automerge document adapter for Taypeer"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+taypeer-core.workspace = true
+automerge.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true

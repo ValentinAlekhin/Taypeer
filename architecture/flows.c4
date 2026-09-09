@@ -1,6 +1,15 @@
 // Steps show architectural interactions, not exhaustive state machines or wire protocols.
 // mac is the desktop entry point; Android reaches the same sessions through ffi.
 views 'Сценарии' {
+  dynamic view demoEdit {
+    title 'Демонстрационное подтверждение в памяти'
+    description 'Только искусственные данные. После завершения процесса документы и черновики теряются; этот путь не заменяет надёжное сохранение файла.'
+    taypeer.mac -> taypeer.sessions 'Команда с поколением сессии и черновиком'
+    taypeer.sessions -> taypeer.core 'Проверка предметных правил'
+    taypeer.sessions -> taypeer.document 'Адресные правки и одна версия от исходных heads'
+    taypeer.sessions -> taypeer.demo 'Заменить подготовленное состояние в памяти'
+    taypeer.mac <- taypeer.sessions 'Подтверждено только в памяти; актуальное поколение'
+  }
   dynamic view save {
     title 'Подтверждение записи'
     description 'Путь macOS; Android вызывает те же сценарии через UniFFI. При ошибке записи форма остаётся доступной.'

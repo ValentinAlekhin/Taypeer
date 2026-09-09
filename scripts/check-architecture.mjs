@@ -23,10 +23,10 @@ const likec4 = await LikeC4.fromWorkspace(path.join(root, 'architecture'), { wat
 try {
   if (likec4.hasErrors()) throw new Error('LikeC4 model is invalid; run pnpm exec likec4 validate architecture');
   const model = (await likec4.computedModel()).$data;
-  const statuses = new Set(['scaffold', 'planned', 'external', 'conceptual']);
+  const statuses = new Set(['scaffold', 'partial', 'planned', 'external', 'conceptual']);
   for (const element of Object.values(model.elements)) {
     if (element.tags.filter(t => statuses.has(t)).length !== 1) errors.push(`${element.id}: expected one implementation/category tag`);
-    if (element.tags.includes('scaffold') && !element.metadata?.source) errors.push(`${element.id}: scaffold needs an existing source`);
+    if (element.tags.some(t => t === 'scaffold' || t === 'partial') && !element.metadata?.source) errors.push(`${element.id}: implemented portions need an existing source`);
     for (const key of ['source', 'contract', 'evidence', 'glossary']) {
       const value = element.metadata?.[key];
       for (const reference of value == null ? [] : Array.isArray(value) ? value : [value]) {
