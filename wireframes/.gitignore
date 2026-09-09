@@ -1,0 +1,10 @@
+# Reproducible candidates, exports, QA reports and pre-publish backups.
+/build/
+
+# Local Python and OS files.
+__pycache__/
+*.py[cod]
+.venv/
+.DS_Store
+
+# taypeer.fig, source/ and assets/ are intentional deliverables: keep them in Git.

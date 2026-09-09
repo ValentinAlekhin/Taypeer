@@ -1,0 +1,4 @@
+interface:
+  display_name: "Taypeer Design"
+  short_description: "Редактирование и проверка макетов Taypeer"
+  default_prompt: "Используй $taypeer-design для изменения макетов Taypeer, проверки экспорта и обновления спецификации."

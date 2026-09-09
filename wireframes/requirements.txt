@@ -1,0 +1,2 @@
+# PNG contact sheets; the rest of the workflow uses the Python standard library.
+Pillow==12.1.1
