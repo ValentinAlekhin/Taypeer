@@ -9,6 +9,7 @@ const checker = createLinkChecker(root);
 const errors = [];
 const docs = ['README.md', 'AGENTS.md', 'CONTEXT.md', 'spec.md', 'spikes/README.md',
   '.agents/skills/taypeer-architecture/SKILL.md',
+  '.agents/skills/taypeer-rust/SKILL.md',
   ...readdirSync(path.join(root, 'docs')).filter(f => f.endsWith('.md')).map(f => `docs/${f}`)];
 
 for (const name of docs) {

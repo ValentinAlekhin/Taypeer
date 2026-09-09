@@ -1,0 +1,3 @@
+interface:
+  display_name: "Taypeer Rust"
+  short_description: "Чистый Rust: декомпозиция, типы и владение"
