@@ -1,0 +1,14 @@
+Window: "", App: Pass2PProbeFinal.
+0 standard window Secondary Actions: Raise
+	1 container
+		2 button English / Русский
+		3 text field (settable, string) Synthetic password / Тестовый пароль, Value: C-L-Жук-42
+			4 button
+		5 button Диалог
+	6 close button
+	7 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	8 minimize button
+9 menu bar
+	10 Pass2PProbeFinal
+
+The focused UI element is 0 standard window Secondary Actions: Raise

@@ -1,0 +1,4 @@
+    Checking pass2p-gpui-probe v0.0.0 (/Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android)
+    Finished `dev` profile [unoptimized] target(s) in 1.01s
+warning: the following packages contain code that will be rejected by a future version of Rust: block v0.1.6
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`

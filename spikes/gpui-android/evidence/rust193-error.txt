@@ -1,0 +1,28 @@
+error[E0658]: use of unstable library feature `cold_path`
+   --> /Users/valentin/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gpui-pre-0.3.4/src/profiler.rs:473:13
+    |
+473 |             std::hint::cold_path(); // most tasks are not the worst, optimize for that
+    |             ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: see issue #136873 <https://github.com/rust-lang/rust/issues/136873> for more information
+
+error[E0658]: use of unstable library feature `cold_path`
+   --> /Users/valentin/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gpui-pre-0.3.4/src/profiler.rs:494:13
+    |
+494 |             std::hint::cold_path(); // most tasks are not the worst, optimize for that
+    |             ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: see issue #136873 <https://github.com/rust-lang/rust/issues/136873> for more information
+
+   Compiling enum-iterator-derive v1.5.0
+    Checking fsevent-sys v4.1.0
+    Checking mach2 v0.5.0
+   Compiling rust-i18n-macro v4.2.2
+    Checking filetime v0.2.29
+   Compiling gpui-component v0.6.0 (https://github.com/longbridge/gpui-kit?rev=21f6ce6097c686e98e0ca62ff6178bb4612541a1#21f6ce60)
+    Checking enum-iterator v2.3.0
+    Checking notify v7.0.0
+   Compiling gpui-component-macros v0.6.0 (https://github.com/longbridge/gpui-kit?rev=21f6ce6097c686e98e0ca62ff6178bb4612541a1#21f6ce60)
+For more information about this error, try `rustc --explain E0658`.
+error: could not compile `gpui-pre` (lib) due to 2 previous errors
+warning: build failed, waiting for other jobs to finish...

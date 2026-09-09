@@ -1,0 +1,30 @@
+[workspace]
+resolver = "2"
+
+[workspace.dependencies]
+gpui-component-assets = { path = "../vendor/legacy-kit/crates/assets" }
+gpui-component = { path = "../vendor/legacy-kit/crates/ui" }
+gpui = { path = "../vendor/mobile-zed/crates/gpui", default-features = false }
+gpui_platform = { path = "../vendor/mobile-zed/crates/gpui_platform", default-features = false, features = ["font-kit"] }
+
+[package]
+name = "taypeer-mobile-kit-probe"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+gpui-component-assets.workspace = true
+gpui-component.workspace = true
+gpui.workspace = true
+gpui_platform.workspace = true
+
+[patch."https://github.com/zed-industries/zed"]
+gpui = { path = "../vendor/mobile-zed/crates/gpui" }
+gpui_platform = { path = "../vendor/mobile-zed/crates/gpui_platform" }
+gpui_macros = { path = "../vendor/mobile-zed/crates/gpui_macros" }
+gpui_web = { path = "../vendor/mobile-zed/crates/gpui_web" }
+reqwest_client = { path = "../vendor/mobile-zed/crates/reqwest_client" }
+
+[profile.dev]
+debug = 0

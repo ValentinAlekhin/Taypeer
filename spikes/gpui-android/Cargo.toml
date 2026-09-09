@@ -1,0 +1,19 @@
+[workspace]
+resolver = "2"
+
+[workspace.dependencies]
+gpui-kit = { git = "https://github.com/longbridge/gpui-kit", rev = "21f6ce6097c686e98e0ca62ff6178bb4612541a1" }
+taypeer-ui-probe = { path = "../android-compose" }
+
+[package]
+name = "taypeer-gpui-probe"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+gpui-kit.workspace = true
+taypeer-ui-probe.workspace = true
+
+[profile.dev]
+debug = 0

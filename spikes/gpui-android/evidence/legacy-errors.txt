@@ -1,0 +1,785 @@
+error: gpui_macos@0.1.0: metal shader compilation failed:
+error: failed to run custom build command for `gpui_macos v0.1.0 (/Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/mobile-zed/crates/gpui_macos)`
+
+Caused by:
+  process didn't exit successfully: `/Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/legacy/target/debug/build/gpui_macos-2f796d703ca61b10/build-script-build` (exit status: 1)
+  --- stdout
+  cargo:rerun-if-changed=/Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/mobile-zed/crates/gpui/src/scene.rs
+  cargo:rerun-if-changed=/Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/mobile-zed/crates/gpui/src/geometry.rs
+  cargo:rerun-if-changed=/Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/mobile-zed/crates/gpui/src/color.rs
+  cargo:rerun-if-changed=/Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/mobile-zed/crates/gpui/src/window.rs
+  cargo:rerun-if-changed=/Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/mobile-zed/crates/gpui/src/platform.rs
+  cargo:rerun-if-changed=/Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/mobile-zed/crates/gpui_macos/src/metal_renderer.rs
+  cargo:rerun-if-changed=./src/shaders.metal
+  cargo::error=metal shader compilation failed:
+  xcrun: error: unable to find utility "metal", not a developer tool or in PATH
+
+warning: build failed, waiting for other jobs to finish...
+error[E0432]: unresolved import `gpui::Role`
+ --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/accordion.rs:5:5
+  |
+5 |     Role, SharedString, StatefulInteractiveElement as _, Styled, Window, div,
+  |     ^^^^ no `Role` in the root
+
+error[E0432]: unresolved import `gpui::Role`
+ --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/alert.rs:5:17
+  |
+5 |     RenderOnce, Role, SharedString, StatefulInteractiveElement, StyleRefinement, Styled, Window,
+  |                 ^^^^ no `Role` in the root
+
+error[E0432]: unresolved import `gpui::Role`
+ --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/breadcrumb.rs:5:45
+  |
+5 |     IntoElement, ParentElement, RenderOnce, Role, SharedString, StatefulInteractiveElement,
+  |                                             ^^^^ no `Role` in the root
+
+error[E0432]: unresolved import `gpui::Role`
+  --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/button/button.rs:14:5
+   |
+14 |     Role, SharedString, Stateful, StatefulInteractiveElement as _, StyleRefinement, Styled, Window,
+   |     ^^^^ no `Role` in the root
+
+error[E0432]: unresolved imports `gpui::Role`, `gpui::Toggled`
+ --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/button/toggle.rs:5:17
+  |
+5 |     RenderOnce, Role, SharedString, StatefulInteractiveElement, StyleRefinement, Styled, Toggled,
+  |                 ^^^^ no `Role` in the root                                               ^^^^^^^ no `Toggled` in the root
+
+error[E0432]: unresolved imports `gpui::Role`, `gpui::Toggled`
+  --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/checkbox.rs:9:32
+   |
+ 9 |     ParentElement, RenderOnce, Role, SharedString, StatefulInteractiveElement, StyleRefinement,
+   |                                ^^^^ no `Role` in the root
+10 |     Styled, Toggled, Window, div, prelude::FluentBuilder as _, px, relative, rems, svg,
+   |             ^^^^^^^ no `Toggled` in the root
+
+error[E0432]: unresolved import `gpui::Role`
+ --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/combobox.rs:4:72
+  |
+4 |     Length, MouseDownEvent, ParentElement, Pixels, Render, RenderOnce, Role, SharedString,
+  |                                                                        ^^^^ no `Role` in the root
+
+error[E0432]: unresolved import `gpui::Role`
+ --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/dialog/dialog.rs:6:32
+  |
+6 |     Pixels, Point, RenderOnce, Role, SharedString, StatefulInteractiveElement as _, StyleRefinement,
+  |                                ^^^^ no `Role` in the root
+
+error[E0432]: unresolved imports `gpui::AccessibleAction`, `gpui::Role`
+ --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/input/input.rs:5:5
+  |
+5 |     AccessibleAction, AnyElement, App, DefiniteLength, Edges, EdgesRefinement, Entity, Hsla,
+  |     ^^^^^^^^^^^^^^^^ no `AccessibleAction` in the root
+6 |     InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent, ParentElement as _, Rems,
+7 |     RenderOnce, Role, SharedString, StatefulInteractiveElement as _, StyleRefinement, Styled,
+  |                 ^^^^ no `Role` in the root
+
+error[E0432]: unresolved import `gpui::Role`
+ --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/input/number_input.rs:8:77
+  |
+8 |     InteractiveElement, IntoElement, KeyBinding, ParentElement, RenderOnce, Role, SharedString,
+  |                                                                             ^^^^ no `Role` in the root
+
+error[E0432]: unresolved import `gpui::Role`
+  --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/list/list.rs:17:37
+   |
+17 |     ListSizingBehavior, RenderOnce, Role, ScrollStrategy, SharedString, StatefulInteractiveElement,
+   |                                     ^^^^ no `Role` in the root
+
+error[E0432]: unresolved import `gpui::Role`
+  --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/menu/app_menu_bar.rs:12:13
+   |
+12 |     Render, Role, SharedString, StatefulInteractiveElement, Styled, Subscription, Window, anchored,
+   |             ^^^^ no `Role` in the root
+
+error[E0432]: unresolved import `gpui::Role`
+ --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/menu/menu_item.rs:4:32
+  |
+4 |     ParentElement, RenderOnce, Role, SharedString, StatefulInteractiveElement as _,
+  |                                ^^^^ no `Role` in the root
+
+error[E0432]: unresolved import `gpui::Role`
+  --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/menu/popup_menu.rs:10:36
+   |
+10 |     ParentElement, Pixels, Render, Role, ScrollHandle, SharedString, StatefulInteractiveElement,
+   |                                    ^^^^ no `Role` in the root
+
+error[E0432]: unresolved import `gpui::Role`
+ --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/progress/progress.rs:4:45
+  |
+4 |     IntoElement, ParentElement, RenderOnce, Role, StatefulInteractiveElement as _, StyleRefinement,
+  |                                             ^^^^ no `Role` in the root
+
+error[E0432]: unresolved import `gpui::Role`
+ --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/radio.rs:9:17
+  |
+9 |     RenderOnce, Role, SharedString, StatefulInteractiveElement, StyleRefinement, Styled, Window,
+  |                 ^^^^ no `Role` in the root
+
+error[E0432]: unresolved import `gpui::OngoingScroll`
+ --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/scroll/scrollable_mask.rs:6:80
+  |
+6 |     Hitbox, Hsla, InteractiveElement as _, IntoElement, IsZero as _, LayoutId, OngoingScroll,
+  |                                                                                ^^^^^^^^^^^^^ no `OngoingScroll` in the root
+
+error[E0432]: unresolved import `gpui::container_query`
+  --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/setting/settings.rs:13:50
+   |
+13 |     RenderOnce, StyleRefinement, Styled, Window, container_query, div, prelude::FluentBuilder as _,
+   |                                                  ^^^^^^^^^^^^^^^ no `container_query` in the root
+
+error[E0432]: unresolved imports `gpui::AccessibleAction`, `gpui::Orientation`, `gpui::Role`
+ --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/slider.rs:5:5
+  |
+5 |     AccessibleAction, Along, App, AppContext as _, Axis, Background, Bounds, Context, Corners,
+  |     ^^^^^^^^^^^^^^^^ no `AccessibleAction` in the root
+6 |     DefiniteLength, DragMoveEvent, Empty, Entity, EntityId, EventEmitter, InteractiveElement,
+7 |     IntoElement, IsZero, MouseButton, MouseDownEvent, Orientation, ParentElement as _, Pixels,
+  |                                                       ^^^^^^^^^^^ no `Orientation` in the root
+8 |     Point, Render, RenderOnce, Role, StatefulInteractiveElement as _, StyleRefinement, Styled,
+  |                                ^^^^ no `Role` in the root
+
+error[E0432]: unresolved import `gpui::Role`
+ --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/stepper/item.rs:3:25
+  |
+3 |     Pixels, RenderOnce, Role, StatefulInteractiveElement as _, StyleRefinement, Styled, Window,
+  |                         ^^^^ no `Role` in the root
+
+error[E0432]: unresolved imports `gpui::Role`, `gpui::Toggled`
+ --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/switch.rs:7:50
+  |
+7 |     IntoElement, ParentElement as _, RenderOnce, Role, SharedString,
+  |                                                  ^^^^ no `Role` in the root
+8 |     StatefulInteractiveElement as _, StyleRefinement, Styled, Toggled, Window, div,
+  |                                                               ^^^^^^^ no `Toggled` in the root
+
+error[E0432]: unresolved import `gpui::Role`
+ --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/tab/tab.rs:8:92
+  |
+8 |     Hsla, InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels, RenderOnce, Role,
+  |                                                                                            ^^^^ no `Role` in the root
+
+error[E0432]: unresolved import `gpui::Role`
+ --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/tab/tab_bar.rs:5:84
+  |
+5 |     ElementId, InteractiveElement, IntoElement, ParentElement, Pixels, RenderOnce, Role,
+  |                                                                                    ^^^^ no `Role` in the root
+
+error[E0432]: unresolved import `gpui::Role`
+ --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/table/table.rs:2:95
+  |
+2 |     AnyElement, App, InteractiveElement as _, IntoElement, ParentElement, Pixels, RenderOnce, Role,
+  |                                                                                               ^^^^ no `Role` in the root
+
+error[E0433]: cannot find `accesskit` in `gpui`
+   --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/button/button.rs:504:27
+    |
+504 |                     gpui::accesskit::Toggled::True
+    |                           ^^^^^^^^^ could not find `accesskit` in `gpui`
+
+error[E0433]: cannot find `accesskit` in `gpui`
+   --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/button/button.rs:506:27
+    |
+506 |                     gpui::accesskit::Toggled::False
+    |                           ^^^^^^^^^ could not find `accesskit` in `gpui`
+
+error[E0433]: cannot find `accesskit` in `gpui`
+   --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/input/input.rs:317:29
+    |
+317 |         data: Option<&gpui::accesskit::ActionData>,
+    |                             ^^^^^^^^^ could not find `accesskit` in `gpui`
+
+error[E0433]: cannot find `accesskit` in `gpui`
+   --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/input/input.rs:321:24
+    |
+321 |         let Some(gpui::accesskit::ActionData::Value(value)) = data else {
+    |                        ^^^^^^^^^ could not find `accesskit` in `gpui`
+
+warning: unused import: `StatefulInteractiveElement as _`
+ --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/progress/progress.rs:4:51
+  |
+4 |     IntoElement, ParentElement, RenderOnce, Role, StatefulInteractiveElement as _, StyleRefinement,
+  |                                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `StatefulInteractiveElement as _`
+ --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/table/table.rs:3:5
+  |
+3 |     StatefulInteractiveElement as _, StyleRefinement, Styled, TextAlign, Window, div,
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0560]: struct `BoxShadow` has no field named `inset`
+   --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/window_border.rs:217:41
+    |
+217 | ...                   inset: false,
+    |                       ^^^^^ `BoxShadow` does not have this field
+    |
+    = note: all struct fields are already assigned
+
+error[E0560]: struct `BoxShadow` has no field named `inset`
+   --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/window_border.rs:231:41
+    |
+231 | ...                   inset: false,
+    |                       ^^^^^ `BoxShadow` does not have this field
+    |
+    = note: all struct fields are already assigned
+
+error[E0599]: no method named `role` found for struct `Stateful<E>` in the current scope
+   --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/accordion.rs:243:26
+    |
+241 | /                     h_flex()
+242 | |                         .id(self.index)
+243 | |                         .role(Role::Button)
+    | |                         -^^^^ method not found in `Stateful<gpui::Div>`
+    | |_________________________|
+    |
+
+error[E0599]: no method named `role` found for struct `Stateful<E>` in the current scope
+   --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/alert.rs:192:14
+    |
+190 | /         h_flex()
+191 | |             .id(self.id)
+192 | |             .role(Role::Alert)
+    | |             -^^^^ method not found in `Stateful<gpui::Div>`
+    | |_____________|
+    |
+
+error[E0599]: no method named `role` found for struct `Stateful<E>` in the current scope
+  --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/breadcrumb.rs:95:14
+   |
+93 | /         div()
+94 | |             .id(self.id)
+95 | |             .role(if self.on_click.is_some() && !self.disabled {
+   | |             -^^^^ method not found in `Stateful<gpui::Div>`
+   | |_____________|
+   |
+
+error[E0599]: no method named `role` found for struct `Stateful<E>` in the current scope
+   --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/button/button.rs:494:14
+    |
+493 | /         self.base
+494 | |             .role(if self.variant.is_link() {
+    | |             -^^^^ method not found in `Stateful<gpui::Div>`
+    | |_____________|
+    |
+
+error[E0599]: no method named `role` found for struct `Stateful<E>` in the current scope
+   --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/button/toggle.rs:159:14
+    |
+157 | /         div()
+158 | |             .id(self.id)
+159 | |             .role(Role::Button)
+    | |             -^^^^ method not found in `Stateful<gpui::Div>`
+    | |_____________|
+    |
+
+error[E0599]: no method named `role` found for struct `Stateful<E>` in the current scope
+   --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/button/toggle.rs:317:14
+    |
+315 | /         h_flex()
+316 | |             .id(self.id)
+317 | |             .role(Role::Toolbar)
+    | |             -^^^^ method not found in `Stateful<gpui::Div>`
+    | |_____________|
+    |
+
+error[E0599]: no method named `role` found for struct `Stateful<E>` in the current scope
+   --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/checkbox.rs:224:14
+    |
+222 | /         self.base
+223 | |             .id(self.id.clone())
+224 | |             .role(Role::CheckBox)
+    | |             -^^^^ method not found in `Stateful<gpui::Div>`
+    | |_____________|
+    |
+
+error[E0599]: no method named `role` found for struct `Stateful<E>` in the current scope
+   --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/combobox.rs:933:14
+    |
+931 | /         div()
+932 | |             .id(self.id.clone())
+933 | |             .role(Role::ComboBox)
+    | |             -^^^^ method not found in `Stateful<gpui::Div>`
+    | |_____________|
+    |
+
+error[E0599]: no method named `role` found for struct `Stateful<E>` in the current scope
+   --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/dialog/dialog.rs:534:30
+    |
+532 | /                         v_flex()
+533 | |                             .id(layer_ix)
+534 | |                             .role(self.a11y_role)
+    | |                             -^^^^ method not found in `Stateful<gpui::Div>`
+    | |_____________________________|
+    |
+
+error[E0560]: struct `BoxShadow` has no field named `inset`
+   --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/dialog/dialog.rs:660:41
+    |
+660 | ...                   inset: false,
+    |                       ^^^^^ `BoxShadow` does not have this field
+    |
+    = note: all struct fields are already assigned
+
+error[E0560]: struct `BoxShadow` has no field named `inset`
+   --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/dialog/dialog.rs:667:41
+    |
+667 | ...                   inset: false,
+    |                       ^^^^^ `BoxShadow` does not have this field
+    |
+    = note: all struct fields are already assigned
+
+error[E0599]: no method named `flex_grow_1` found for struct `Stateful<E>` in the current scope
+   --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/dock/tab_panel.rs:929:22
+    |
+926 | /                 div()
+927 | |                     .id("tab-bar-empty-space")
+928 | |                     .h_full()
+929 | |                     .flex_grow_1()
+    | |_____________________-^^^^^^^^^^^
+    |
+help: there is a method `flex_grow_0` with a similar name
+    |
+929 -                     .flex_grow_1()
+929 +                     .flex_grow_0()
+    |
+
+error[E0599]: no method named `is_a11y_active` found for mutable reference `&mut gpui::Window` in the current scope
+   --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/input/input.rs:404:43
+    |
+404 |         let accessibility_value = (window.is_a11y_active()
+    |                                           ^^^^^^^^^^^^^^ method not found in `&mut gpui::Window`
+
+error[E0599]: no method named `role` found for struct `Stateful<E>` in the current scope
+   --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/input/input.rs:454:14
+    |
+452 | /         div()
+453 | |             .id(("input", self.state.entity_id()))
+454 | |             .role(accessibility_role)
+    | |             -^^^^ method not found in `Stateful<gpui::Div>`
+    | |_____________|
+    |
+
+error[E0599]: no method named `role` found for struct `Stateful<E>` in the current scope
+   --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/input/number_input.rs:304:14
+    |
+302 | /         h_flex()
+303 | |             .id(("number-input", self.state.entity_id()))
+304 | |             .role(Role::SpinButton)
+    | |             -^^^^ method not found in `Stateful<gpui::Div>`
+    | |_____________|
+    |
+
+error[E0599]: no method named `flex_grow_1` found for struct `Stateful<E>` in the current scope
+    --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/input/state.rs:3198:14
+     |
+3194 | /         div()
+3195 | |             .id("input-state")
+3196 | |             .flex_1()
+3197 | |             .when(self.mode.is_multi_line(), |this| this.h_full())
+3198 | |             .flex_grow_1()
+     | |_____________-^^^^^^^^^^^
+     |
+help: there is a method `flex_grow_0` with a similar name
+     |
+3198 -             .flex_grow_1()
+3198 +             .flex_grow_0()
+     |
+
+error[E0599]: no method named `role` found for struct `Stateful<E>` in the current scope
+   --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/list/list.rs:477:14
+    |
+475 | /         div()
+476 | |             .id(id)
+477 | |             .role(Role::ListItem)
+    | |             -^^^^ method not found in `Stateful<gpui::Div>`
+    | |_____________|
+    |
+
+error[E0599]: no method named `flex_grow_1` found for struct `gpui::Div` in the current scope
+   --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/list/list.rs:526:14
+    |
+525 | /         v_flex()
+526 | |             .flex_grow_1()
+    | |_____________-^^^^^^^^^^^
+    |
+help: there is a method `flex_grow_0` with a similar name
+    |
+526 -             .flex_grow_1()
+526 +             .flex_grow_0()
+    |
+
+error[E0599]: no method named `role` found for struct `Stateful<E>` in the current scope
+   --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/list/list.rs:775:14
+    |
+773 | /         div()
+774 | |             .id("list")
+775 | |             .role(Role::List)
+    | |             -^^^^ method not found in `Stateful<gpui::Div>`
+    | |_____________|
+    |
+
+error[E0599]: no method named `role` found for struct `Stateful<E>` in the current scope
+   --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/menu/app_menu_bar.rs:123:14
+    |
+121 | /         h_flex()
+122 | |             .id("app-menu-bar")
+123 | |             .role(Role::MenuBar)
+    | |             -^^^^ method not found in `Stateful<gpui::Div>`
+    | |_____________|
+    |
+
+error[E0599]: no method named `role` found for struct `Stateful<E>` in the current scope
+  --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/menu/menu_item.rs:97:14
+   |
+95 | /         h_flex()
+96 | |             .id(self.id)
+97 | |             .role(Role::MenuItem)
+   | |             -^^^^ method not found in `Stateful<gpui::Div>`
+   | |_____________|
+   |
+
+error[E0599]: no method named `role` found for struct `Stateful<E>` in the current scope
+    --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/menu/popup_menu.rs:1429:14
+     |
+1427 | /         v_flex()
+1428 | |             .id("popup-menu")
+1429 | |             .role(Role::Menu)
+     | |             -^^^^ method not found in `Stateful<gpui::Div>`
+     | |_____________|
+     |
+
+error[E0599]: no method named `role` found for struct `Stateful<E>` in the current scope
+  --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/progress/progress.rs:99:14
+   |
+97 | /         div()
+98 | |             .id(self.id)
+99 | |             .role(Role::ProgressIndicator)
+   | |             -^^^^ method not found in `Stateful<gpui::Div>`
+   | |_____________|
+   |
+
+error[E0599]: no method named `role` found for struct `Stateful<E>` in the current scope
+   --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/radio.rs:162:14
+    |
+160 | /         self.base
+161 | |             .id(self.id.clone())
+162 | |             .role(Role::RadioButton)
+    | |             -^^^^ method not found in `Stateful<gpui::Div>`
+    | |_____________|
+    |
+
+error[E0599]: no method named `role` found for struct `Stateful<E>` in the current scope
+   --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/radio.rs:365:47
+    |
+365 |         let mut container = div().id(self.id).role(Role::RadioGroup);
+    |                                               ^^^^ method not found in `Stateful<gpui::Div>`
+
+error[E0599]: no method named `flex_grow_1` found for struct `Stateful<E>` in the current scope
+   --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/resizable/panel.rs:290:14
+    |
+287 | /         div()
+288 | |             .id(("resizable-panel", self.panel_ix))
+289 | |             .flex()
+290 | |             .flex_grow_1()
+    | |_____________-^^^^^^^^^^^
+    |
+help: there is a method `flex_grow_0` with a similar name
+    |
+290 -             .flex_grow_1()
+290 +             .flex_grow_0()
+    |
+
+error[E0599]: no method named `restrict_scroll_to_axis` found for struct `Stateful<E>` in the current scope
+   --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/scroll/scrollable.rs:156:14
+    |
+144 |           let scroll_area = div()
+    |  ___________________________-
+145 | |             .id(area_id)
+146 | |             .size_full()
+147 | |             .flex()
+...   |
+156 | |             .restrict_scroll_to_axis()
+    | |             -^^^^^^^^^^^^^^^^^^^^^^^ method not found in `Stateful<gpui::Div>`
+    | |_____________|
+    |
+
+error[E0599]: no method named `role` found for struct `Stateful<E>` in the current scope
+   --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/slider.rs:607:14
+    |
+605 | /         div()
+606 | |             .id(("slider", self.state.entity_id()))
+607 | |             .role(Role::Slider)
+    | |             -^^^^ method not found in `Stateful<gpui::Div>`
+    | |_____________|
+    |
+
+error[E0599]: no method named `role` found for struct `Stateful<E>` in the current scope
+   --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/stepper/item.rs:126:14
+    |
+124 | /         div()
+125 | |             .id(("stepper-item", self.step))
+126 | |             .role(Role::ListItem)
+    | |             -^^^^ method not found in `Stateful<gpui::Div>`
+    | |_____________|
+    |
+
+error[E0599]: no method named `role` found for struct `Stateful<E>` in the current scope
+   --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/switch.rs:146:18
+    |
+144 | /             h_flex()
+145 | |                 .id(self.id.clone())
+146 | |                 .role(Role::Switch)
+    | |                 -^^^^ method not found in `Stateful<gpui::Div>`
+    | |_________________|
+    |
+
+error[E0599]: no method named `role` found for struct `Stateful<E>` in the current scope
+   --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/tab/tab.rs:730:14
+    |
+728 | /         self.base
+729 | |             .id(self.ix)
+730 | |             .role(Role::Tab)
+    | |             -^^^^ method not found in `Stateful<gpui::Div>`
+    | |_____________|
+    |
+
+error[E0599]: no method named `role` found for struct `Stateful<E>` in the current scope
+   --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/tab/tab_bar.rs:417:14
+    |
+416 | /         self.base
+417 | |             .role(Role::TabList)
+    | |             -^^^^ method not found in `Stateful<gpui::Div>`
+    | |_____________|
+    |
+
+error[E0599]: no method named `restrict_scroll_to_axis` found for struct `Stateful<E>` in the current scope
+   --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/tab/tab_bar.rs:450:26
+    |
+445 | /                     h_flex()
+446 | |                         .id("tabs-inner")
+447 | |                         .relative()
+448 | |                         .gap(gap)
+449 | |                         .overflow_x_scroll()
+450 | |                         .restrict_scroll_to_axis()
+    | |                         -^^^^^^^^^^^^^^^^^^^^^^^ method not found in `Stateful<gpui::Div>`
+    | |_________________________|
+    |
+
+error[E0599]: no method named `flex_grow_1` found for struct `Stateful<E>` in the current scope
+    --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/table/state.rs:2297:51
+     |
+2297 |                         h_flex().id("table-body").flex_grow_1().size_full().child(
+     |                                                   ^^^^^^^^^^^
+     |
+help: there is a method `flex_grow_0` with a similar name
+     |
+2297 -                         h_flex().id("table-body").flex_grow_1().size_full().child(
+2297 +                         h_flex().id("table-body").flex_grow_0().size_full().child(
+     |
+
+error[E0599]: no method named `flex_grow_1` found for struct `UniformList` in the current scope
+    --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/table/state.rs:2364:30
+     |
+2298 | / ...                   uniform_list(
+2299 | | ...                       "table-uniform-list",
+2300 | | ...                       render_rows_count,
+2301 | | ...                       cx.processor(
+...    |
+2364 | | ...                   .flex_grow_1()
+     | |_______________________-^^^^^^^^^^^
+     |
+help: there is a method `flex_grow_0` with a similar name
+     |
+2364 -                             .flex_grow_1()
+2364 +                             .flex_grow_0()
+     |
+
+error[E0599]: no method named `role` found for struct `Stateful<E>` in the current scope
+  --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/table/table.rs:92:14
+   |
+90 | /         div()
+91 | |             .id(("table", self.ix))
+92 | |             .role(Role::Table)
+   | |             -^^^^ method not found in `Stateful<gpui::Div>`
+   | |_____________|
+   |
+
+error[E0599]: no method named `role` found for struct `Stateful<E>` in the current scope
+   --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/table/table.rs:165:14
+    |
+163 | /         div()
+164 | |             .id(("table-header", self.ix))
+165 | |             .role(Role::RowGroup)
+    | |             -^^^^ method not found in `Stateful<gpui::Div>`
+    | |_____________|
+    |
+
+error[E0599]: no method named `role` found for struct `Stateful<E>` in the current scope
+   --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/table/table.rs:239:14
+    |
+237 | /         div()
+238 | |             .id(("table-body", self.ix))
+239 | |             .role(Role::RowGroup)
+    | |             -^^^^ method not found in `Stateful<gpui::Div>`
+    | |_____________|
+    |
+
+error[E0599]: no method named `role` found for struct `Stateful<E>` in the current scope
+   --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/table/table.rs:382:14
+    |
+380 | /         div()
+381 | |             .id(("table-row", self.ix))
+382 | |             .role(Role::Row)
+    | |             -^^^^ method not found in `Stateful<gpui::Div>`
+    | |_____________|
+    |
+
+error[E0599]: no method named `role` found for struct `Stateful<E>` in the current scope
+   --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/table/table.rs:473:14
+    |
+471 | /         div()
+472 | |             .id(("table-head", self.ix))
+473 | |             .role(Role::ColumnHeader)
+    | |             -^^^^ method not found in `Stateful<gpui::Div>`
+    | |_____________|
+    |
+
+error[E0599]: no method named `role` found for struct `Stateful<E>` in the current scope
+   --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/table/table.rs:567:14
+    |
+565 | /         div()
+566 | |             .id(("table-cell", self.ix))
+567 | |             .role(Role::Cell)
+    | |             -^^^^ method not found in `Stateful<gpui::Div>`
+    | |_____________|
+    |
+
+error[E0599]: no method named `flex_grow_1` found for struct `UniformList` in the current scope
+   --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/tree.rs:543:18
+    |
+503 | /                 uniform_list("entries", self.entries.len(), {
+504 | |                     cx.processor(move |state, visible_range: Range<usize>, window, cx| {
+505 | |                         let mut items = Vec::with_capacity(visible_range.len());
+506 | |                         for ix in visible_range {
+...   |
+542 | |                 })
+543 | |                 .flex_grow_1()
+    | |_________________-^^^^^^^^^^^
+    |
+help: there is a method `flex_grow_0` with a similar name
+    |
+543 -                 .flex_grow_1()
+543 +                 .flex_grow_0()
+    |
+
+error[E0560]: struct `BoxShadow` has no field named `inset`
+  --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/styled.rs:39:9
+   |
+39 |         inset: false,
+   |         ^^^^^ `BoxShadow` does not have this field
+   |
+   = note: all struct fields are already assigned
+
+error[E0560]: struct `WindowOptions` has no field named `app_owns_titlebar_drag`
+  --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/title_bar.rs:69:13
+   |
+69 |             app_owns_titlebar_drag: true,
+   |             ^^^^^^^^^^^^^^^^^^^^^^ `WindowOptions` does not have this field
+   |
+   = note: available fields are: `window_bounds`, `focus`, `show`, `kind`, `is_movable` ... and 9 others
+
+error[E0599]: no method named `restrict_scroll_to_axis` found for struct `Stateful<E>` in the current scope
+   --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/virtual_list.rs:196:14
+    |
+192 |           base: div()
+    |  _______________-
+193 | |             .id(id)
+194 | |             .size_full()
+195 | |             .overflow_scroll()
+196 | |             .restrict_scroll_to_axis()
+    | |             -^^^^^^^^^^^^^^^^^^^^^^^ method not found in `Stateful<gpui::Div>`
+    | |_____________|
+    |
+
+error[E0599]: no method named `accessibility_id` found for struct `Stateful<E>` in the current scope
+   --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/button/button.rs:295:31
+    |
+295 |         self.base = self.base.accessibility_id(id);
+    |                               ^^^^^^^^^^^^^^^^ method not found in `Stateful<gpui::Div>`
+
+error[E0061]: this method takes 0 arguments but 1 argument was supplied
+    --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/text/node.rs:2094:26
+     |
+2094 |                         .flex_grow(width)
+     |                          ^^^^^^^^^ ----- unexpected argument of type `f32`
+     |
+note: method defined here
+    --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/mobile-zed/crates/gpui/src/styled.rs:215:8
+     |
+ 215 |     fn flex_grow(mut self) -> Self {
+     |        ^^^^^^^^^
+help: remove the extra argument
+     |
+2094 -                         .flex_grow(width)
+2094 +                         .flex_grow()
+     |
+
+error[E0061]: this method takes 0 arguments but 1 argument was supplied
+    --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/text/node.rs:2095:26
+     |
+2095 |                         .flex_shrink(1.)
+     |                          ^^^^^^^^^^^ -- unexpected argument of type `{float}`
+     |
+note: method defined here
+    --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/mobile-zed/crates/gpui/src/styled.rs:229:8
+     |
+ 229 |     fn flex_shrink(mut self) -> Self {
+     |        ^^^^^^^^^^^
+help: remove the extra argument
+     |
+2095 -                         .flex_shrink(1.)
+2095 +                         .flex_shrink()
+     |
+
+error[E0599]: no variant, associated function, or constant named `Touch` found for enum `ClickEvent` in the current scope
+  --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/text/text_view.rs:44:21
+   |
+44 |         ClickEvent::Touch(click) => !click.long_press,
+   |                     ^^^^^ variant, associated function, or constant not found in `ClickEvent`
+
+warning: unused import: `StatefulInteractiveElement`
+ --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/dialog/dialog.rs:6:52
+  |
+6 |     Pixels, Point, RenderOnce, Role, SharedString, StatefulInteractiveElement as _, StyleRefinement,
+  |                                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `StatefulInteractiveElement`
+ --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/input/input.rs:7:37
+  |
+7 |     RenderOnce, Role, SharedString, StatefulInteractiveElement as _, StyleRefinement, Styled,
+  |                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `StatefulInteractiveElement`
+ --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/switch.rs:8:5
+  |
+8 |     StatefulInteractiveElement as _, StyleRefinement, Styled, Toggled, Window, div,
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `StatefulInteractiveElement`
+ --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/input/number_input.rs:9:5
+  |
+9 |     StatefulInteractiveElement as _, StyleRefinement, Styled, TextAlign, actions,
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `StatefulInteractiveElement`
+ --> /Users/valentin/projects/pet-projects/pass2p/spikes/gpui-android/vendor/legacy-kit/crates/ui/src/stepper/item.rs:3:31
+  |
+3 |     Pixels, RenderOnce, Role, StatefulInteractiveElement as _, StyleRefinement, Styled, Window,
+  |                               ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Some errors have detailed explanations: E0061, E0432, E0433, E0560, E0599.
+For more information about an error, try `rustc --explain E0061`.
+warning: `gpui-component` (lib) generated 7 warnings
+error: could not compile `gpui-component` (lib) due to 79 previous errors; 7 warnings emitted

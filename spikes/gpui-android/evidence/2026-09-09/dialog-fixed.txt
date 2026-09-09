@@ -1,0 +1,4 @@
+The following is a diff from the previous accessibility tree for Window: "" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.
+~		14 button Диалог
++		20 button Close
+The focused UI element is 0 standard window Secondary Actions: Raise
