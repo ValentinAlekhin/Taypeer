@@ -1,11 +1,14 @@
+mod options;
+
+pub use options::{FONT_SIZES, Language, ThemePreference};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Preferences {
-    pub language: String,
-    pub theme: String,
+    pub language: Language,
+    pub theme: ThemePreference,
     pub font_size: u8,
     pub group_width: f32,
     pub entry_width: f32,
@@ -13,8 +16,8 @@ pub struct Preferences {
 impl Default for Preferences {
     fn default() -> Self {
         Self {
-            language: "en".into(),
-            theme: "system".into(),
+            language: Language::default(),
+            theme: ThemePreference::default(),
             font_size: 16,
             group_width: 224.,
             entry_width: 480.,
@@ -45,9 +48,7 @@ impl Preferences {
         Ok(prefs)
     }
     fn validate(&self) -> Result<(), ()> {
-        if !["en", "ru"].contains(&self.language.as_str())
-            || !["system", "light", "dark"].contains(&self.theme.as_str())
-            || ![14, 16, 18].contains(&self.font_size)
+        if !FONT_SIZES.contains(&self.font_size)
             || !self.group_width.is_finite()
             || !self.entry_width.is_finite()
             || !(192.0..=280.0).contains(&self.group_width)
@@ -105,15 +106,51 @@ mod tests {
         let directory = Directory::new();
         let path = directory.file();
         let mut prefs = Preferences::load_from(&path).unwrap();
-        assert_eq!(prefs.language, "en");
-        assert_eq!(prefs.theme, "system");
-        prefs.language = "ru".into();
+        assert_eq!(prefs.language, Language::English);
+        assert_eq!(prefs.theme, ThemePreference::System);
+        prefs.language = Language::Russian;
         prefs.font_size = 18;
         prefs.save_to(&path).unwrap();
         let loaded = Preferences::load_from(&path).unwrap();
-        assert_eq!(loaded.language, "ru");
-        assert_eq!(loaded.theme, "system");
+        assert_eq!(loaded.language, Language::Russian);
+        assert_eq!(loaded.theme, ThemePreference::System);
         assert_eq!(loaded.font_size, 18);
+    }
+
+    #[test]
+    fn typed_options_read_and_write_the_existing_toml_keys() {
+        let directory = Directory::new();
+        let path = directory.file();
+        for (language, code) in [(Language::English, "en"), (Language::Russian, "ru")] {
+            for (theme, key) in [
+                (ThemePreference::System, "system"),
+                (ThemePreference::Light, "light"),
+                (ThemePreference::Dark, "dark"),
+            ] {
+                // Literal fixture models the file produced before typed preferences.
+                let previous = format!(
+                    "language = \"{code}\"\ntheme = \"{key}\"\nfont_size = 16\ngroup_width = 224.0\nentry_width = 480.0\n"
+                );
+                std::fs::write(&path, &previous).unwrap();
+                let loaded = Preferences::load_from(&path).unwrap();
+                assert_eq!(loaded.language, language);
+                assert_eq!(loaded.theme, theme);
+                loaded.save_to(&path).unwrap();
+                assert_eq!(std::fs::read_to_string(&path).unwrap(), previous);
+            }
+        }
+    }
+
+    #[test]
+    fn only_system_theme_follows_the_os_appearance() {
+        for system_is_dark in [false, true] {
+            assert_eq!(
+                ThemePreference::System.is_dark(system_is_dark),
+                system_is_dark
+            );
+            assert!(!ThemePreference::Light.is_dark(system_is_dark));
+            assert!(ThemePreference::Dark.is_dark(system_is_dark));
+        }
     }
 
     #[test]
@@ -126,6 +163,8 @@ mod tests {
             format!("{baseline}\nfuture_setting = true\n"),
             baseline.replace("font_size = 16", "font_size = 99"),
             baseline.replace("group_width = 224.0", "group_width = nan"),
+            baseline.replace("language = \"en\"", "language = \"future-language\""),
+            baseline.replace("theme = \"system\"", "theme = \"future-theme\""),
         ] {
             std::fs::write(&path, &contents).unwrap();
             assert!(Preferences::load_from(&path).is_err());
@@ -142,7 +181,7 @@ mod tests {
         prefs.save_to(&path).unwrap();
         let previous = std::fs::read_to_string(&path).unwrap();
         std::fs::create_dir(path.with_extension("toml.new")).unwrap();
-        prefs.theme = "dark".into();
+        prefs.theme = ThemePreference::Dark;
         assert!(prefs.save_to(&path).is_err());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), previous);
     }
