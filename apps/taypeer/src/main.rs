@@ -1,4 +1,4 @@
-//! Synthetic, process-local Taypeer vertical slice. Never use real secrets.
+//! Taypeer local encrypted database client and explicit synthetic demonstration mode.
 
 #[cfg(target_os = "macos")]
 mod macos;
@@ -19,7 +19,7 @@ fn main() {
         std::process::exit(2);
     }
     #[cfg(target_os = "macos")]
-    macos::run();
+    macos::run(args.iter().any(|arg| arg == "--demo"));
     #[cfg(not(target_os = "macos"))]
     {
         eprintln!("The GUI requires macOS. Use --smoke-test for the portable demo.");

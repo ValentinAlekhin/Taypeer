@@ -67,8 +67,8 @@ views 'Обзор' {
   }
   view implementation {
     title 'Что существует в основном workspace'
-    description 'Первый реализуемый срез: macOS, Rust-правила, Automerge и сессии с искусственными данными в памяти. Не подтверждает безопасность или готовность полной v1.'
-    include taypeer.mac, taypeer.core, taypeer.sessions, taypeer.document, taypeer.demo, taypeer.theme
+    description 'macOS, Rust-правила, Automerge, файловые сессии и экспериментальное зашифрованное хранение. Не подтверждает безопасность или готовность полной v1.'
+    include taypeer.mac, taypeer.core, taypeer.sessions, taypeer.document, taypeer.crypto, taypeer.storage, taypeer.vault, taypeer.backups, taypeer.demo, taypeer.theme
     autoLayout LeftRight
   }
 }

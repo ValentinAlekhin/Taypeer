@@ -5,6 +5,7 @@ mod details;
 mod dialogs;
 mod editor;
 mod entries;
+mod files;
 mod groups;
 mod inspector;
 mod navigation;
@@ -21,7 +22,7 @@ use gpui_kit::component::*;
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use std::collections::{BTreeMap, BTreeSet};
-use taypeer_services::{DatabaseId, DemoService, EntryId, GroupId, RevisionId, SessionToken};
+use taypeer_services::{DatabaseId, DatabaseService, EntryId, GroupId, RevisionId, SessionToken};
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 enum EntryTab {
@@ -48,11 +49,13 @@ enum Navigation {
     Group(GroupId),
     Entry(EntryId),
     NewEntry,
+    OpenFile(std::path::PathBuf),
     Cancel,
 }
 #[derive(Clone)]
 enum Form {
     Database,
+    OpenFile(std::path::PathBuf),
     Group(Option<GroupId>),
     Rename(GroupId),
 }
@@ -65,7 +68,7 @@ struct WindowSubscriptions {
 }
 
 pub(super) struct Client {
-    service: DemoService,
+    service: DatabaseService,
     database: Option<DatabaseId>,
     session: Option<SessionToken>,
     sessions: BTreeMap<DatabaseId, SessionToken>,
@@ -75,6 +78,12 @@ pub(super) struct Client {
     password: Entity<InputState>,
     search: Entity<InputState>,
     form_input: Entity<InputState>,
+    file_password: Entity<InputState>,
+    file_confirmation: Entity<InputState>,
+    busy: bool,
+    demo_mode: bool,
+    lock_requested: bool,
+    io_task: Option<Task<()>>,
     form: Option<Form>,
     settings: bool,
     root_focus: FocusHandle,
@@ -97,7 +106,7 @@ pub(super) struct Client {
 }
 
 impl Client {
-    pub(super) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub(super) fn new(window: &mut Window, cx: &mut Context<Self>, demo_mode: bool) -> Self {
         let (prefs, invalid_prefs) = Preferences::load();
         rust_i18n::set_locale(prefs.language.code());
         let password = input("", true, window, cx);
@@ -112,7 +121,7 @@ impl Client {
             prompts: Vec::new(),
         };
         let mut this = Self {
-            service: DemoService::new(),
+            service: DatabaseService::new(),
             database: None,
             session: None,
             sessions: BTreeMap::new(),
@@ -122,6 +131,12 @@ impl Client {
             password,
             search,
             form_input,
+            file_password: input("", true, window, cx),
+            file_confirmation: input("", true, window, cx),
+            busy: false,
+            demo_mode,
+            lock_requested: false,
+            io_task: None,
             form: None,
             settings: false,
             root_focus: cx.focus_handle(),
@@ -175,6 +190,23 @@ impl Client {
                 }
             },
         ));
+        for field in [&self.file_password, &self.file_confirmation] {
+            self.subscriptions.prompts.push(cx.subscribe_in(
+                field,
+                window,
+                |this, state, event: &InputEvent, window, cx| {
+                    let current = state.entity_id() == this.file_password.entity_id()
+                        || state.entity_id() == this.file_confirmation.entity_id();
+                    if current
+                        && !this.busy
+                        && this.form.is_some()
+                        && matches!(event, InputEvent::PressEnter { .. })
+                    {
+                        this.commit_form(window, cx);
+                    }
+                },
+            ));
+        }
         self.update_placeholders(window, cx);
     }
 
@@ -192,6 +224,23 @@ impl Client {
 }
 impl Render for Client {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.busy {
+            return v_flex()
+                .size_full()
+                .items_center()
+                .justify_center()
+                .gap_4()
+                .track_focus(&self.root_focus)
+                .key_context("Taypeer")
+                .on_action(cx.listener(|this, _: &LockDatabase, window, cx| this.lock(window, cx)))
+                .child(tr("file_working"))
+                .child(
+                    gpui_kit::component::button::Button::new("busy-lock")
+                        .label(tr("lock"))
+                        .on_click(cx.listener(|this, _, window, cx| this.lock(window, cx))),
+                )
+                .into_any_element();
+        }
         v_flex()
             .track_focus(&self.root_focus)
             .key_context("Taypeer")
@@ -216,8 +265,7 @@ impl Render for Client {
                     this.settings = false;
                     this.root_focus.focus(window, cx);
                 } else if this.form.is_some() {
-                    this.form = None;
-                    this.root_focus.focus(window, cx);
+                    this.cancel_form(window, cx);
                 } else if this.pending.is_some() {
                     this.pending = None;
                     this.root_focus.focus(window, cx);
@@ -237,7 +285,11 @@ impl Render for Client {
                     .py_1()
                     .text_xs()
                     .text_color(cx.theme().warning)
-                    .child(tr("demo")),
+                    .child(tr(if self.demo_mode {
+                        "demo"
+                    } else {
+                        "file_experimental"
+                    })),
             )
             .child(div().flex_1().min_h_0().child(if self.session.is_some() {
                 self.workspace(cx)
@@ -261,8 +313,19 @@ impl Render for Client {
                     .border_color(cx.theme().border)
                     .text_xs()
                     .text_color(cx.theme().muted_foreground)
-                    .child(tr("memory")),
+                    .child(tr(
+                        if self
+                            .database
+                            .as_ref()
+                            .is_some_and(|id| self.service.is_file(id))
+                        {
+                            "file_autosave"
+                        } else {
+                            "file_welcome"
+                        },
+                    )),
             )
             .children(self.overlay(cx))
+            .into_any_element()
     }
 }

@@ -99,3 +99,14 @@ views 'Сценарии' {
     taypeer.mac <- taypeer.sessions 'Восстановление завершено'
   }
 }
+
+views 'Локальный файл' {
+  dynamic view fileSave {
+    title 'Подтверждение записи в локальном файле'
+    taypeer.mac -> taypeer.sessions 'Передать команду фоновому исполнителю'
+    taypeer.sessions -> taypeer.document 'Подготовить кандидат с историей'
+    taypeer.sessions -> taypeer.crypto 'Зашифровать документ'
+    taypeer.sessions -> taypeer.storage 'Сохранить снимок и атомарно заменить файл'
+    taypeer.mac <- taypeer.sessions 'Подтвердить после sync или показать ошибку'
+  }
+}

@@ -1,0 +1,17 @@
+[package]
+name = "taypeer-storage"
+description = "Experimental encrypted local file storage for Taypeer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+argon2.workspace = true
+chacha20poly1305.workspace = true
+rand_core.workspace = true
+zeroize.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

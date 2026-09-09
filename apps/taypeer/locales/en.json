@@ -1,7 +1,7 @@
 {
   "welcome": "Welcome to Taypeer",
   "demo": "DEMO · Synthetic data only · All databases disappear when the app quits",
-  "create_db": "Create test database…",
+  "create_db": "Create database…",
   "create": "Create",
   "name": "Name",
   "unlock": "Unlock",
@@ -62,5 +62,22 @@
   "clear": "Unset",
   "invalid_expiry": "Use YYYY-MM-DD HH:MM in UTC, or leave expiry empty.",
   "group_navigation": "Groups",
-  "entry_navigation": "Entries"
+  "entry_navigation": "Entries",
+  "open_db": "Open database",
+  "confirm_password": "Confirm master password",
+  "file_password_hint": "Enter the master password for this file.",
+  "file_working": "Working with the encrypted file…",
+  "file_experimental": "Experimental file format — use synthetic data until security review is complete.",
+  "file_autosave": "Confirmed changes are saved to the encrypted file.",
+  "file_welcome": "Create a database or open a .taypeer file.",
+  "file_empty_password": "The master password cannot be empty.",
+  "file_password_mismatch": "The passwords do not match.",
+  "file_auth_error": "Incorrect password or damaged encrypted data.",
+  "file_version_error": "This file version is not supported. The file was not changed.",
+  "file_busy_error": "This file is already open in another session.",
+  "file_exists_error": "A file already exists at this location. Choose a new name.",
+  "file_reopen_error": "The file changed or saving could not be confirmed. Reopen the database before continuing.",
+  "file_invalid_error": "The database is damaged or exceeds supported limits.",
+  "file_io_error": "The file operation failed. Changes were not confirmed.",
+  "file_draft_error": "The database was locked, but its draft could not be saved."
 }

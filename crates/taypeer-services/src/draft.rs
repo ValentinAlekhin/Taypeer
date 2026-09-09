@@ -1,22 +1,24 @@
 //! Owns the local editor, its presentation order and interruption lifecycle.
 
 use super::{DraftView, EditableAttribute, EditableEntry, PendingDraftSummary, ServiceError};
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use taypeer_core::{Attribute, AttributeId, AttributeValue, EntryFields, EntryId};
 use taypeer_document::{Document, EntryDraft};
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Serialize, Deserialize)]
 pub(super) enum DraftKind {
     New,
     Existing,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 enum DraftStatus {
     Active,
     Interrupted,
 }
 
+#[derive(Serialize, Deserialize)]
 pub(super) struct DraftState {
     document: EntryDraft,
     baseline: EntryFields,

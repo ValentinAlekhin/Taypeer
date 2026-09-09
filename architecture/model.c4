@@ -22,7 +22,7 @@ model {
       #partial
       technology 'Rust; целевой UI: GPUI + GPUI Kit'
       style { color blue; border solid }
-      description 'Первый срез: демонстрационный macOS UI поверх общих Rust-команд. Только искусственные данные; полная v1 остаётся впереди.'
+      description 'macOS UI поверх общих Rust-команд: экспериментальные зашифрованные файлы и отдельный demo. Полная v1 и приёмка безопасности остаются впереди.'
       metadata {
         source 'apps/taypeer/src/main.rs'
         evidence 'spikes/gpui-android/MACOS-2026-09-09.md'
@@ -52,27 +52,29 @@ model {
       #partial
       style { border solid }
       technology 'Rust'
-      description 'Rust-команды и поколения сессий. Первый срез использует временные демонстрационные БД; надёжное хранение и защита остаются запланированы.'
+      description 'Rust-команды, поколения сессий, кандидаты файловых изменений и зашифрованные локальные черновики. Demo остаётся отдельным режимом.'
       metadata { source 'crates/taypeer-services/src/lib.rs'; contract 'docs/architecture.md' }
     }
     document = component 'Документ и объединение' {
       #partial
       style { border solid }
       technology 'Rust + Automerge'
-      description 'Адаптер Automerge: адресные изменения от контекста черновика, атомарная история и все конфликтующие варианты. Первый срез работает в памяти.'
+      description 'Адаптер Automerge: адресные изменения, история и все варианты конфликтов. Экспорт и проверенная загрузка для файлового среза.'
       metadata { source 'crates/taypeer-document/src/lib.rs'; contract 'docs/data-model.md'; evidence 'spikes/encrypted-sync/REPORT.md' }
     }
     crypto = component 'Защита содержимого' {
-      #planned
+      #partial
+      style { border solid }
       technology 'Rust; KDF: Argon2id'
-      description 'Подготовка ключей, шифрование и расшифровка в разблокированной сессии.'
-      metadata { contract 'docs/architecture.md'; evidence 'spikes/encrypted-sync/REPORT.md' }
+      description 'Файловый срез: Argon2id и AEAD через taypeer-storage. Ротация и полная приёмка защиты остаются запланированы.'
+      metadata { source 'crates/taypeer-storage/src/crypto.rs'; contract 'docs/storage.md'; evidence 'spikes/encrypted-sync/REPORT.md' }
     }
     storage = component 'Хранение контейнера' {
-      #planned
+      #partial
+      style { border solid }
       technology 'Rust'
-      description 'Чтение, надёжная запись, зашифрованная очередь и резервные снимки.'
-      metadata { contract 'docs/data-model.md'; evidence 'spikes/encrypted-sync/REPORT.md' }
+      description 'Локальный файловый срез: атомарная запись и снимки через taypeer-storage. Зашифрованная очередь остаётся запланирована.'
+      metadata { source 'crates/taypeer-storage/src/file.rs'; contract 'docs/storage.md'; evidence 'spikes/encrypted-sync/REPORT.md' }
     }
     sync = component 'Зашифрованный обмен' {
       #planned
@@ -116,10 +118,11 @@ model {
       metadata { contract 'spec.md' }
     }
     macPlatform = component 'Адаптеры macOS' {
-      #planned
+      #partial
+      style { border solid }
       technology 'Rust + API macOS'
-      description 'Файлы, биометрия, ключи устройства, буфер и lifecycle.'
-      metadata { contract 'docs/architecture.md' }
+      description 'Системные файловые диалоги и фоновые команды реализованы. Биометрия, ключи устройства и буфер остаются запланированы.'
+      metadata { source 'apps/taypeer/src/macos/client/files.rs'; contract 'docs/architecture.md' }
     }
     androidPlatform = component 'Адаптеры Android' {
       #planned
@@ -128,9 +131,10 @@ model {
       metadata { contract 'docs/architecture.md' }
     }
     vault = store 'Рабочий файл .taypeer' {
-      #planned
+      #partial
+      style { border solid }
       description 'Переносимое зашифрованное состояние одной БД.'
-      metadata { contract 'docs/data-model.md#1-границы-хранения' }
+      metadata { source 'crates/taypeer-storage/src/file.rs'; contract 'docs/data-model.md#1-границы-хранения' }
     }
     local = store 'Локальное состояние устройства' {
       #planned
@@ -144,9 +148,10 @@ model {
       metadata { source 'crates/taypeer-services/src/lib.rs'; contract 'docs/architecture.md' }
     }
     backups = store 'Резервные снимки' {
-      #planned
+      #partial
+      style { border solid }
       description 'Отдельные зашифрованные файлы; правила хранения задаёт спецификация.'
-      metadata { contract 'spec.md#резервные-копии' }
+      metadata { source 'crates/taypeer-storage/src/file.rs'; contract 'spec.md#резервные-копии' }
     }
   }
 

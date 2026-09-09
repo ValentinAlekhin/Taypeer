@@ -2,7 +2,7 @@
 
 use super::{Client, Form, Navigation};
 use crate::macos::common::{input, tr};
-use gpui_kit::component::input::Input;
+use gpui_kit::component::input::{Input, InputContentType};
 use gpui_kit::component::{button::*, *};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
@@ -15,6 +15,9 @@ impl Client {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.busy {
+            return;
+        }
         if self
             .editor
             .as_ref()
@@ -26,58 +29,72 @@ impl Client {
             return;
         }
         if self.editor.is_some() {
-            if let Some(token) = &self.session
-                && self.service.cancel_draft(token).is_err()
-            {
-                self.error = Some("error");
-                cx.notify();
-                return;
-            }
-            self.editor = None;
+            self.perform_navigation(Navigation::Form(form, value.into()), window, cx);
+            return;
         }
+        self.file_password = input("", true, window, cx);
+        self.file_confirmation = input("", true, window, cx);
         self.form_input = input(value, false, window, cx);
         self.form = Some(form);
         self.bind_prompt_inputs(window, cx);
-        self.form_input
-            .update(cx, |state, cx| state.focus(window, cx));
+        let focus = if matches!(self.form, Some(Form::OpenFile(_))) {
+            &self.file_password
+        } else {
+            &self.form_input
+        };
+        focus.update(cx, |state, cx| state.focus(window, cx));
         cx.notify();
     }
 
     pub(super) fn commit_form(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let name = self.form_input.read(cx).value().to_string();
-        let success = match self.form.clone() {
-            Some(Form::Database) => match self.service.create_database(name) {
+        if self.busy {
+            return;
+        }
+        if self.demo_mode && matches!(self.form, Some(Form::Database)) {
+            let name = self.form_input.read(cx).value().to_string();
+            match self.service.create_database(name) {
                 Ok(id) => {
                     self.clear_content(window, cx);
                     self.session = None;
                     self.database = Some(id);
-                    true
+                    self.error = None;
                 }
-                Err(_) => false,
-            },
-            Some(Form::Group(parent)) => self.session.clone().as_ref().is_some_and(|token| {
-                match self.service.create_group(token, name, parent) {
-                    Ok(reply) if self.accepts(&reply.session) => {
-                        self.group = Some(reply.value.id);
-                        true
-                    }
-                    _ => false,
-                }
-            }),
-            Some(Form::Rename(id)) => self
-                .session
-                .as_ref()
-                .is_some_and(|token| self.service.update_group(token, &id, name).is_ok()),
-            None => false,
-        };
-        if success {
-            self.form = None;
-            self.root_focus.focus(window, cx);
-            self.error = None;
-        } else {
-            self.error = Some("error");
+                Err(_) => self.error = Some("error"),
+            }
+            cx.notify();
+            return;
         }
-        cx.notify();
+        if matches!(self.form, Some(Form::Database | Form::OpenFile(_))) {
+            self.commit_file_form(window, cx);
+            return;
+        }
+        let Some(token) = self.session.clone() else {
+            return;
+        };
+        let name = self.form_input.read(cx).value().to_string();
+        let form = self.form.clone();
+        self.run_io(
+            window,
+            cx,
+            move |service| match form {
+                Some(Form::Group(parent)) => service
+                    .create_group(&token, name, parent)
+                    .map(|reply| Some(reply.value.id)),
+                Some(Form::Rename(id)) => service.update_group(&token, &id, name).map(|_| None),
+                _ => Err(taypeer_services::ServiceError::InvalidContext),
+            },
+            |this, result, window, cx| match result {
+                Ok(group) => {
+                    if let Some(group) = group {
+                        this.group = Some(group);
+                    }
+                    this.form = None;
+                    this.root_focus.focus(window, cx);
+                    this.error = None;
+                }
+                Err(error) => this.error = Some(super::files::file_error(error)),
+            },
+        );
     }
 
     pub(super) fn overlay(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -141,16 +158,40 @@ impl Client {
                     .gap_4()
                     .child(div().text_lg().child(tr(match form {
                         Form::Database => "create_db",
+                        Form::OpenFile(_) => "open_db",
                         Form::Group(_) => "add_group",
                         Form::Rename(_) => "edit_group",
                     })))
-                    .child(Input::new(&self.form_input).aria_label(tr("name")))
+                    .when(!matches!(form, Form::OpenFile(_)), |el| {
+                        el.child(Input::new(&self.form_input).aria_label(tr("name")))
+                    })
+                    .when(
+                        matches!(form, Form::OpenFile(_))
+                            || (!self.demo_mode && matches!(form, Form::Database)),
+                        |el| {
+                            el.child(tr("password")).child(
+                                Input::new(&self.file_password)
+                                    .aria_label(tr("password"))
+                                    .content_type(InputContentType::Password)
+                                    .mask_toggle(),
+                            )
+                        },
+                    )
+                    .when(!self.demo_mode && matches!(form, Form::Database), |el| {
+                        el.child(tr("confirm_password")).child(
+                            Input::new(&self.file_confirmation)
+                                .aria_label(tr("confirm_password"))
+                                .content_type(InputContentType::Password),
+                        )
+                    })
                     .child(
                         h_flex()
                             .gap_2()
                             .child(
                                 Button::new("form-commit")
-                                    .label(tr(if matches!(form, Form::Rename(_)) {
+                                    .label(tr(if matches!(form, Form::OpenFile(_)) {
+                                        "open_db"
+                                    } else if matches!(form, Form::Rename(_)) {
                                         "save"
                                     } else {
                                         "create"
@@ -201,6 +242,8 @@ impl Client {
     pub(super) fn cancel_form(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.root_focus.focus(window, cx);
         self.form = None;
+        self.file_password = input("", true, window, cx);
+        self.file_confirmation = input("", true, window, cx);
         self.error = None;
         cx.notify();
     }

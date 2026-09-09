@@ -6,8 +6,6 @@ use gpui_kit::component::input::{Input, InputContentType};
 use gpui_kit::component::{button::*, *};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
-use rust_i18n::t;
-use taypeer_services::DEMO_PASSWORD;
 
 impl Client {
     pub(super) fn header(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -30,6 +28,11 @@ impl Client {
             .child(Button::new("create-db").label(tr("create_db")).on_click(
                 cx.listener(|this, _, window, cx| this.open_form(Form::Database, "", window, cx)),
             ))
+            .child(
+                Button::new("open-db")
+                    .label(tr("open_db"))
+                    .on_click(cx.listener(|this, _, window, cx| this.choose_file(window, cx))),
+            )
             .child(div().flex_1())
             .when(self.session.is_some(), |el| {
                 el.child(
@@ -69,9 +72,22 @@ impl Client {
             )))
             .when(self.database.is_some(), |el| {
                 el.child(
-                    div()
-                        .text_color(cx.theme().muted_foreground)
-                        .child(t!("password_hint", password = DEMO_PASSWORD).to_string()),
+                    div().text_color(cx.theme().muted_foreground).child(
+                        if self
+                            .database
+                            .as_ref()
+                            .is_some_and(|id| self.service.is_file(id))
+                        {
+                            tr("file_password_hint")
+                        } else {
+                            rust_i18n::t!(
+                                "password_hint",
+                                password = taypeer_services::DEMO_PASSWORD
+                            )
+                            .to_string()
+                            .into()
+                        },
+                    ),
                 )
                 .child(
                     div().w_80().child(

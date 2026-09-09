@@ -22,6 +22,8 @@ impl Client {
         self.restore = false;
         self.tab = EntryTab::Overview;
         self.form = None;
+        self.file_password = input("", true, window, cx);
+        self.file_confirmation = input("", true, window, cx);
         self.password = input("", true, window, cx);
         self.form_input = input("", false, window, cx);
         self.search = input("", false, window, cx);
@@ -35,43 +37,43 @@ impl Client {
     }
 
     pub(super) fn lock(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(token) = self.session.take() {
-            self.sessions.remove(&token.database);
-            if self.service.lock(&token).is_err() {
-                self.error = Some("error");
-            }
+        if self.busy {
+            self.lock_requested = true;
+            self.clear_content(window, cx);
+            cx.notify();
+            return;
         }
+        let Some(token) = self.session.take() else {
+            return;
+        };
+        self.sessions.remove(&token.database);
         self.clear_content(window, cx);
-        cx.notify();
+        self.run_io(
+            window,
+            cx,
+            move |service| service.lock(&token),
+            |this, result, _, _| {
+                this.error = result.err().map(|_| "file_draft_error");
+            },
+        );
     }
 
     pub(super) fn unlock(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(id) = &self.database else {
+        if self.busy {
+            return;
+        }
+        let Some(id) = self.database.clone() else {
             return;
         };
-        match self
-            .service
-            .unlock(id, self.password.read(cx).value().as_ref())
-        {
-            Ok(token) => {
-                self.password = input("", true, window, cx);
-                self.restore = self
-                    .service
-                    .pending_draft(&token)
-                    .is_ok_and(|v| self.service.is_current(&v.session) && v.value.is_some());
-                self.sessions.insert(token.database.clone(), token.clone());
-                self.session = Some(token);
-                self.error = None;
-                self.bind_prompt_inputs(window, cx);
-                if self.restore {
-                    self.modal_focus.focus(window, cx);
-                } else {
-                    self.root_focus.focus(window, cx);
-                }
-            }
-            Err(_) => self.error = Some("password_error"),
-        }
-        cx.notify();
+        let password = zeroize::Zeroizing::new(self.password.read(cx).value().to_string());
+        self.password = input("", true, window, cx);
+        self.bind_prompt_inputs(window, cx);
+        self.run_io(
+            window,
+            cx,
+            move |service| service.unlock(&id, &password),
+            Self::accept_file_session,
+        );
     }
 
     pub(super) fn navigate(
@@ -80,6 +82,9 @@ impl Client {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.busy {
+            return;
+        }
         if self.editor.as_ref().is_some_and(|e| e.draft.dirty) {
             self.pending = Some(action);
             self.modal_focus.focus(window, cx);
@@ -95,10 +100,25 @@ impl Client {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.busy {
+            return;
+        }
         if self.editor.is_some()
-            && let Some(token) = &self.session
+            && let Some(token) = self.session.clone()
         {
-            let _ = self.service.cancel_draft(token);
+            self.run_io(
+                window,
+                cx,
+                move |service| service.cancel_draft(&token),
+                move |this, result, window, cx| match result {
+                    Ok(_) => {
+                        this.editor = None;
+                        this.perform_navigation(action, window, cx);
+                    }
+                    Err(error) => this.error = Some(super::files::file_error(error)),
+                },
+            );
+            return;
         }
         self.editor = None;
         self.revealed.clear();
@@ -140,6 +160,9 @@ impl Client {
                     }
                 }
             }
+            Navigation::OpenFile(path) => {
+                self.open_form(super::Form::OpenFile(path), "", window, cx)
+            }
             Navigation::Cancel => {}
             Navigation::Form(form, value) => self.open_form(form, &value, window, cx),
         }
@@ -147,11 +170,7 @@ impl Client {
     }
 
     pub(super) fn save_and_navigate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.save(window, cx)
-            && let Some(action) = self.pending.take()
-        {
-            self.perform_navigation(action, window, cx);
-        }
+        self.save(window, cx);
     }
 
     pub(super) fn discard_and_navigate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -183,13 +202,20 @@ impl Client {
     }
 
     pub(super) fn discard_restored(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.root_focus.focus(window, cx);
-        if let Some(token) = &self.session
-            && self.service.cancel_draft(token).is_err()
-        {
-            self.error = Some("error");
-        }
-        self.restore = false;
-        cx.notify();
+        let Some(token) = self.session.clone() else {
+            return;
+        };
+        self.run_io(
+            window,
+            cx,
+            move |service| service.cancel_draft(&token),
+            |this, result, window, cx| match result {
+                Ok(_) => {
+                    this.restore = false;
+                    this.root_focus.focus(window, cx);
+                }
+                Err(error) => this.error = Some(super::files::file_error(error)),
+            },
+        );
     }
 }

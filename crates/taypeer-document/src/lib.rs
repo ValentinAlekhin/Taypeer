@@ -61,7 +61,7 @@ impl From<automerge::AutomergeError> for Error {
 /// An unconfirmed local form with its original causal context.
 ///
 /// Cloning is intended for retry after a failed confirmation; debug output is redacted.
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct EntryDraft {
     database_id: DatabaseId,
     entry_id: EntryId,
@@ -113,6 +113,7 @@ impl fmt::Debug for EntryDraft {
 /// One process-memory replica of an experimental logical document.
 ///
 /// Confirmation means that memory changed. It never means durable saving or authentication.
+#[derive(Clone)]
 pub struct Document {
     database_id: DatabaseId,
     name: String,
@@ -153,6 +154,73 @@ impl Document {
             name,
             doc,
         })
+    }
+
+    /// Whether two documents represent the same database and causal heads.
+    pub fn same_state(&self, other: &Self) -> bool {
+        self.database_id == other.database_id && self.doc.get_heads() == other.doc.get_heads()
+    }
+
+    /// Export the full experimental Automerge document, including history and unknown fields.
+    /// The returned plaintext must only cross an encrypted storage boundary.
+    pub fn export(&self) -> Vec<u8> {
+        self.doc.save()
+    }
+
+    /// Load a document and validate all known projections before exposing any values.
+    /// This parser is not a substitute for outer authentication or resource limits.
+    pub fn load(bytes: &[u8]) -> Result<Self, Error> {
+        let doc = Automerge::load(bytes)?;
+        let database_id = DatabaseId::new(
+            unique(&doc, &ROOT, "database_id")?
+                .to_str()
+                .ok_or(Error::InvalidDocument)?,
+        );
+        let name = unique(&doc, &ROOT, "name")?
+            .to_str()
+            .ok_or(Error::InvalidDocument)?
+            .to_owned();
+        validate_group_name(&name)?;
+        let document = Self {
+            database_id,
+            name,
+            doc,
+        };
+        let groups = document.groups()?;
+        // The UI walks this tree recursively; reject cycles and missing parents at the boundary.
+        for group in &groups {
+            let mut seen = BTreeSet::new();
+            let mut current = Some(&group.id);
+            while let Some(id) = current {
+                if !seen.insert(id) {
+                    return Err(Error::InvalidDocument);
+                }
+                current = groups
+                    .iter()
+                    .find(|group| &group.id == id)
+                    .ok_or(Error::InvalidDocument)?
+                    .parent
+                    .as_ref();
+            }
+        }
+        let entries = object(&document.doc, &ROOT, "entries")?;
+        let mut attribute_ids = BTreeSet::new();
+        for id in document.doc.keys(&entries) {
+            let entry = object(&document.doc, &entries, &id)?;
+            let attributes = object(&document.doc, &entry, "attributes")?;
+            for id in document.doc.keys(attributes) {
+                if !attribute_ids.insert(id) {
+                    return Err(Error::DuplicateId);
+                }
+            }
+        }
+        for entry in document.entries()? {
+            if !groups.iter().any(|group| group.id == entry.group_id) {
+                return Err(Error::InvalidDocument);
+            }
+            document.history(&entry.id)?;
+        }
+        Ok(document)
     }
 
     /// Logical identity, shared by forks of this database.

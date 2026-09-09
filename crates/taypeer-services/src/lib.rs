@@ -1,16 +1,20 @@
-//! Session-checked scenarios for the first Taypeer application vertical.
-//!
-//! This service keeps public demonstration documents and drafts in memory. The
-//! demonstration password is a public navigation gate, not authentication or
-//! encryption. Lock revokes access through this API; it does not prove erasure of
-//! Automerge allocations. No file format, storage, or network transport is used.
+//! Session-checked scenarios for encrypted files and explicit volatile demonstrations.
+//! File-backed commands publish candidates only after storage succeeds.
+//! Lock releases file-backed plaintext and keys; physical erasure of Automerge is not proven.
 
 use std::collections::BTreeMap;
 use std::fmt;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use std::path::Path;
 use taypeer_core::SavedRevision;
 use taypeer_document::Document;
+/// File operation failures exposed through the service boundary.
+pub use taypeer_storage::Error as StorageError;
+use taypeer_storage::{FileStore, ReadKey};
+use zeroize::Zeroizing;
+
+mod persistence;
 
 mod draft;
 use draft::{DraftKind, DraftState};
@@ -73,6 +77,8 @@ pub enum ServiceError {
     SessionExhausted,
     /// The in-memory document failed validation.
     InvalidDocument,
+    /// An encrypted file operation failed without exposing paths or secret content.
+    Storage(taypeer_storage::Error),
 }
 
 impl fmt::Display for ServiceError {
@@ -90,6 +96,7 @@ impl fmt::Display for ServiceError {
             Self::InvalidContext => "the draft context is invalid",
             Self::SessionExhausted => "no further session generation is available",
             Self::InvalidDocument => "the document is invalid",
+            Self::Storage(_) => "the encrypted file operation failed",
         })
     }
 }
@@ -110,26 +117,32 @@ impl From<taypeer_document::Error> for ServiceError {
 }
 
 struct DatabaseState {
-    document: Document,
+    document: Option<Document>,
+    label: String,
+    file: Option<FileStore>,
+    key: Option<ReadKey>,
     generation: u64,
     unlocked: bool,
     // Retained only in process memory when locked; this is not an encrypted draft.
     draft: Option<DraftState>,
 }
 
-/// Serialized in-memory application scenarios over the real domain/document model.
-pub struct DemoService {
+/// Serialized application scenarios over domain documents and optional encrypted file storage.
+pub struct DatabaseService {
     databases: BTreeMap<DatabaseId, DatabaseState>,
     clock: fn() -> i64,
 }
 
-impl Default for DemoService {
+/// Compatibility name for callers that explicitly create volatile demonstration databases.
+pub type DemoService = DatabaseService;
+
+impl Default for DatabaseService {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl DemoService {
+impl DatabaseService {
     /// Create an empty demonstration catalog.
     pub fn new() -> Self {
         Self::with_clock(now_millis)
@@ -181,7 +194,7 @@ impl DemoService {
             .iter()
             .map(|(id, state)| DatabaseSummary {
                 id: id.clone(),
-                name: state.document.name().into(),
+                name: state.label.clone(),
                 locked: !state.unlocked,
             })
             .collect()
@@ -194,7 +207,10 @@ impl DemoService {
         self.databases.insert(
             id.clone(),
             DatabaseState {
-                document,
+                label: document.name().into(),
+                document: Some(document),
+                file: None,
+                key: None,
                 generation: 0,
                 unlocked: false,
                 draft: None,
@@ -203,7 +219,7 @@ impl DemoService {
         Ok(id)
     }
 
-    /// Open a new demonstration session using the documented public input.
+    /// Open a fresh session with the file master password or the public demo input.
     pub fn unlock(
         &mut self,
         database: &DatabaseId,
@@ -213,6 +229,9 @@ impl DemoService {
             .databases
             .get_mut(database)
             .ok_or(ServiceError::NotFound)?;
+        if state.file.is_some() {
+            return state.unlock_file(database, password.as_bytes());
+        }
         if password != DEMO_PASSWORD {
             return Err(ServiceError::IncorrectDemoPassword);
         }
@@ -228,28 +247,39 @@ impl DemoService {
         })
     }
 
-    /// Revoke document access and retain the draft in this process only.
+    /// Revoke document access; file-backed drafts are encrypted locally before plaintext is released.
     pub fn lock(&mut self, session: &SessionToken) -> Result<(), ServiceError> {
         let state = self.checked_mut(session)?;
-        stash_draft(state);
+        let draft_result = state.stash_and_close();
         // Access closes even if incrementing the generation is no longer possible.
         state.unlocked = false;
         state.generation = state
             .generation
             .checked_add(1)
             .ok_or(ServiceError::SessionExhausted)?;
-        Ok(())
+        draft_result
     }
 
     /// Revoke every open session, for application lifecycle events.
     pub fn lock_all(&mut self) {
+        // Compatibility lifecycle API. Call lock_all_checked when the UI can display a draft error.
+        let _ = self.lock_all_checked();
+    }
+
+    /// Revoke every session even if a local draft cannot be saved, returning the first failure.
+    pub fn lock_all_checked(&mut self) -> Result<(), ServiceError> {
+        let mut result = Ok(());
         for state in self.databases.values_mut() {
             if state.unlocked {
-                stash_draft(state);
+                let closed = state.stash_and_close();
                 state.unlocked = false;
                 state.generation = state.generation.saturating_add(1);
+                if result.is_ok() {
+                    result = closed;
+                }
             }
         }
+        result
     }
 
     /// Check whether a response's source database is still in the same unlocked session.
@@ -267,7 +297,7 @@ impl DemoService {
         &self,
         session: &SessionToken,
     ) -> Result<SessionValue<Vec<GroupSummary>>, ServiceError> {
-        let groups = self.checked(session)?.document.groups()?;
+        let groups = self.checked(session)?.document().groups()?;
         Ok(stamped(
             session,
             groups.into_iter().map(group_summary).collect(),
@@ -284,8 +314,7 @@ impl DemoService {
         let now = (self.clock)();
         let group = self
             .checked_mut(session)?
-            .document
-            .create_group(name, parent, now)?;
+            .change(|document| Ok(document.create_group(name, parent, now)?))?;
         Ok(stamped(session, group_summary(group)))
     }
 
@@ -298,9 +327,9 @@ impl DemoService {
     ) -> Result<SessionValue<GroupSummary>, ServiceError> {
         let now = (self.clock)();
         let state = self.checked_mut(session)?;
-        state.document.rename_group(id, name, now)?;
+        state.change(|document| Ok(document.rename_group(id, name, now)?))?;
         let group = state
-            .document
+            .document()
             .groups()?
             .into_iter()
             .find(|group| &group.id == id)
@@ -318,7 +347,7 @@ impl DemoService {
         let state = self.checked(session)?;
         if let Some(group_id) = group.filter(|_| query.is_empty())
             && !state
-                .document
+                .document()
                 .groups()?
                 .iter()
                 .any(|group| &group.id == group_id)
@@ -327,7 +356,7 @@ impl DemoService {
         }
         let query = query.to_lowercase();
         let mut entries: Vec<_> = state
-            .document
+            .document()
             .entries()?
             .into_iter()
             .filter(|entry| !query.is_empty() || group.is_none_or(|group| &entry.group_id == group))
@@ -358,7 +387,7 @@ impl DemoService {
                 generation: state.generation,
             };
             let groups: BTreeMap<_, _> = state
-                .document
+                .document()
                 .groups()?
                 .into_iter()
                 .map(|group| (group.id, group.name))
@@ -371,7 +400,7 @@ impl DemoService {
                 results.push(stamped(
                     &session,
                     SearchResult {
-                        database_name: state.document.name().into(),
+                        database_name: state.label.clone(),
                         group_name,
                         entry,
                     },
@@ -398,7 +427,7 @@ impl DemoService {
     ) -> Result<SessionValue<EntryView>, ServiceError> {
         Ok(stamped(
             session,
-            entry_view(self.checked(session)?.document.entry(id)?),
+            entry_view(self.checked(session)?.document().entry(id)?),
         ))
     }
 
@@ -412,7 +441,7 @@ impl DemoService {
         if state.draft.is_some() {
             return Err(editor_open_error(state));
         }
-        let document = state.document.begin_create_entry(group)?;
+        let document = state.document().begin_create_entry(group)?;
         let draft = DraftState::new(document, DraftKind::New);
         let view = draft.view();
         state.draft = Some(draft);
@@ -435,7 +464,7 @@ impl DemoService {
             }
             return Err(ServiceError::EditorAlreadyOpen);
         }
-        let document = state.document.begin_edit_entry(id)?;
+        let document = state.document().begin_edit_entry(id)?;
         let draft = DraftState::new(document, DraftKind::Existing);
         let view = draft.view();
         state.draft = Some(draft);
@@ -513,7 +542,7 @@ impl DemoService {
         Ok(stamped(session, draft.set_expiry_input(input)?))
     }
 
-    /// Confirm the form in memory; failed validation retains the draft and saved document.
+    /// Confirm the form after storage succeeds; errors retain the draft and prior document.
     pub fn save_draft(
         &mut self,
         session: &SessionToken,
@@ -521,7 +550,12 @@ impl DemoService {
         let now = (self.clock)();
         let state = self.checked_mut(session)?;
         let draft = state.draft.as_ref().ok_or(ServiceError::NoDraft)?;
-        let id = draft.save(&mut state.document, now)?;
+        let mut candidate = state.document().clone();
+        let id = draft.save(&mut candidate, now)?;
+        state.commit(candidate)?;
+        if let Some(file) = &state.file {
+            file.discard_draft()?;
+        }
         state.draft = None;
         Ok(stamped(session, id))
     }
@@ -535,6 +569,9 @@ impl DemoService {
         if state.draft.is_none() {
             return Err(ServiceError::NoDraft);
         }
+        if let Some(file) = &state.file {
+            file.discard_draft()?;
+        }
         state.draft = None;
         Ok(stamped(session, ()))
     }
@@ -545,7 +582,7 @@ impl DemoService {
         session: &SessionToken,
         id: &EntryId,
     ) -> Result<SessionValue<Vec<RevisionSummary>>, ServiceError> {
-        let revisions = self.checked(session)?.document.history(id)?;
+        let revisions = self.checked(session)?.document().history(id)?;
         Ok(stamped(
             session,
             revisions
@@ -582,7 +619,7 @@ impl DemoService {
         session: &SessionToken,
         id: &EntryId,
     ) -> Result<SessionValue<SecretValue>, ServiceError> {
-        let entry = self.checked(session)?.document.entry(id)?;
+        let entry = self.checked(session)?.document().entry(id)?;
         Ok(stamped(session, password(entry)?))
     }
 
@@ -593,7 +630,7 @@ impl DemoService {
         entry: &EntryId,
         attribute: &AttributeId,
     ) -> Result<SessionValue<SecretValue>, ServiceError> {
-        let entry = self.checked(session)?.document.entry(entry)?;
+        let entry = self.checked(session)?.document().entry(entry)?;
         Ok(stamped(session, attribute_value(entry, attribute)?))
     }
 
@@ -634,7 +671,7 @@ impl DemoService {
         revision: &RevisionId,
     ) -> Result<SavedRevision, ServiceError> {
         self.checked(session)?
-            .document
+            .document()
             .history(entry)?
             .into_iter()
             .find(|candidate| &candidate.id == revision)
@@ -720,7 +757,7 @@ mod tests {
         let entry = service.entries(&session, None, "").unwrap().value[0]
             .id
             .clone();
-        let mut other = service.databases[&database].document.fork();
+        let mut other = service.databases[&database].document().fork();
         let mut foreign = other.begin_edit_entry(&entry).unwrap();
         foreign.fields_mut().password = Some("PUBLIC other branch".into());
         other.save_entry(foreign, 1_800_000_000_000).unwrap();
@@ -737,6 +774,8 @@ mod tests {
             .get_mut(&database)
             .unwrap()
             .document
+            .as_mut()
+            .unwrap()
             .merge(&other)
             .unwrap();
 

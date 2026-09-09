@@ -45,6 +45,9 @@ impl Client {
         }
     }
     fn change_field(&mut self, field: EntryField, value: String, cx: &mut Context<Self>) {
+        if self.busy {
+            return;
+        }
         let Some(editor) = &mut self.editor else {
             return;
         };
@@ -82,6 +85,9 @@ impl Client {
         self.push_draft(cx);
     }
     fn push_draft(&mut self, cx: &mut Context<Self>) {
+        if self.busy {
+            return;
+        }
         let Some(editor) = &mut self.editor else {
             return;
         };
@@ -100,6 +106,9 @@ impl Client {
         cx.notify();
     }
     pub(super) fn save(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if self.busy {
+            return false;
+        }
         let Some(editor) = &self.editor else {
             return true;
         };
@@ -108,22 +117,27 @@ impl Client {
             cx.notify();
             return false;
         }
-        match self.service.save_draft(&editor.session) {
-            Ok(reply) if self.accepts(&reply.session) => {
-                self.selected = Some(reply.value);
-                self.editor = None;
-                self.root_focus.focus(window, cx);
-                self.revealed.clear();
-                self.error = None;
-                cx.notify();
-                true
-            }
-            _ => {
-                self.error = Some("error");
-                cx.notify();
-                false
-            }
-        }
+        let token = editor.session.clone();
+        self.run_io(
+            window,
+            cx,
+            move |service| service.save_draft(&token),
+            |this, result, window, cx| match result {
+                Ok(reply) if this.accepts(&reply.session) => {
+                    this.selected = Some(reply.value);
+                    this.editor = None;
+                    this.root_focus.focus(window, cx);
+                    this.revealed.clear();
+                    this.error = None;
+                    if let Some(action) = this.pending.take() {
+                        this.perform_navigation(action, window, cx);
+                    }
+                }
+                Err(error) => this.error = Some(super::files::file_error(error)),
+                _ => this.error = Some("error"),
+            },
+        );
+        false
     }
     fn clear_optional(&mut self, field: EntryField, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(editor) = &mut self.editor {

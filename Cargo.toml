@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/taypeer-core", "crates/taypeer-document", "crates/taypeer-services", "apps/taypeer"]
+members = ["crates/taypeer-core", "crates/taypeer-document", "crates/taypeer-services", "crates/taypeer-storage", "apps/taypeer"]
 default-members = ["apps/taypeer"]
 resolver = "3"
 
@@ -10,6 +10,13 @@ rust-version = "1.97.1"
 publish = false
 
 [workspace.dependencies]
+taypeer-storage = { path = "crates/taypeer-storage" }
+argon2 = "=0.5.3"
+chacha20poly1305 = "=0.10.1"
+rand_core = { version = "=0.6.4", features = ["getrandom"] }
+zeroize = "=1.9.0"
+tempfile = "=3.27.0"
+
 taypeer-core = { path = "crates/taypeer-core" }
 taypeer-document = { path = "crates/taypeer-document" }
 taypeer-services = { path = "crates/taypeer-services" }
