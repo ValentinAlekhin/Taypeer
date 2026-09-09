@@ -1,0 +1,31 @@
+{
+  "date": "2026-09-09",
+  "note": "Source hashes for the recorded spike verification; not a security attestation.",
+  "sha256": {
+    "Cargo.lock": "e65c390b372dcb07b3fb986c5fcb118dd7ceb2c4956d4d8ff9c7bdaed2da1cee",
+    "Cargo.toml": "67342e7f0c2e54cbe5e7ab04d12cce48e732b29120493a2c603f6832fc10cfcf",
+    "src/android_jni.rs": "bf9600d171c17b50ec393227db115af1c801d57bdd2ea11e50080ad1bac5964d",
+    "src/bin/disk-probe.rs": "598190ad8a260b70f310f9cd249fc5c4d4b925e99f6290b039196f2e62446706",
+    "src/bin/fuzz-seeds.rs": "952bf3b1892caa9057522f27254ab522a4b1efc0a611a09443eb59190cb2bdde",
+    "src/bin/memory-probe.rs": "b33e10b214003eafe765c37f35a947e86b1618256be135eedc02465976a3712f",
+    "src/bin/secret-worker.rs": "ff4224aa7f4328bfa1ac5a19f7330bbc2b4abf93bfaa90a85d785a3aadc64733",
+    "src/bin/storage-probe.rs": "e087ae8081770791dfb48cfdce58b1ef8ca690a4aba375b14a5d5ab45016f004",
+    "src/bin/sync-node.rs": "0b1a31b7ae2031ee7ae130bf5c0a68d7942b14ac7a7995f2553a4b28ea978711",
+    "src/container/tests.rs": "ecbca3dbcd211f01d08247da71c6fad8db1c4d36164fc37d565553f986d065a8",
+    "src/container.rs": "68bca23db5ba9b295d01dd03b82ad642b9fdd92f6cb94f6505582cdbed60db95",
+    "src/kdf.rs": "e96d6a9189c1d89a9bb462727483a7a2d4b876cb71b1e2982bb383312005b45b",
+    "src/lib.rs": "f14548e2feba305eebd5aaabab8a327b034e1f8c233066b5824f16937ad34436",
+    "src/main.rs": "131bc10b5e064d5aef6437b9b7e8ae1ceccd47a3c6ad5c6c660dae27ec7eb102",
+    "src/network.rs": "919187ffd96a9f3c91bea0ce75df52e230408d641e6d425d1779c14f941f45f0",
+    "src/session.rs": "04408f3b4c19b2ee4a989829665b02acdffbb086a866150a3dab5053aecb5483",
+    "src/storage.rs": "59e1a7916b1b1bfc7521943de71ff0f71fc806148378ee11a8680201e33ee87d",
+    "src/tests.rs": "e3f91d1b66f67c60d18542619b380596c6d5e6af90b4b6a2d2e2af69121a13fe",
+    "tests/network.rs": "43b36af09a88a9c7d50156340b26b9e6d0f0664bb352d8dd7d7512750fca1b10",
+    "tests/session.rs": "6bd64166956b85418fc6319af86f20dda37a8289db5923dac1d182bce74443fe",
+    "tests/storage.rs": "221f2e583375e97bbaaa3850bf2ed8cbc941a1959ee1c9394086109ee47e4168",
+    "scripts/Pass2PNative.java": "4895d06267e0ba1b0db2fab5e1cbb695a60ef9700540fe378ae90cb2eb26ec4f",
+    "scripts/android-check.py": "9ce9f4275cd4a2ca13dd7b7766078288491862af59b25d507c530ded54788b0e",
+    "scripts/build-android.sh": "837eaf075ec10a7be459077106da8182142a64e60e2c8789d22bc6d43852c1a5",
+    "fuzz/fuzz_targets/parser.rs": "02157e976427bb842141e73208df71d26996dd4b538b1e895d675d94a522bea3"
+  }
+}

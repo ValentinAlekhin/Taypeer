@@ -1,0 +1,5 @@
+    Blocking waiting for file lock on artifact directory
+   Compiling pass2p-encrypted-sync-spike v0.0.0 (/Users/valentin/projects/pet-projects/pass2p/spikes/encrypted-sync)
+    Finished `release` profile [optimized] target(s) in 20.67s
+     Running `spikes/encrypted-sync/target/release/memory-probe`
+zeroizing_uncleared_frees=0 automerge_uncleared_frees=1

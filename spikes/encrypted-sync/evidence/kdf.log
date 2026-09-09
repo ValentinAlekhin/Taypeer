@@ -1,0 +1,7 @@
+    Finished `release` profile [optimized] target(s) in 0.11s
+     Running `spikes/encrypted-sync/target/release/pass2p-encrypted-sync-spike`
+Argon2id memory_kib=65536 lanes=1 iterations=3 elapsed_ms=90
+Argon2id memory_kib=65536 lanes=1 iterations=6 elapsed_ms=178
+Argon2id memory_kib=65536 lanes=1 iterations=12 elapsed_ms=352
+Argon2id memory_kib=65536 lanes=1 iterations=24 elapsed_ms=694
+Argon2id memory_kib=65536 lanes=1 iterations=32 elapsed_ms=1106

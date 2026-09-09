@@ -1,0 +1,30 @@
+[workspace]
+resolver = "3"
+
+[workspace.dependencies]
+libfuzzer-sys = "=0.4.13"
+taypeer-encrypted-sync-spike = { path = ".." }
+automerge = "=0.7.4"
+serde_json = "=1.0.149"
+
+[package]
+name = "taypeer-encrypted-sync-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys.workspace = true
+taypeer-encrypted-sync-spike.workspace = true
+automerge.workspace = true
+serde_json.workspace = true
+
+[[bin]]
+name = "parser"
+path = "fuzz_targets/parser.rs"
+test = false
+doc = false
+bench = false

@@ -1,0 +1,10 @@
+# Reviewed logs contain only synthetic test names and timing.
+!evidence/tests.log
+!evidence/kdf.log
+!evidence/android.log
+!evidence/android-jni.log
+!evidence/kdf-calibration.log
+!evidence/memory.log
+!evidence/fuzz.log
+!evidence/fuzz-build.log
+!evidence/storage-os.log

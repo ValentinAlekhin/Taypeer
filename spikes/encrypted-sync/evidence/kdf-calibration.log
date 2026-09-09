@@ -1,0 +1,6 @@
+    Blocking waiting for file lock on artifact directory
+    Finished `release` profile [optimized] target(s) in 0.24s
+     Running `spikes/encrypted-sync/target/release/pass2p-encrypted-sync-spike`
+{"target_ms":500,"profile":{"memory":65536,"iterations":15},"measured_ms":465,"within_tolerance":true}
+{"target_ms":1000,"profile":{"memory":65536,"iterations":29},"measured_ms":856,"within_tolerance":true}
+{"target_ms":5000,"profile":{"memory":65536,"iterations":204},"measured_ms":4664,"within_tolerance":true}

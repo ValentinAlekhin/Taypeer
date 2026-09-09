@@ -1,0 +1,102 @@
+ro.build.version.release=12
+ro.build.version.sdk=31
+ro.product.cpu.abi=arm64-v8a
+ro.kernel.qemu=1
+
+COMMAND lib-tests
+
+running 36 tests
+test container::tests::accepted_history_survives_latest_state_but_remote_retained_snapshots_do_not_bypass_review ... ok
+test container::tests::all_write_faults_reopen_and_retry_without_false_ack_or_duplicate_recovery ... ok
+test container::tests::backup_conflicts_and_reused_operation_ids_require_explicit_selection ... ok
+test container::tests::backup_restore_preserves_current_password_control_and_synchronizes_new_operations ... ok
+test container::tests::apply_and_restore_faults_keep_document_and_operation_ids_atomic ... ok
+test container::tests::encountering_a_signed_fork_in_a_backup_also_halts_the_store ... ok
+test container::tests::explicit_v2_migration_preserves_original_and_requires_current_manager ... ok
+test container::tests::foreign_backup_rejected_and_revoked_credentials_cannot_sign_current_changes ... ok
+test container::tests::fork_evidence_from_a_future_branch_is_durable_and_failed_persistence_latches_current_session ... ok
+test container::tests::interrupted_admission_cannot_be_hidden_by_readmission_or_reencryption ... ok
+test container::tests::invitation_uncertain_commit_persists_consumption_and_admission_together ... ok
+test container::tests::invitation_binds_database_recipient_five_minutes_and_atomic_consumption ... ok
+test container::tests::locked_container_forwarding_and_failed_latest_import_keep_offline_queue ... ok
+test container::tests::member_snapshot_cannot_smuggle_unreviewed_revoked_history_into_a_new_epoch ... ok
+test container::tests::manual_extraction_is_new_signed_revision_with_origin_and_does_not_restore_admission ... ok
+test container::tests::revoked_dependency_closure_is_quarantined_while_independent_work_continues ... ok
+test container::tests::missing_dependencies_wait_then_apply_without_duplicate_changes ... ok
+test container::tests::several_rotations_latest_password_preserves_conflicts_and_intermediate_history ... ok
+test container::tests::signed_control_fork_halts_exchange_and_management_across_restart_but_reading_and_recovery_work ... ok
+test container::tests::tamper_unknown_versions_control_binding_and_foreign_backup_do_not_overwrite ... ok
+test kdf::tests::rejects_unbounded_target_before_kdf ... ok
+test tests::concurrent_automerge_values_survive_encrypted_delivery ... ok
+test tests::disk_faults_never_ack_and_retry_is_idempotent ... ok
+test tests::failed_apply_preserves_previous_checkpoint_and_can_restart ... ok
+test container::tests::rotation_fault_retry_and_pre_rotation_backup_never_mixes_keys_and_control ... ok
+test tests::invitation_expiry_denial_replay_and_failed_durable_consume ... ok
+test tests::file_tamper_wrong_password_version_and_kdf_bombs ... ok
+test tests::locked_b_forwards_to_c_then_unlock_and_restart ... ok
+test tests::receive_before_revoke_is_not_apply_before_revoke ... ok
+test tests::rfc8032_ed25519_vector_1 ... ok
+test tests::rollback_fork_is_detectable_but_not_prevented_by_signatures ... ok
+test tests::signed_control_chain_rotation_replay_and_wrong_manager ... ok
+test tests::signed_packets_still_require_author_admission_and_valid_content ... ok
+test tests::transfer_failure_has_zero_active_then_recovery_has_one ... ok
+test tests::reordering_duplicates_and_missing_dependencies ... ok
+test tests::two_rotations_old_snapshot_and_new_set_recovery ... ok
+
+test result: ok. 36 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 15.18s
+
+exit=0
+
+COMMAND storage-tests
+
+running 5 tests
+test actual_child_exit_before_and_after_rename_recovers_whole_generation ... ok
+test calibrated_parameters_survive_save_and_unlock ... ok
+test oversized_file_and_symlink_refused_before_overwrite ... ok
+test rollback_queue_removal_and_modification_are_detected_by_local_anchor ... ok
+test exactly_ten_previous_containers_and_separate_pre_rotation_backup ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.14s
+
+exit=0
+
+COMMAND session-tests
+
+running 1 test
+test lock_reaps_secret_process_even_if_draft_save_fails ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.42s
+
+exit=0
+
+COMMAND network-tests
+
+running 3 tests
+test direct_process_exchange_faults_restart_forwarding_and_no_relay_failure ... ok
+test forced_local_relay_process_exchange_faults_and_forwarding ... ok
+test invitation_recipient_is_the_actual_quic_identity ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 22.49s
+
+synthetic network scenario did not complete
+synthetic network scenario did not complete
+synthetic network scenario did not complete
+synthetic network scenario did not complete
+synthetic network scenario did not complete
+synthetic network scenario did not complete
+synthetic network scenario did not complete
+synthetic network scenario did not complete
+synthetic network scenario did not complete
+synthetic network scenario did not complete
+synthetic network scenario did not complete
+exit=0
+
+COMMAND pass2p-encrypted-sync-spike
+{"target_ms":500,"profile":{"memory":65536,"iterations":14},"measured_ms":418,"within_tolerance":true}
+{"target_ms":1000,"profile":{"memory":65536,"iterations":33},"measured_ms":1097,"within_tolerance":true}
+{"target_ms":5000,"profile":{"memory":65536,"iterations":136},"measured_ms":4969,"within_tolerance":true}
+exit=0
+
+COMMAND memory-probe
+zeroizing_uncleared_frees=0 automerge_uncleared_frees=1
+exit=2

@@ -1,0 +1,2 @@
+mode=full rejected_write=true previous_container_unchanged=true
+mode=readonly rejected_write=true previous_container_unchanged=true

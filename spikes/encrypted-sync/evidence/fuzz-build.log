@@ -1,0 +1,3 @@
+   Compiling pass2p-encrypted-sync-spike v0.0.0 (/Users/valentin/projects/pet-projects/pass2p/spikes/encrypted-sync)
+   Compiling pass2p-encrypted-sync-fuzz v0.0.0 (/Users/valentin/projects/pet-projects/pass2p/spikes/encrypted-sync/fuzz)
+    Finished `release` profile [optimized + debuginfo] target(s) in 11.26s

@@ -1,0 +1,205 @@
+--------- beginning of main
+09-09 13:01:25.858 10022 10022 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+09-09 13:01:25.858 10021 10021 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+09-09 13:01:25.865 10021 10021 I AndroidRuntime: Using default boot image
+09-09 13:01:25.865 10021 10021 I AndroidRuntime: Leaving lock profiling enabled
+09-09 13:01:25.865 10022 10022 I AndroidRuntime: Using default boot image
+09-09 13:01:25.865 10022 10022 I AndroidRuntime: Leaving lock profiling enabled
+09-09 13:01:25.971 10021 10021 D AndroidRuntime: Calling main entry Pass2PNative
+09-09 13:01:25.971 10022 10022 D AndroidRuntime: Calling main entry Pass2PNative
+09-09 13:01:26.052 10057 10057 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+09-09 13:01:26.053 10057 10057 I AndroidRuntime: Using default boot image
+09-09 13:01:26.053 10057 10057 I AndroidRuntime: Leaving lock profiling enabled
+09-09 13:01:26.074 10060 10060 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+09-09 13:01:26.075 10060 10060 I AndroidRuntime: Using default boot image
+09-09 13:01:26.075 10060 10060 I AndroidRuntime: Leaving lock profiling enabled
+09-09 13:01:26.093 10057 10057 D AndroidRuntime: Calling main entry Pass2PNative
+09-09 13:01:26.116 10060 10060 D AndroidRuntime: Calling main entry Pass2PNative
+09-09 13:01:26.150 10060 10060 I AndroidRuntime: VM exiting with result code 1.
+09-09 13:01:26.367 10100 10100 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+09-09 13:01:26.368 10100 10100 I AndroidRuntime: Using default boot image
+09-09 13:01:26.368 10100 10100 I AndroidRuntime: Leaving lock profiling enabled
+09-09 13:01:26.405 10100 10100 D AndroidRuntime: Calling main entry Pass2PNative
+09-09 13:01:26.644 10100 10100 I AndroidRuntime: VM exiting with result code 1.
+09-09 13:01:29.231 10021 10021 I AndroidRuntime: VM exiting with result code 0.
+09-09 13:01:29.272 10123 10123 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+09-09 13:01:29.273 10123 10123 I AndroidRuntime: Using default boot image
+09-09 13:01:29.273 10123 10123 I AndroidRuntime: Leaving lock profiling enabled
+09-09 13:01:29.315 10123 10123 D AndroidRuntime: Calling main entry Pass2PNative
+09-09 13:01:29.389 10143 10143 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+09-09 13:01:29.390 10143 10143 I AndroidRuntime: Using default boot image
+09-09 13:01:29.390 10143 10143 I AndroidRuntime: Leaving lock profiling enabled
+09-09 13:01:29.426 10143 10143 D AndroidRuntime: Calling main entry Pass2PNative
+09-09 13:01:29.460 10143 10143 I AndroidRuntime: VM exiting with result code 1.
+09-09 13:01:29.730 10057 10057 I AndroidRuntime: VM exiting with result code 0.
+09-09 13:01:29.769 10166 10166 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+09-09 13:01:29.770 10166 10166 I AndroidRuntime: Using default boot image
+09-09 13:01:29.770 10166 10166 I AndroidRuntime: Leaving lock profiling enabled
+09-09 13:01:29.810 10166 10166 D AndroidRuntime: Calling main entry Pass2PNative
+09-09 13:01:30.071 10186 10186 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+09-09 13:01:30.073 10186 10186 I AndroidRuntime: Using default boot image
+09-09 13:01:30.073 10186 10186 I AndroidRuntime: Leaving lock profiling enabled
+09-09 13:01:30.110 10186 10186 D AndroidRuntime: Calling main entry Pass2PNative
+09-09 13:01:30.351 10186 10186 I AndroidRuntime: VM exiting with result code 1.
+09-09 13:01:30.471  9905  9905 I AndroidRuntime: VM exiting with result code 1.
+09-09 13:01:32.545 10123 10123 I AndroidRuntime: VM exiting with result code 0.
+09-09 13:01:32.586 10213 10213 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+09-09 13:01:32.587 10213 10213 I AndroidRuntime: Using default boot image
+09-09 13:01:32.587 10213 10213 I AndroidRuntime: Leaving lock profiling enabled
+09-09 13:01:32.626 10213 10213 D AndroidRuntime: Calling main entry Pass2PNative
+09-09 13:01:32.678 10233 10233 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+09-09 13:01:32.679 10233 10233 I AndroidRuntime: Using default boot image
+09-09 13:01:32.679 10233 10233 I AndroidRuntime: Leaving lock profiling enabled
+09-09 13:01:32.713 10233 10233 D AndroidRuntime: Calling main entry Pass2PNative
+09-09 13:01:32.747 10233 10233 I AndroidRuntime: VM exiting with result code 1.
+09-09 13:01:33.434 10166 10166 I AndroidRuntime: VM exiting with result code 0.
+09-09 13:01:33.474 10255 10255 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+09-09 13:01:33.476 10255 10255 I AndroidRuntime: Using default boot image
+09-09 13:01:33.476 10255 10255 I AndroidRuntime: Leaving lock profiling enabled
+09-09 13:01:33.514 10255 10255 D AndroidRuntime: Calling main entry Pass2PNative
+09-09 13:01:33.784 10275 10275 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+09-09 13:01:33.786 10275 10275 I AndroidRuntime: Using default boot image
+09-09 13:01:33.786 10275 10275 I AndroidRuntime: Leaving lock profiling enabled
+09-09 13:01:33.823 10275 10275 D AndroidRuntime: Calling main entry Pass2PNative
+09-09 13:01:34.071 10275 10275 I AndroidRuntime: VM exiting with result code 1.
+09-09 13:01:35.832 10213 10213 I AndroidRuntime: VM exiting with result code 0.
+09-09 13:01:35.874 10299 10299 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+09-09 13:01:35.876 10299 10299 I AndroidRuntime: Using default boot image
+09-09 13:01:35.876 10299 10299 I AndroidRuntime: Leaving lock profiling enabled
+09-09 13:01:35.915 10299 10299 D AndroidRuntime: Calling main entry Pass2PNative
+09-09 13:01:35.968 10319 10319 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+09-09 13:01:35.969 10319 10319 I AndroidRuntime: Using default boot image
+09-09 13:01:35.969 10319 10319 I AndroidRuntime: Leaving lock profiling enabled
+09-09 13:01:36.003 10319 10319 D AndroidRuntime: Calling main entry Pass2PNative
+09-09 13:01:36.041 10299 10299 I AndroidRuntime: VM exiting with result code 0.
+09-09 13:01:36.041 10319 10319 I AndroidRuntime: VM exiting with result code 0.
+09-09 13:01:36.068 10343 10343 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+09-09 13:01:36.069 10343 10343 I AndroidRuntime: Using default boot image
+09-09 13:01:36.069 10343 10343 I AndroidRuntime: Leaving lock profiling enabled
+09-09 13:01:36.104 10343 10343 D AndroidRuntime: Calling main entry Pass2PNative
+09-09 13:01:36.173 10363 10363 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+09-09 13:01:36.174 10363 10363 I AndroidRuntime: Using default boot image
+09-09 13:01:36.174 10363 10363 I AndroidRuntime: Leaving lock profiling enabled
+09-09 13:01:36.209 10363 10363 D AndroidRuntime: Calling main entry Pass2PNative
+09-09 13:01:36.245 10343 10343 I AndroidRuntime: VM exiting with result code 0.
+09-09 13:01:36.245 10363 10363 I AndroidRuntime: VM exiting with result code 0.
+09-09 13:01:36.347 10387 10387 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+09-09 13:01:36.348 10387 10387 I AndroidRuntime: Using default boot image
+09-09 13:01:36.348 10387 10387 I AndroidRuntime: Leaving lock profiling enabled
+09-09 13:01:36.383 10387 10387 D AndroidRuntime: Calling main entry Pass2PNative
+09-09 13:01:36.450 10407 10407 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+09-09 13:01:36.452 10407 10407 I AndroidRuntime: Using default boot image
+09-09 13:01:36.452 10407 10407 I AndroidRuntime: Leaving lock profiling enabled
+09-09 13:01:36.485 10407 10407 D AndroidRuntime: Calling main entry Pass2PNative
+09-09 13:01:36.520 10387 10387 I AndroidRuntime: VM exiting with result code 0.
+09-09 13:01:36.521 10407 10407 I AndroidRuntime: VM exiting with result code 0.
+09-09 13:01:36.782 10431 10431 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+09-09 13:01:36.783 10431 10431 I AndroidRuntime: Using default boot image
+09-09 13:01:36.783 10431 10431 I AndroidRuntime: Leaving lock profiling enabled
+09-09 13:01:36.819 10431 10431 D AndroidRuntime: Calling main entry Pass2PNative
+09-09 13:01:36.885 10451 10451 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+09-09 13:01:36.886 10451 10451 I AndroidRuntime: Using default boot image
+09-09 13:01:36.886 10451 10451 I AndroidRuntime: Leaving lock profiling enabled
+09-09 13:01:36.921 10451 10451 D AndroidRuntime: Calling main entry Pass2PNative
+09-09 13:01:36.951 10451 10451 I AndroidRuntime: VM exiting with result code 1.
+09-09 13:01:37.157 10255 10255 I AndroidRuntime: VM exiting with result code 0.
+09-09 13:01:37.191 10473 10473 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+09-09 13:01:37.193 10473 10473 I AndroidRuntime: Using default boot image
+09-09 13:01:37.193 10473 10473 I AndroidRuntime: Leaving lock profiling enabled
+09-09 13:01:37.232 10473 10473 D AndroidRuntime: Calling main entry Pass2PNative
+09-09 13:01:37.504 10494 10494 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+09-09 13:01:37.506 10494 10494 I AndroidRuntime: Using default boot image
+09-09 13:01:37.506 10494 10494 I AndroidRuntime: Leaving lock profiling enabled
+09-09 13:01:37.543 10494 10494 D AndroidRuntime: Calling main entry Pass2PNative
+09-09 13:01:37.796 10473 10473 I AndroidRuntime: VM exiting with result code 0.
+09-09 13:01:37.796 10494 10494 I AndroidRuntime: VM exiting with result code 0.
+09-09 13:01:37.828 10516 10516 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+09-09 13:01:37.829 10516 10516 I AndroidRuntime: Using default boot image
+09-09 13:01:37.829 10516 10516 I AndroidRuntime: Leaving lock profiling enabled
+09-09 13:01:37.865 10516 10516 D AndroidRuntime: Calling main entry Pass2PNative
+09-09 13:01:38.146 10536 10536 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+09-09 13:01:38.148 10536 10536 I AndroidRuntime: Using default boot image
+09-09 13:01:38.148 10536 10536 I AndroidRuntime: Leaving lock profiling enabled
+09-09 13:01:38.185 10536 10536 D AndroidRuntime: Calling main entry Pass2PNative
+09-09 13:01:38.433 10516 10516 I AndroidRuntime: VM exiting with result code 0.
+09-09 13:01:38.433 10536 10536 I AndroidRuntime: VM exiting with result code 0.
+09-09 13:01:38.542 10558 10558 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+09-09 13:01:38.544 10558 10558 I AndroidRuntime: Using default boot image
+09-09 13:01:38.544 10558 10558 I AndroidRuntime: Leaving lock profiling enabled
+09-09 13:01:38.579 10558 10558 D AndroidRuntime: Calling main entry Pass2PNative
+09-09 13:01:38.855 10578 10578 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+09-09 13:01:38.857 10578 10578 I AndroidRuntime: Using default boot image
+09-09 13:01:38.857 10578 10578 I AndroidRuntime: Leaving lock profiling enabled
+09-09 13:01:38.895 10578 10578 D AndroidRuntime: Calling main entry Pass2PNative
+09-09 13:01:39.143 10558 10558 I AndroidRuntime: VM exiting with result code 0.
+09-09 13:01:39.143 10578 10578 I AndroidRuntime: VM exiting with result code 0.
+09-09 13:01:39.412 10600 10600 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+09-09 13:01:39.413 10600 10600 I AndroidRuntime: Using default boot image
+09-09 13:01:39.413 10600 10600 I AndroidRuntime: Leaving lock profiling enabled
+09-09 13:01:39.447 10600 10600 D AndroidRuntime: Calling main entry Pass2PNative
+09-09 13:01:39.720 10620 10620 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+09-09 13:01:39.721 10620 10620 I AndroidRuntime: Using default boot image
+09-09 13:01:39.721 10620 10620 I AndroidRuntime: Leaving lock profiling enabled
+09-09 13:01:39.760 10620 10620 D AndroidRuntime: Calling main entry Pass2PNative
+09-09 13:01:40.000 10620 10620 I AndroidRuntime: VM exiting with result code 1.
+09-09 13:01:40.032 10431 10431 I AndroidRuntime: VM exiting with result code 0.
+09-09 13:01:40.064 10643 10643 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+09-09 13:01:40.065 10643 10643 I AndroidRuntime: Using default boot image
+09-09 13:01:40.065 10643 10643 I AndroidRuntime: Leaving lock profiling enabled
+09-09 13:01:40.102 10643 10643 D AndroidRuntime: Calling main entry Pass2PNative
+09-09 13:01:40.163 10663 10663 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+09-09 13:01:40.164 10663 10663 I AndroidRuntime: Using default boot image
+09-09 13:01:40.164 10663 10663 I AndroidRuntime: Leaving lock profiling enabled
+09-09 13:01:40.199 10663 10663 D AndroidRuntime: Calling main entry Pass2PNative
+09-09 13:01:40.226 10663 10663 I AndroidRuntime: VM exiting with result code 1.
+09-09 13:01:40.583 10684 10684 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+09-09 13:01:40.584 10684 10684 I AndroidRuntime: Using default boot image
+09-09 13:01:40.584 10684 10684 I AndroidRuntime: Leaving lock profiling enabled
+09-09 13:01:40.619 10684 10684 D AndroidRuntime: Calling main entry Pass2PNative
+09-09 13:01:40.688 10704 10704 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+09-09 13:01:40.689 10704 10704 I AndroidRuntime: Using default boot image
+09-09 13:01:40.689 10704 10704 I AndroidRuntime: Leaving lock profiling enabled
+09-09 13:01:40.724 10704 10704 D AndroidRuntime: Calling main entry Pass2PNative
+09-09 13:01:40.762 10704 10704 I AndroidRuntime: VM exiting with result code 0.
+09-09 13:01:40.762 10684 10684 I AndroidRuntime: VM exiting with result code 0.
+09-09 13:01:41.122 10729 10729 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+09-09 13:01:41.124 10729 10729 I AndroidRuntime: Using default boot image
+09-09 13:01:41.124 10729 10729 I AndroidRuntime: Leaving lock profiling enabled
+09-09 13:01:41.159 10729 10729 D AndroidRuntime: Calling main entry Pass2PNative
+09-09 13:01:41.225 10749 10749 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+09-09 13:01:41.226 10749 10749 I AndroidRuntime: Using default boot image
+09-09 13:01:41.226 10749 10749 I AndroidRuntime: Leaving lock profiling enabled
+09-09 13:01:41.260 10749 10749 D AndroidRuntime: Calling main entry Pass2PNative
+09-09 13:01:41.374 10749 10749 I AndroidRuntime: VM exiting with result code 1.
+09-09 13:01:43.085 10600 10600 I AndroidRuntime: VM exiting with result code 0.
+09-09 13:01:43.467 10771 10771 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+09-09 13:01:43.468 10771 10771 I AndroidRuntime: Using default boot image
+09-09 13:01:43.468 10771 10771 I AndroidRuntime: Leaving lock profiling enabled
+09-09 13:01:43.503 10771 10771 D AndroidRuntime: Calling main entry Pass2PNative
+09-09 13:01:43.788 10791 10791 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+09-09 13:01:43.789 10791 10791 I AndroidRuntime: Using default boot image
+09-09 13:01:43.789 10791 10791 I AndroidRuntime: Leaving lock profiling enabled
+09-09 13:01:43.829 10791 10791 D AndroidRuntime: Calling main entry Pass2PNative
+09-09 13:01:44.076 10771 10771 I AndroidRuntime: VM exiting with result code 0.
+09-09 13:01:44.077 10791 10791 I AndroidRuntime: VM exiting with result code 0.
+09-09 13:01:44.463 10729 10729 I AndroidRuntime: VM exiting with result code 0.
+09-09 13:01:44.500 10815 10815 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+09-09 13:01:44.501 10815 10815 I AndroidRuntime: Using default boot image
+09-09 13:01:44.501 10815 10815 I AndroidRuntime: Leaving lock profiling enabled
+09-09 13:01:44.539 10815 10815 D AndroidRuntime: Calling main entry Pass2PNative
+09-09 13:01:44.593 10835 10835 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+09-09 13:01:44.595 10835 10835 I AndroidRuntime: Using default boot image
+09-09 13:01:44.595 10835 10835 I AndroidRuntime: Leaving lock profiling enabled
+09-09 13:01:44.631 10835 10835 D AndroidRuntime: Calling main entry Pass2PNative
+09-09 13:01:44.823 10815 10815 I AndroidRuntime: VM exiting with result code 0.
+09-09 13:01:44.824 10835 10835 I AndroidRuntime: VM exiting with result code 0.
+09-09 13:01:44.851 10859 10859 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+09-09 13:01:44.852 10859 10859 I AndroidRuntime: Using default boot image
+09-09 13:01:44.852 10859 10859 I AndroidRuntime: Leaving lock profiling enabled
+09-09 13:01:44.887 10859 10859 D AndroidRuntime: Calling main entry Pass2PNative
+09-09 13:01:44.953 10879 10879 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+09-09 13:01:44.954 10879 10879 I AndroidRuntime: Using default boot image
+09-09 13:01:44.954 10879 10879 I AndroidRuntime: Leaving lock profiling enabled
+09-09 13:01:44.990 10879 10879 D AndroidRuntime: Calling main entry Pass2PNative
+09-09 13:01:45.098 10879 10879 I AndroidRuntime: VM exiting with result code 1.
+09-09 13:01:48.187 10859 10859 I AndroidRuntime: VM exiting with result code 0.
