@@ -1,0 +1,34 @@
+<resources>
+    <string name="app_name">Taypeer UI-проверка</string>
+    <string name="synthetic_only">Только искусственные данные. БД и аутентификации нет.</string>
+    <string name="sample">Искусственный образец</string>
+    <string name="open_sample">Передать в Rust</string>
+    <string name="locked">Заблокировано</string>
+    <string name="opened">Образец в Rust: %1$d символов</string>
+    <string name="lock">Заблокировать</string>
+    <string name="reveal">Показать</string>
+    <string name="hide">Скрыть</string>
+    <string name="delayed">Ответ через 3 с</string>
+    <string name="waiting">Ожидание ответа</string>
+    <string name="discarded">Устаревший ответ отклонён</string>
+    <string name="invalid_input">Введите 1–256 символов</string>
+    <string name="error">Ошибка операции</string>
+    <string name="dialog">Диалог</string>
+    <string name="close">Закрыть</string>
+    <string name="theme_system">Системная</string>
+    <string name="theme_light">Светлая</string>
+    <string name="theme_dark">Тёмная</string>
+    <string name="entry">Искусственная запись %1$d</string>
+    <string name="copy">Копировать образец</string>
+    <string name="copied">Скопировано; очистка через 30 с при сохранении владения</string>
+    <string name="import_sample">Импорт образца</string>
+    <string name="export_sample">Экспорт образца</string>
+    <string name="imported">Рабочая копия сохранена: %1$d байт</string>
+    <string name="import_ok">Искусственная рабочая копия сохранена</string>
+    <string name="exported">Экспорт завершён</string>
+    <string name="cancelled">Отменено</string>
+    <string name="biometric">Проверка биометрии</string>
+    <string name="biometric_title">Защита искусственного ключа</string>
+    <string name="biometric_ok">Операция Keystore подтверждена биометрией</string>
+    <string name="biometric_unavailable">Биометрия недоступна; остаётся ввод образца</string>
+</resources>

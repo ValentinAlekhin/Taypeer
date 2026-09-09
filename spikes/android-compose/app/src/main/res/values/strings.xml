@@ -1,0 +1,34 @@
+<resources>
+    <string name="app_name">Taypeer UI probe</string>
+    <string name="synthetic_only">Synthetic data only. No vault or authentication.</string>
+    <string name="sample">Synthetic sample</string>
+    <string name="open_sample">Send to Rust</string>
+    <string name="locked">Locked</string>
+    <string name="opened">Sample in Rust: %1$d characters</string>
+    <string name="lock">Lock</string>
+    <string name="reveal">Reveal</string>
+    <string name="hide">Hide</string>
+    <string name="delayed">Delayed reply (3 s)</string>
+    <string name="waiting">Waiting for reply</string>
+    <string name="discarded">Expired reply discarded</string>
+    <string name="invalid_input">Enter 1–256 characters</string>
+    <string name="error">Operation failed</string>
+    <string name="dialog">Dialog</string>
+    <string name="close">Close</string>
+    <string name="theme_system">System</string>
+    <string name="theme_light">Light</string>
+    <string name="theme_dark">Dark</string>
+    <string name="entry">Synthetic entry %1$d</string>
+    <string name="copy">Copy synthetic sample</string>
+    <string name="copied">Copied; clear after 30 s if still owned</string>
+    <string name="import_sample">Import sample</string>
+    <string name="export_sample">Export sample</string>
+    <string name="imported">Working copy saved: %1$d bytes</string>
+    <string name="import_ok">Synthetic working copy saved</string>
+    <string name="exported">Export completed</string>
+    <string name="cancelled">Cancelled</string>
+    <string name="biometric">Biometric probe</string>
+    <string name="biometric_title">Protect a synthetic key</string>
+    <string name="biometric_ok">Keystore operation authenticated</string>
+    <string name="biometric_unavailable">Biometrics unavailable; sample input remains available</string>
+</resources>

@@ -1,0 +1,30 @@
+# Shared synthetic UI palette: consumed by Rust directly and via UniFFI.
+[light]
+background = 0xf8f9fb
+panel = 0xffffff
+foreground = 0x20242b
+muted = 0x626b79
+border = 0xd8dee8
+primary = 0x315faf
+on_primary = 0xffffff
+selection = 0xdde8fa
+focus = 0x315faf
+danger = 0xb42318
+warning = 0x8b6508
+success = 0x247744
+disabled = 0x9298a2
+
+[dark]
+background = 0x17191e
+panel = 0x20232a
+foreground = 0xe8ebf1
+muted = 0xa6afbc
+border = 0x3b414d
+primary = 0x99bbff
+on_primary = 0x172c50
+selection = 0x344763
+focus = 0x99bbff
+danger = 0xffb4ab
+warning = 0xefcc76
+success = 0x85d7a3
+disabled = 0x78808d

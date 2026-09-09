@@ -1,0 +1,4 @@
+[bindings.kotlin]
+package_name = "dev.taypeer.probe.bridge"
+cdylib_name = "taypeer_ui_probe"
+android = true

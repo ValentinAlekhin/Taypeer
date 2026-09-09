@@ -1,0 +1,21 @@
+   Compiling pass2p-ui-probe v0.0.0 (/Users/valentin/projects/pet-projects/pass2p/spikes/android-compose)
+    Finished `test` profile [unoptimized] target(s) in 0.28s
+     Running unittests src/lib.rs (spikes/android-compose/target/debug/deps/pass2p_ui_probe-6e71d1fa1d350942)
+
+running 7 tests
+test tests::unicode_round_trip_is_exact_and_count_is_not_bytes ... ok
+test tests::lock_removes_sample_and_denies_delayed_read ... ok
+test tests::invalid_input_does_not_change_existing_session ... ok
+test tests::repeated_lock_stays_locked_and_invalidates_issued_reply ... ok
+test tests::old_request_cannot_read_new_session ... ok
+test tests::replacing_session_also_invalidates_old_request ... ok
+test tests::both_palettes_have_all_roles_and_valid_rgb_colors ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests pass2p_ui_probe
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

@@ -1,0 +1,15 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuite name="dev.pass2p.probe.ProbeTest" tests="7" failures="0" errors="0" skipped="0" time="8.187" timestamp="2026-09-09T09:50:00" hostname="localhost">
+  <properties>
+    <property name="device" value="pass2p-spike(AVD) - 12" />
+    <property name="flavor" value="" />
+    <property name="project" value=":app" />
+  </properties>
+  <testcase name="activityRecreationKeepsSessionLockedAndUiEmpty" classname="dev.pass2p.probe.ProbeTest" time="0.988" />
+  <testcase name="generatedBindingsRoundTripUnicodeAndRejectOldGeneration" classname="dev.pass2p.probe.ProbeTest" time="0.735" />
+  <testcase name="backgroundClearsInputAndRustSession" classname="dev.pass2p.probe.ProbeTest" time="1.598" />
+  <testcase name="composeInputRevealsExactlyAndLockClearsBothSides" classname="dev.pass2p.probe.ProbeTest" time="1.317" />
+  <testcase name="themeAndLanguageChangesKeepEditingState" classname="dev.pass2p.probe.ProbeTest" time="1.004" />
+  <testcase name="oldInputConnectionCannotRestoreDraftAfterLock" classname="dev.pass2p.probe.ProbeTest" time="0.869" />
+  <testcase name="issuedReplyCannotReappearAfterLockAndNewSession" classname="dev.pass2p.probe.ProbeTest" time="1.213" />
+</testsuite>
