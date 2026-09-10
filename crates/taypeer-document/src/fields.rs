@@ -47,6 +47,23 @@ fn field_object<R: ReadDoc>(read: &R, entry: &ObjId, field: &EntryField) -> Resu
     }
 }
 
+pub(super) fn pending_operations(
+    tx: &Transaction<'_>,
+    entry: &ObjId,
+    states: &[FieldState],
+) -> Result<BTreeSet<String>, Error> {
+    let mut changed = BTreeSet::new();
+    for state in states {
+        let target = field_object(tx, entry, &state.field)?;
+        for (_, operation) in tx.get_all(target, field_key(&state.field))? {
+            if tx.hash_for_opid(&operation).is_none() {
+                changed.insert(operation.to_string());
+            }
+        }
+    }
+    Ok(changed)
+}
+
 pub(super) fn validate_field(field: &EntryField, value: &FieldValue) -> Result<(), Error> {
     let valid = match (field, value) {
         (EntryField::Title, FieldValue::Text(Some(value))) => {

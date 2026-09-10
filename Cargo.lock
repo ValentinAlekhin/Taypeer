@@ -2157,6 +2157,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "fractional_index"
+version = "2.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ce01fad85c73f947e62a39152c7b0f785af7f44859da36e421c42a3023bcbe3a"
+
+[[package]]
 name = "freetype-sys"
 version = "0.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7072,8 +7078,10 @@ dependencies = [
  "serde",
  "serde_json",
  "taypeer-core",
+ "taypeer-document",
  "taypeer-runtime",
  "taypeer-services",
+ "taypeer-storage",
  "tempfile",
  "zeroize",
 ]
@@ -7082,6 +7090,7 @@ dependencies = [
 name = "taypeer-core"
 version = "0.1.0"
 dependencies = [
+ "fractional_index",
  "serde",
 ]
 

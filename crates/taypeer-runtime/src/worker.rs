@@ -72,6 +72,71 @@ fn dispatch(
     command: Command,
 ) -> Result<Value, RuntimeError> {
     Ok(match command {
+        Command::Tree => value(&service.tree(session)?.value)?,
+        Command::Trash => value(&service.trash(session)?.value)?,
+        Command::Inspect(target) => value(&service.inspect_object(session, &target)?.value)?,
+        Command::RevealInspected {
+            target,
+            field,
+            origins,
+        } => value(
+            &service
+                .reveal_inspected(session, &target, &field, &origins)?
+                .value,
+        )?,
+        Command::PrepareLifecycle {
+            action,
+            target,
+            destination,
+        } => value(
+            &service
+                .prepare_lifecycle(session, action, target, destination)?
+                .value,
+        )?,
+        Command::ConfirmLifecycle {
+            prepared,
+            operation,
+        } => value(
+            &service
+                .confirm_lifecycle(session, &prepared, &operation)?
+                .value,
+        )?,
+        Command::MoveGroup { request, operation } => {
+            value(&service.move_group(session, &request, &operation)?.value)?
+        }
+        Command::MoveEntry {
+            entry,
+            group,
+            review,
+            operation,
+        } => value(
+            &service
+                .move_entry(session, &entry, group, review, &operation)?
+                .value,
+        )?,
+        Command::CloneGroup {
+            group,
+            parent,
+            name,
+            operation,
+        } => value(
+            &service
+                .clone_group(session, &group, parent, name, &operation)?
+                .value,
+        )?,
+        Command::PendingSources => value(&service.pending_sources(session)?.value)?,
+        Command::RecoverSource { request, operation } => {
+            value(&service.recover_source(session, &request, &operation)?.value)?
+        }
+        Command::ResolveGeneration {
+            address,
+            heads,
+            operation,
+        } => value(
+            &service
+                .resolve_generation(session, &address, &heads, &operation)?
+                .value,
+        )?,
         Command::Groups => value(&service.groups(session)?.value)?,
         Command::CreateGroup { name, parent } => {
             value(&service.create_group(session, name, parent)?.value)?

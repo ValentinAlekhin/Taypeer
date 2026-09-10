@@ -65,7 +65,7 @@ pub(super) fn validate(header: &[u8], file_length: u64) -> Result<(), Error> {
     if header.len() != HEADER || &header[..8] != MAGIC {
         return Err(Error::InvalidFile);
     }
-    if header[8..12] != [1, 0, 1, 0] {
+    if header[8..12] != [1, 0, 2, 0] {
         return Err(Error::UnsupportedVersion);
     }
     let t = iterations(header)?;
@@ -117,7 +117,7 @@ pub(super) fn create_header(password: &[u8], target_ms: u32) -> Result<(Vec<u8>,
     };
     let key = ReadKey(Zeroizing::new(random()?));
     let mut bytes = Vec::from(MAGIC.as_slice());
-    bytes.extend([1, 0, 1, 0]);
+    bytes.extend([1, 0, 2, 0]);
     bytes.extend(iterations.to_le_bytes());
     bytes.extend(salt);
     let nonce = random::<24>()?;

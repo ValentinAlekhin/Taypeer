@@ -13,6 +13,7 @@ use std::{
 };
 use taypeer_core::{AttributeId, EntryId, GroupId, OperationId, RevisionId};
 use taypeer_runtime::{Command, Worker};
+use taypeer_services::{GroupMove, LifecycleAction, ObjectId};
 
 struct Database {
     path: PathBuf,
@@ -76,8 +77,49 @@ impl Host {
 
     pub fn execute(&mut self, action: Action) -> Result<Value, CliError> {
         let command = match action {
+            Action::Trash(command) => crate::lifecycle_host::trash(command, &self.input)?,
+            Action::Pending(command) => crate::lifecycle_host::pending(command, &self.input)?,
             Action::Db(command) => return self.database(command),
             Action::Group(command) => match command {
+                GroupCommand::Tree => Command::Tree,
+                GroupCommand::Move {
+                    id,
+                    parent,
+                    position,
+                    operation: op,
+                } => Command::MoveGroup {
+                    request: GroupMove {
+                        group: GroupId::new(id),
+                        parent: parent.map(GroupId::new),
+                        position: crate::lifecycle_host::position(position),
+                        review: None,
+                        name: None,
+                    },
+                    operation: operation(op)?,
+                },
+                GroupCommand::Resolve {
+                    input,
+                    operation: op,
+                } => Command::MoveGroup {
+                    request: self.input.document(&input)?,
+                    operation: operation(op)?,
+                },
+                GroupCommand::Clone {
+                    id,
+                    parent,
+                    name,
+                    operation: op,
+                } => Command::CloneGroup {
+                    group: GroupId::new(id),
+                    parent: parent.map(GroupId::new),
+                    name,
+                    operation: operation(op)?,
+                },
+                GroupCommand::Trash { id } => Command::PrepareLifecycle {
+                    action: LifecycleAction::Trash,
+                    target: ObjectId::Group(GroupId::new(id)),
+                    destination: None,
+                },
                 GroupCommand::List => Command::Groups,
                 GroupCommand::Create { name, parent } => Command::CreateGroup {
                     name,
@@ -89,6 +131,22 @@ impl Host {
                 },
             },
             Action::Entry(command) => match command {
+                EntryCommand::Move {
+                    id,
+                    group,
+                    review,
+                    operation: op,
+                } => Command::MoveEntry {
+                    entry: EntryId::new(id),
+                    group: GroupId::new(group),
+                    review: review.map(|path| self.input.document(&path)).transpose()?,
+                    operation: operation(op)?,
+                },
+                EntryCommand::Trash { id } => Command::PrepareLifecycle {
+                    action: LifecycleAction::Trash,
+                    target: ObjectId::Entry(EntryId::new(id)),
+                    destination: None,
+                },
                 EntryCommand::List { group, query } => Command::Entries {
                     group: group.map(GroupId::new),
                     query,
@@ -159,6 +217,10 @@ impl Host {
                 },
             },
             Action::Conflict(command) => match command {
+                ConflictCommand::Generation {
+                    input,
+                    operation: op,
+                } => crate::lifecycle_host::generation(&input, &self.input, operation(op)?)?,
                 ConflictCommand::Show { entry } => Command::Conflicts(EntryId::new(entry)),
                 ConflictCommand::Reveal { input } => {
                     let request: ConflictRevealInput = self.input.document(&input)?;
@@ -269,7 +331,7 @@ struct ResolutionInput {
     fields: Vec<taypeer_services::Resolution>,
 }
 
-fn operation(id: Option<String>) -> Result<OperationId, CliError> {
+pub(crate) fn operation(id: Option<String>) -> Result<OperationId, CliError> {
     match id {
         Some(id) if !id.is_empty() => Ok(OperationId::new(id)),
         Some(_) => Err(CliError::Input),

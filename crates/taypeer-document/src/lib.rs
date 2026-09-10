@@ -17,14 +17,20 @@ use taypeer_core::{
 mod codec;
 mod fields;
 mod groups;
+mod lifecycle;
+mod objects;
 mod operations;
+pub use groups::{GroupNode, ObjectStatus};
+pub use lifecycle::*;
+pub use objects::{ObjectAddress, ObjectId};
 mod projection;
 pub use operations::{ConflictContext, Resolution};
 
 use codec::{decode, encode, object, unique, unique_optional};
 use fields::{apply_form, put_field, validate_field};
-use groups::{GroupPlacement, put_group_name, read_groups};
+use groups::{put_group_name, read_groups};
 use projection::read_entry;
+use taypeer_core::{GenerationId, GroupPlacement, GroupRef, OrderKey};
 
 /// A document failure without user content or third-party parser diagnostics.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -68,6 +74,7 @@ pub struct EntryDraft {
     database_id: DatabaseId,
     entry_id: EntryId,
     group_id: GroupId,
+    generation: GenerationId,
     revision_id: RevisionId,
     base: Vec<ChangeHash>,
     original: Option<EntryFields>,
@@ -144,6 +151,7 @@ impl Document {
         let database_id = DatabaseId::new(random_id());
         let mut doc = Automerge::new();
         let mut tx = doc.transaction();
+        tx.put(ROOT, "schema", 2_u64)?;
         tx.put(ROOT, "database_id", database_id.as_str())?;
         tx.put(ROOT, "name", name.as_str())?;
         tx.put(ROOT, "created_at", now)?;
@@ -152,6 +160,9 @@ impl Document {
         tx.put_object(ROOT, "revisions", ObjType::Map)?;
         tx.put_object(ROOT, "operations", ObjType::Map)?;
         tx.put_object(ROOT, "purged_revisions", ObjType::Map)?;
+        for root in ["events", "purges", "lifecycle_receipts", "recoveries"] {
+            tx.put_object(ROOT, root, ObjType::Map)?;
+        }
         tx.commit();
         Ok(Self {
             database_id,
@@ -175,6 +186,9 @@ impl Document {
     /// This parser is not a substitute for outer authentication or resource limits.
     pub fn load(bytes: &[u8]) -> Result<Self, Error> {
         let doc = Automerge::load(bytes)?;
+        if unique(&doc, &ROOT, "schema")?.to_u64() != Some(2) {
+            return Err(Error::InvalidDocument);
+        }
         let database_id = DatabaseId::new(
             unique(&doc, &ROOT, "database_id")?
                 .to_str()
@@ -190,40 +204,7 @@ impl Document {
             name,
             doc,
         };
-        let groups = document.groups()?;
-        // The UI walks this tree recursively; reject cycles and missing parents at the boundary.
-        for group in &groups {
-            let mut seen = BTreeSet::new();
-            let mut current = Some(&group.id);
-            while let Some(id) = current {
-                if !seen.insert(id) {
-                    return Err(Error::InvalidDocument);
-                }
-                current = groups
-                    .iter()
-                    .find(|group| &group.id == id)
-                    .ok_or(Error::InvalidDocument)?
-                    .parent
-                    .as_ref();
-            }
-        }
-        let entries = object(&document.doc, &ROOT, "entries")?;
-        let mut attribute_ids = BTreeSet::new();
-        for id in document.doc.keys(&entries) {
-            let entry = object(&document.doc, &entries, &id)?;
-            let attributes = object(&document.doc, &entry, "attributes")?;
-            for id in document.doc.keys(attributes) {
-                if !attribute_ids.insert(id) {
-                    return Err(Error::DuplicateId);
-                }
-            }
-        }
-        for entry in document.entries()? {
-            if !groups.iter().any(|group| group.id == entry.group_id) {
-                return Err(Error::InvalidDocument);
-            }
-            document.history(&entry.id)?;
-        }
+        document.validate_structure()?;
         Ok(document)
     }
 
@@ -251,15 +232,24 @@ impl Document {
         {
             return Err(Error::NotFound);
         }
-        let order = groups
+        let siblings: Vec<_> = groups
             .iter()
             .filter(|group| group.parent == parent)
-            .map(|group| group.order)
-            .max()
-            .map_or(Some(0), |order| order.checked_add(1))
-            .ok_or(Error::InvalidDocument)?;
+            .collect();
+        let id = GroupId::new(random_id());
+        let order = OrderKey::between(
+            siblings.last().map(|g| (&g.order, g.id.as_str())),
+            None,
+            id.as_str(),
+        )
+        .map_err(|_| Error::InvalidContext)?;
+        let parent_ref = parent
+            .as_ref()
+            .map(|id| objects::single(&self.doc, &ObjectId::Group(id.clone()))?.group_ref())
+            .transpose()?;
         let group = Group {
-            id: GroupId::new(random_id()),
+            generation: GenerationId::new(id.as_str()),
+            id,
             name,
             parent,
             order,
@@ -267,22 +257,21 @@ impl Document {
             modified_at: now,
         };
         let mut tx = self.doc.transaction();
-        let root = object(&tx, &ROOT, "groups")?;
-        if !tx.get_all(&root, group.id.as_str())?.is_empty() {
-            return Err(Error::DuplicateId);
-        }
-        let object = tx.put_object(&root, group.id.as_str(), ObjType::Map)?;
-        tx.put(
+        let (address, object) = objects::initialize(&mut tx, &ObjectId::Group(group.id.clone()))?;
+        tx.put_object(&object, "placement_times", ObjType::Map)?;
+        groups::put_placement(
+            &mut tx,
             &object,
-            "placement",
-            encode(&GroupPlacement {
-                parent: group.parent.clone(),
-                order: group.order,
-            })?,
+            &GroupPlacement {
+                parent: parent_ref,
+                order: group.order.clone(),
+            },
+            now,
         )?;
         tx.put(&object, "created_at", now)?;
         tx.put_object(&object, "name_times", ObjType::Map)?;
         put_group_name(&mut tx, &object, &group.name, now)?;
+        objects::record_event(&mut tx, &address, None)?;
         tx.commit();
         Ok(group)
     }
@@ -304,9 +293,10 @@ impl Document {
             return Ok(());
         }
         let mut tx = self.doc.transaction();
-        let root = object(&tx, &ROOT, "groups")?;
-        let group_object = object(&tx, &root, id.as_str())?;
+        let address = objects::single(&tx, &ObjectId::Group(id.clone()))?;
+        let group_object = objects::generation_object(&tx, &address)?;
         put_group_name(&mut tx, &group_object, &name, now)?;
+        objects::record_event(&mut tx, &address, None)?;
         tx.commit();
         Ok(())
     }
@@ -319,9 +309,11 @@ impl Document {
     /// Opens an empty local form and captures the current document heads.
     pub fn begin_create_entry(&self, group: GroupId) -> Result<EntryDraft, Error> {
         self.require_group(&group)?;
+        let entry_id = EntryId::new(random_id());
         Ok(EntryDraft {
             database_id: self.database_id.clone(),
-            entry_id: EntryId::new(random_id()),
+            generation: GenerationId::new(entry_id.as_str()),
+            entry_id,
             group_id: group,
             revision_id: RevisionId::new(random_id()),
             base: self.doc.get_heads(),
@@ -337,7 +329,8 @@ impl Document {
         Ok(EntryDraft {
             database_id: self.database_id.clone(),
             entry_id: id.clone(),
-            group_id: snapshot.group_id,
+            group_id: snapshot.group_id.ok_or(Error::Conflict)?,
+            generation: snapshot.generation,
             revision_id: RevisionId::new(random_id()),
             base: self.doc.get_heads(),
             original: Some(fields.clone()),
@@ -388,6 +381,19 @@ impl Document {
                 Err(Error::DuplicateId)
             };
         }
+        if draft.original.is_some() {
+            let address = self.require_active_entry(&draft.entry_id)?;
+            if address.generation != draft.generation {
+                return Err(Error::InvalidContext);
+            }
+        } else {
+            // An old create form must not silently save under a closed parent lifetime.
+            let basis = self.doc.fork_at(&draft.base)?;
+            let parent = ObjectId::Group(draft.group_id.clone());
+            if objects::single(&basis, &parent)? != objects::single(&self.doc, &parent)? {
+                return Err(Error::InvalidContext);
+            }
+        }
         if draft.original.as_ref() == Some(&draft.fields) {
             return Ok(draft.entry_id);
         }
@@ -403,21 +409,20 @@ impl Document {
             })
             .collect();
         if !new_attributes.is_empty() {
-            let entries = object(&self.doc, &ROOT, "entries")?;
-            for key in self.doc.keys(&entries) {
-                let entry = object(&self.doc, &entries, &key)?;
-                let attributes = object(&self.doc, &entry, "attributes")?;
-                for id in &new_attributes {
-                    if !self.doc.get_all(&attributes, id.as_str())?.is_empty() {
-                        return Err(Error::DuplicateId);
+            for address in objects::all(&self.doc)? {
+                if matches!(&address.object, ObjectId::Entry(id) if id != &draft.entry_id) {
+                    let entry = objects::generation_object(&self.doc, &address)?;
+                    let attributes = object(&self.doc, &entry, "attributes")?;
+                    for id in &new_attributes {
+                        if !self.doc.get_all(&attributes, id.as_str())?.is_empty() {
+                            return Err(Error::DuplicateId);
+                        }
                     }
                 }
             }
         }
-
         let mut candidate = self.doc.clone();
         let mut tx = candidate.transaction_at(PatchLog::null(), &draft.base);
-        let entries = object(&tx, &ROOT, "entries")?;
         let entry = if draft.original.is_none() {
             // Check the current state as well as the isolated base to prevent overwrite on reuse.
             let current_entries = object(&self.doc, &ROOT, "entries")?;
@@ -428,13 +433,16 @@ impl Document {
             {
                 return Err(Error::DuplicateId);
             }
-            let entry = tx.put_object(entries, draft.entry_id.as_str(), ObjType::Map)?;
-            tx.put(&entry, "group", draft.group_id.as_str())?;
+            let (_, entry) =
+                objects::initialize(&mut tx, &ObjectId::Entry(draft.entry_id.clone()))?;
+            let destination =
+                objects::single(&tx, &ObjectId::Group(draft.group_id.clone()))?.group_ref()?;
+            tx.put(&entry, "group", encode(&destination)?)?;
             tx.put(&entry, "created_at", now)?;
             tx.put_object(&entry, "attributes", ObjType::Map)?;
             entry
         } else {
-            object(&tx, &entries, draft.entry_id.as_str())?
+            objects::entry_object(&tx, &draft.entry_id)?
         };
         let changed = apply_form(
             &mut tx,
@@ -463,6 +471,8 @@ impl Document {
         };
         let revisions = object(&tx, &ROOT, "revisions")?;
         tx.put(revisions, draft.revision_id.as_str(), encode(&stored)?)?;
+        let address = objects::single(&tx, &ObjectId::Entry(draft.entry_id.clone()))?;
+        objects::record_event(&mut tx, &address, Some(draft.revision_id.clone()))?;
         if let Some((operation, intent)) = receipt {
             operations::write_receipt(&mut tx, operation, intent, &draft.entry_id)?;
         }
@@ -517,8 +527,7 @@ impl Document {
         let base = self.doc.get_heads();
         let mut candidate = self.doc.clone();
         let mut tx = candidate.transaction();
-        let entries = object(&tx, &ROOT, "entries")?;
-        let entry = object(&tx, &entries, id.as_str())?;
+        let entry = objects::entry_object(&tx, id)?;
         let mut changed = BTreeSet::new();
         for (field, value) in updates {
             put_field(&mut tx, &entry, &field, value, &revision_id, &mut changed)?;
@@ -538,23 +547,44 @@ impl Document {
         };
         let revisions = object(&tx, &ROOT, "revisions")?;
         tx.put(revisions, revision_id.as_str(), encode(&stored)?)?;
+        let address = objects::single(&tx, &ObjectId::Entry(id.clone()))?;
+        objects::record_event(&mut tx, &address, Some(revision_id.clone()))?;
         tx.commit();
         read_entry(&candidate, id, None)?;
         self.doc = candidate;
         Ok(id.clone())
     }
 
-    /// Returns every entry without projecting an arbitrary conflict winner.
+    /// Returns active, placed entries without selecting an arbitrary field conflict winner.
     pub fn entries(&self) -> Result<Vec<EntrySnapshot>, Error> {
         let root = object(&self.doc, &ROOT, "entries")?;
-        self.doc
-            .keys(root)
-            .map(|key| self.entry(&EntryId::new(key)))
-            .collect()
+        let groups = self.groups()?;
+        let mut result = Vec::new();
+        for key in self.doc.keys(root) {
+            let id = EntryId::new(key);
+            let addresses = objects::current(&self.doc, &ObjectId::Entry(id.clone()))?;
+            if addresses.len() != 1 {
+                continue;
+            }
+            let (status, _) = self.object_status(&addresses[0])?;
+            if status != ObjectStatus::Active {
+                continue;
+            }
+            let snapshot = read_entry(&self.doc, &id, None)?;
+            if snapshot
+                .group_id
+                .as_ref()
+                .is_some_and(|id| groups.iter().any(|group| &group.id == id))
+            {
+                result.push(snapshot);
+            }
+        }
+        Ok(result)
     }
 
-    /// Reads one complete logical entry view.
+    /// Reads one active, placed entry. Trash and placement review use explicit inspection.
     pub fn entry(&self, id: &EntryId) -> Result<EntrySnapshot, Error> {
+        self.require_active_entry(id)?;
         read_entry(&self.doc, id, None)
     }
 
@@ -563,7 +593,13 @@ impl Document {
         self.entry(id)?;
         let mut revisions = Vec::new();
         for stored in stored_revisions(&self.doc, id)? {
-            if !self.revision_is_purged(&stored.revision.id)? {
+            let address = ObjectAddress {
+                object: ObjectId::Entry(id.clone()),
+                generation: stored.revision.snapshot.generation.clone(),
+            };
+            if !self.revision_is_purged(&stored.revision.id)?
+                && objects::purge(&self.doc, &address)?.is_none()
+            {
                 revisions.push(stored.revision);
             }
         }
@@ -592,21 +628,13 @@ impl Document {
         let mut candidate = self.doc.clone();
         let mut incoming = other.doc.clone();
         candidate.merge(&mut incoming)?;
-        let root = object(&candidate, &ROOT, "entries")?;
-        let mut attribute_ids = BTreeSet::new();
-        for id in candidate.keys(&root) {
-            let entry = object(&candidate, &root, &id)?;
-            let attributes = object(&candidate, &entry, "attributes")?;
-            // Identity outlives ordinary deletion. Inspect retained objects, not only
-            // the active attributes projected into the editable entry form.
-            for attribute_id in candidate.keys(attributes) {
-                if !attribute_ids.insert(attribute_id) {
-                    return Err(Error::DuplicateId);
-                }
-            }
-            read_entry(&candidate, &EntryId::new(id), None)?;
-        }
-        // Group conflicts remain explicit errors at the group projection boundary.
+        let checked = Self {
+            database_id: self.database_id.clone(),
+            name: self.name.clone(),
+            doc: candidate,
+        };
+        checked.validate_structure()?;
+        let candidate = checked.doc;
         self.doc = candidate;
         Ok(())
     }

@@ -2,6 +2,9 @@
 //!
 //! These types define no file format, authentication, or durable storage contract.
 
+mod order;
+pub use order::{OrderError, OrderKey};
+
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -30,6 +33,10 @@ macro_rules! identifier {
 }
 
 identifier!(DatabaseId, "Identity of one logical database.");
+identifier!(
+    GenerationId,
+    "Identity of one state generation; public object IDs survive recovery."
+);
 identifier!(GroupId, "Stable identity of a group.");
 identifier!(OperationId, "Identity of one idempotent user operation.");
 identifier!(EntryId, "Stable identity of an entry.");
@@ -42,7 +49,7 @@ identifier!(
 /// UTC milliseconds, used for presentation rather than conflict resolution.
 pub type Timestamp = i64;
 
-/// A group in the append-only placement model of the first increment.
+/// A current group with one unambiguous name and acyclic placement.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Group {
     /// Stable identity.
@@ -51,12 +58,32 @@ pub struct Group {
     pub name: String,
     /// Parent, or no parent for a top-level group.
     pub parent: Option<GroupId>,
-    /// Append order within the parent; ties use the group ID.
-    pub order: u64,
+    /// Dense sibling position; compare it with the stable group ID.
+    pub order: OrderKey,
+    /// Current state generation.
+    pub generation: GenerationId,
     /// Creation time.
     pub created_at: Timestamp,
     /// Most recent meaningful local change time.
     pub modified_at: Timestamp,
+}
+
+/// A reference to a particular generation of a group.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct GroupRef {
+    /// Public identity.
+    pub id: GroupId,
+    /// A closed generation never redirects to a later recovery.
+    pub generation: GenerationId,
+}
+
+/// Atomic parent and sibling position.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GroupPlacement {
+    /// None denotes the top level, not an implicit root object.
+    pub parent: Option<GroupRef>,
+    /// Dense position with deterministic identity tie breaking.
+    pub order: OrderKey,
 }
 
 /// An atomic pair: changing protection cannot expose another concurrent value.
@@ -220,7 +247,11 @@ pub struct EntrySnapshot {
     /// Stable identity.
     pub id: EntryId,
     /// Fixed placement in this increment.
-    pub group_id: GroupId,
+    pub group_id: Option<GroupId>,
+    /// State generation containing these fields.
+    pub generation: GenerationId,
+    /// All atomic destination alternatives, never an implicit winner.
+    pub placements: Vec<GroupRef>,
     /// A regular editable form, available only when every field is unambiguous.
     pub fields: Option<EntryFields>,
     /// Conflicting fields; all alternatives remain in `values` as well.
@@ -236,7 +267,7 @@ pub struct EntrySnapshot {
 impl EntrySnapshot {
     /// Whether ordinary editing must defer to an explicit conflict workflow.
     pub fn has_conflicts(&self) -> bool {
-        !self.conflicts.is_empty()
+        !self.conflicts.is_empty() || self.placements.len() != 1
     }
 }
 

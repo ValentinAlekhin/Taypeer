@@ -37,7 +37,7 @@ impl CliError {
     }
 }
 
-pub(crate) fn message(language: Language, key: &str) -> String {
+fn catalog(language: Language) -> &'static BTreeMap<String, String> {
     type Catalog = BTreeMap<String, String>;
     static EN: OnceLock<Catalog> = OnceLock::new();
     static RU: OnceLock<Catalog> = OnceLock::new();
@@ -48,9 +48,33 @@ pub(crate) fn message(language: Language, key: &str) -> String {
     cell.get_or_init(|| {
         serde_json::from_str(source).expect("embedded CLI translations are validated by tests")
     })
-    .get(key)
-    .cloned()
-    .unwrap_or_else(|| key.into())
+}
+
+pub(crate) fn message(language: Language, key: &str) -> String {
+    catalog(language)
+        .get(key)
+        .cloned()
+        .unwrap_or_else(|| key.into())
+}
+
+/// Clap builds help before parsing its language flag, including in the session editor.
+pub(crate) fn help(key: &'static str) -> &'static str {
+    static LANGUAGE: OnceLock<Language> = OnceLock::new();
+    let language = LANGUAGE.get_or_init(|| {
+        let mut args = std::env::args_os();
+        while let Some(arg) = args.next() {
+            if arg == "--lang=ru"
+                || (arg == "--lang" && args.next().is_some_and(|value| value == "ru"))
+            {
+                return Language::Ru;
+            }
+        }
+        Language::En
+    });
+    catalog(*language)
+        .get(key)
+        .map(String::as_str)
+        .unwrap_or(key)
 }
 
 pub(crate) fn print_result(

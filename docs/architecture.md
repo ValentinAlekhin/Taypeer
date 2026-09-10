@@ -27,9 +27,10 @@ pnpm arch:build
 | `index`, `applications` | Контекст и приложения с общими сервисами | [views.c4](../architecture/views.c4) |
 | `platform`, `storage` | Платформенные границы, функции, хранение и обмен | [views.c4](../architecture/views.c4) |
 | `domain` | Основные сущности без полей типов | [представление](../architecture/views.c4), [сущности](../architecture/data.c4) |
-| `implementation` | Первый срез Rust и macOS с временными демонстрационными данными | [views.c4](../architecture/views.c4) |
+| `implementation` | Реализованный Rust-срез, файловый CLI и macOS demo | [views.c4](../architecture/views.c4) |
 | `devices` | Экземпляры общих компонентов на двух устройствах | [deployment.c4](../architecture/deployment.c4) |
 | `save`, `lock`, `receive`, `unlockApply`, `demoEdit` | Продуктовые сценарии и отдельное подтверждение в памяти demo | [flows.c4](../architecture/flows.c4) |
+| `cliSession`, `fileSave`, `lifecycle` | Локальный файл, процесс БД и точное подтверждение корзины/очистки | [flows.c4](../architecture/flows.c4) |
 | `admission`, `trustChange`, `migrate`, `recover` | Допуск, ротация/отзыв, миграция и восстановление | [flows.c4](../architecture/flows.c4) |
 
 `scaffold` означает существующий каркас, `partial` — реализованный ограниченный

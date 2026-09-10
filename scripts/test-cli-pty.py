@@ -13,6 +13,12 @@ import tempfile
 import time
 
 
+def json_response(data):
+    clean = re.sub(rb"\x1b\[[0-?]*[ -/]*[@-~]", b"", data).decode()
+    start = min(index for index in [clean.find("{"), clean.find("[")] if index >= 0)
+    return json.JSONDecoder().raw_decode(clean[start:])[0]
+
+
 class Terminal:
     def __init__(self, binary):
         self.pid, self.fd = pty.fork()
@@ -99,6 +105,25 @@ def main():
             assert b"PUBLIC entry" in terminal.command('search "PUBLIC entry"')
             terminal.command("db close")
             assert b"PUBLIC entry" in terminal.command("entry list")
+            prepared = json_response(terminal.command(f"group trash {group}"))
+            selection = Path(directory) / "public-selection.json"
+            selection.write_text(json.dumps(prepared), encoding="utf-8")
+            entry = json_response(terminal.command("entry list"))[0]["id"]
+            terminal.command(f"draft edit {entry}")
+            confirmation = f'trash confirm --input "{selection}" --yes --operation PUBLIC-PTY-trash'
+            assert b"EditorAlreadyOpen" in terminal.command(confirmation)
+            terminal.command("draft discard")
+            assert b'"error"' not in terminal.command(confirmation)
+            assert json_response(terminal.command("entry list")) == []
+            assert len(json_response(terminal.command("trash list"))) == 2
+            restore = json_response(terminal.command(f"trash prepare restore group {group}"))
+            selection.write_text(json.dumps(restore), encoding="utf-8")
+            assert b'"error"' not in terminal.command(
+                f'trash confirm --input "{selection}" --yes --operation PUBLIC-PTY-restore')
+            assert len(json_response(terminal.command(f"history list {entry}"))) == 2
+            assert b'"error"' not in terminal.command(f"group move {group} --first --operation PUBLIC-PTY-move")
+            assert b"PUBLIC_PTY_ENTRY_CANARY" not in terminal.transcript
+            assert b"PUBLIC_PTY_MASTER_CANARY" not in terminal.transcript
             terminal.command("db lock")
             denied = terminal.command("entry list")
             assert b'"Closed"' in denied
@@ -139,7 +164,7 @@ def main():
             )
             assert result.returncode == 0, "worker retained the writer lock after exit"
             assert len(json.loads(result.stdout)) == 1
-        print("CLI PTY: hidden input, cancellation, save, lock denial, unlock, close and reopen passed")
+        print("CLI PTY: hidden input, cancellation, draft guard, trash/restore, move, lock, close and reopen passed")
     finally:
         terminal.close()
 

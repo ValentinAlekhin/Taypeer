@@ -3,6 +3,8 @@
 mod args;
 mod host;
 mod input;
+mod lifecycle_args;
+mod lifecycle_host;
 mod output;
 mod secret_input;
 mod session;

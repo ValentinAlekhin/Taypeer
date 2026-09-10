@@ -251,3 +251,122 @@ fn draft_storage_failure_still_locks_and_revokes_access() {
     assert!(!service.is_current(&session));
     assert_eq!(service.draft(&session).unwrap_err(), ServiceError::Locked);
 }
+
+#[test]
+fn lifecycle_confirmation_is_durable_masked_and_retryable_after_storage_failure() {
+    use taypeer_core::OperationId;
+    use taypeer_services::{InspectionTarget, LifecycleAction, ObjectId};
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("lifecycle.taypeer");
+    let backups = directory.path().join("lifecycle.taypeer.backups");
+    let mut service = DatabaseService::new();
+    let session = service
+        .create_file(&path, "PUBLIC lifecycle".into(), PASSWORD)
+        .unwrap();
+    let group = service
+        .create_group(&session, "PUBLIC group".into(), None)
+        .unwrap()
+        .value
+        .id;
+    service.start_create_entry(&session, group.clone()).unwrap();
+    service
+        .update_draft(
+            &session,
+            EditableEntry {
+                title: "PUBLIC entry".into(),
+                password: Some("PUBLIC_HIDDEN_LIFECYCLE".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let entry = service.save_draft(&session).unwrap().value;
+    let prepared = service
+        .prepare_lifecycle(
+            &session,
+            LifecycleAction::Trash,
+            ObjectId::Group(group.clone()),
+            None,
+        )
+        .unwrap()
+        .value;
+    service.start_edit_entry(&session, &entry).unwrap();
+    assert_eq!(
+        service
+            .confirm_lifecycle(&session, &prepared, &OperationId::new("PUBLIC blocked"))
+            .unwrap_err(),
+        ServiceError::EditorAlreadyOpen
+    );
+    service.cancel_draft(&session).unwrap();
+    fs::rename(&backups, directory.path().join("retained-backups")).unwrap();
+    fs::write(&backups, b"PUBLIC obstacle").unwrap();
+    let before = fs::read(&path).unwrap();
+    let operation = OperationId::new("PUBLIC retry deletion");
+    assert_eq!(
+        service
+            .confirm_lifecycle(&session, &prepared, &operation)
+            .unwrap_err(),
+        ServiceError::Storage(StorageError::Io)
+    );
+    assert_eq!(fs::read(&path).unwrap(), before);
+    assert!(service.trash(&session).unwrap().value.is_empty());
+    assert_eq!(service.entries(&session, None, "").unwrap().value.len(), 1);
+    fs::remove_file(&backups).unwrap();
+    service
+        .confirm_lifecycle(&session, &prepared, &operation)
+        .unwrap();
+    assert!(service.view_entry(&session, &entry).is_err());
+    assert!(service.history(&session, &entry).is_err());
+    assert!(service.reveal_password(&session, &entry).is_err());
+    let address = prepared
+        .affected
+        .keys()
+        .find(|a| a.object == ObjectId::Entry(entry.clone()))
+        .unwrap()
+        .clone();
+    let inspection = service
+        .inspect_object(&session, &InspectionTarget::Object(address.clone()))
+        .unwrap()
+        .value;
+    assert!(
+        !serde_json::to_string(&inspection)
+            .unwrap()
+            .contains("PUBLIC_HIDDEN_LIFECYCLE")
+    );
+    let before = fs::read(&path).unwrap();
+    service.lock(&session).unwrap();
+    assert_eq!(
+        service
+            .inspect_object(&session, &InspectionTarget::Object(address))
+            .unwrap_err(),
+        ServiceError::Locked
+    );
+    drop(service);
+    let mut service = DatabaseService::new();
+    let session = service.open_file(&path, PASSWORD).unwrap();
+    service
+        .confirm_lifecycle(&session, &prepared, &operation)
+        .unwrap();
+    assert_eq!(fs::read(&path).unwrap(), before);
+    assert_eq!(service.trash(&session).unwrap().value.len(), 2);
+    let restored = service
+        .prepare_lifecycle(
+            &session,
+            LifecycleAction::Restore,
+            ObjectId::Group(group),
+            None,
+        )
+        .unwrap()
+        .value;
+    service
+        .confirm_lifecycle(&session, &restored, &OperationId::new("PUBLIC restore"))
+        .unwrap();
+    assert_eq!(
+        service
+            .reveal_password(&session, &entry)
+            .unwrap()
+            .value
+            .expose(),
+        "PUBLIC_HIDDEN_LIFECYCLE"
+    );
+    assert_eq!(service.history(&session, &entry).unwrap().value.len(), 2);
+}

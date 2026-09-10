@@ -8,7 +8,7 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parent.parent
 BINARY = ROOT / "target/release/taypeer-cli"
-DIRECTORY = ROOT / "artifacts/cli-demo"
+DIRECTORY = ROOT / "artifacts/cli-lifecycle-demo"
 DATABASE = DIRECTORY / "public.taypeer"
 PASSWORD = b"PUBLIC-DEMO-ONLY-42"
 
@@ -42,27 +42,48 @@ def main():
         input_path.write_text(json.dumps(form), encoding="utf-8")
         entry = run("entry", "create", "--group", group, "--input", str(input_path))
     run("entry", "update", entry, "--title", "PUBLIC saved account")
-    run("entry", "clone", entry, "--group", group, "--title", "PUBLIC cloned account",
-        "--operation", "PUBLIC demo clone")
+    cloned_entry = run("entry", "clone", entry, "--group", group, "--title", "PUBLIC cloned account",
+                       "--operation", "PUBLIC demo clone")
+    destination = run("group", "create", "--name", "PUBLIC archive")["id"]
+    run("entry", "move", cloned_entry, "--group", destination, "--operation", "PUBLIC demo move")
+    cloned_group = run("group", "clone", destination, "--name", "PUBLIC trash example",
+                       "--operation", "PUBLIC demo clone subtree")[0]["id"]
+    with tempfile.TemporaryDirectory(prefix="taypeer-public-selection-") as temporary:
+        selection = Path(temporary) / "selection.json"
+        selection.write_text(json.dumps(run("group", "trash", cloned_group)), encoding="utf-8")
+        run("trash", "confirm", "--input", str(selection), "--yes", "--operation", "PUBLIC demo trash subtree")
+        selection.write_text(json.dumps(run("entry", "trash", entry)), encoding="utf-8")
+        run("trash", "confirm", "--input", str(selection), "--yes", "--operation", "PUBLIC demo trash entry")
+        selection.write_text(json.dumps(run("trash", "prepare", "restore", "entry", entry,
+                                            "--destination", group)), encoding="utf-8")
+        run("trash", "confirm", "--input", str(selection), "--yes", "--operation", "PUBLIC demo restore entry")
     assert len(run("entry", "list")) == 2
-    assert len(run("history", "list", entry)) == 2
+    assert len(run("history", "list", entry)) == 3
+    assert len(run("trash", "list")) == 2
+    (DIRECTORY / "restore-trash.json").write_text(
+        json.dumps(run("trash", "prepare", "restore", "group", cloned_group), indent=2), encoding="utf-8")
+    (DIRECTORY / "tree.json").write_text(json.dumps(run("group", "tree"), indent=2), encoding="utf-8")
     checksum = hashlib.sha256(DATABASE.read_bytes()).hexdigest()
     (DIRECTORY / "README.md").write_text(
         "# Public CLI demo\n\n"
         "Synthetic data only. No user data or real credentials.\n\n"
         f"Master password: `{PASSWORD.decode()}`\n\n"
         "From repository root:\n\n"
-        "```sh\nrtk target/release/taypeer-cli --lang ru --file artifacts/cli-demo/public.taypeer session\n```\n\n"
-        "Then run `entry list`, `group list`, `db lock`, `db unlock`, `exit`.\n\n"
-        "Format: development container 1, schema 1; not a stable compatibility fixture.\n"
+        "```sh\nrtk target/release/taypeer-cli --lang ru --file artifacts/cli-lifecycle-demo/public.taypeer session\n```\n\n"
+        "Then run `group tree`, `entry list`, `trash list`, `db lock`, `db unlock`, `exit`.\n\n"
+        "Restore the reviewed example subtree inside that session:\n\n"
+        "```text\ntrash confirm --input artifacts/cli-lifecycle-demo/restore-trash.json --yes --operation PUBLIC-review-restore\n```\n\n"
+        f"Original entry history: `history list {entry}`.\n\n"
+        "Format: development container 1, schema 2; not a stable compatibility fixture.\n"
         "Source: scripts/create-cli-demo.py. Reproduction into an absent destination: "
         "`rtk proxy python3 scripts/create-cli-demo.py`.\n"
-        "Expected: one group, two entries, two revisions on the original entry.\n"
+        "Expected: two active groups, two active entries, three revisions on the original entry; "
+        "one cloned group and its entry in the trash. The clone was moved before subtree cloning.\n"
         "Content origin: generated public strings in that script; no external content.\n"
         f"SHA-256: `{checksum}`\n",
         encoding="utf-8",
     )
-    print("PUBLIC CLI demo created: artifacts/cli-demo/public.taypeer (2 entries, persisted history)")
+    print("PUBLIC CLI demo created: artifacts/cli-lifecycle-demo/public.taypeer (tree, moves, history, trash)")
 
 
 if __name__ == "__main__":

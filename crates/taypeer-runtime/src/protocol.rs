@@ -6,7 +6,10 @@ use std::{
     path::PathBuf,
 };
 use taypeer_core::{AttributeId, EntryId, GroupId, OperationId, RevisionId};
-use taypeer_services::{ConflictContext, EntryPatch, Resolution, ServiceError};
+use taypeer_services::{
+    ConflictContext, EntryPatch, GroupMove, InspectionTarget, LifecycleAction, ObjectAddress,
+    ObjectId, PreparedLifecycle, RecoveryRequest, Resolution, ServiceError,
+};
 use zeroize::{Zeroize, Zeroizing};
 
 const MAX_MESSAGE: usize = 16 * 1024 * 1024;
@@ -28,6 +31,84 @@ impl Drop for Boot {
 /// No command implicitly reveals a protected value.
 #[derive(Serialize, Deserialize)]
 pub enum Command {
+    /// Read the complete retained tree, conflicts and causal heads.
+    Tree,
+    /// List objects retained in the trash.
+    Trash,
+    /// Inspect a retained object or immutable late source, with secrets masked.
+    Inspect(InspectionTarget),
+    /// Explicitly reveal exactly one inspected field alternative.
+    RevealInspected {
+        /// Scope of the reviewed data.
+        target: InspectionTarget,
+        /// Field address.
+        field: taypeer_core::EntryField,
+        /// Exact immutable variant origins.
+        origins: Vec<String>,
+    },
+    /// Prepare an exact lifecycle selection.
+    PrepareLifecycle {
+        /// Lifecycle transition.
+        action: LifecycleAction,
+        /// Root object.
+        target: ObjectId,
+        /// Explicit restore destination.
+        destination: Option<GroupId>,
+    },
+    /// Confirm precisely the prepared selection.
+    ConfirmLifecycle {
+        /// Reviewed causal context and exact generations.
+        prepared: PreparedLifecycle,
+        /// Durable idempotency key.
+        operation: OperationId,
+    },
+    /// Move or resolve a group's placement.
+    MoveGroup {
+        /// Atomic placement request.
+        request: GroupMove,
+        /// Durable idempotency key.
+        operation: OperationId,
+    },
+    /// Move or resolve an entry's destination.
+    MoveEntry {
+        /// Entry identity.
+        entry: EntryId,
+        /// Current destination.
+        group: GroupId,
+        /// Optional conflict review context.
+        review: Option<Vec<String>>,
+        /// Durable idempotency key.
+        operation: OperationId,
+    },
+    /// Clone an active subtree.
+    CloneGroup {
+        /// Source group.
+        group: GroupId,
+        /// Destination parent.
+        parent: Option<GroupId>,
+        /// Optional new root name.
+        name: Option<String>,
+        /// Durable idempotency key.
+        operation: OperationId,
+    },
+    /// List late sources awaiting explicit processing.
+    PendingSources,
+    /// Extract one late source into a fresh lifetime.
+    RecoverSource {
+        /// Explicit source, identity policy, destination and optional conflict choice.
+        request: RecoveryRequest,
+        /// Durable idempotency key.
+        operation: OperationId,
+    },
+    /// Choose a reviewed generation after concurrent recovery.
+    ResolveGeneration {
+        /// Selected retained generation.
+        address: ObjectAddress,
+        /// Original review context.
+        heads: Vec<String>,
+        /// Durable idempotency key.
+        operation: OperationId,
+    },
     /// Read the database's groups.
     Groups,
     /// Create a group at the end of its parent's children.
@@ -178,6 +259,22 @@ impl Command {
                             }
                         }
                         _ => {}
+                    }
+                }
+            }
+            Self::RecoverSource { request, .. } => {
+                if let Some(fields) = &mut request.fields {
+                    fields.title.zeroize();
+                    fields.username.zeroize();
+                    fields.password.zeroize();
+                    fields.url.zeroize();
+                    fields.notes.zeroize();
+                    for mut tag in std::mem::take(&mut fields.tags) {
+                        tag.zeroize();
+                    }
+                    for attribute in fields.attributes.values_mut() {
+                        attribute.name.zeroize();
+                        attribute.value.value.zeroize();
                     }
                 }
             }

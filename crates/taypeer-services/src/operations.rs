@@ -108,15 +108,7 @@ impl DatabaseService {
         entry: &EntryId,
     ) -> Result<SessionValue<ConflictView>, ServiceError> {
         let document = self.checked(session)?.document();
-        let fields = document.entry(entry)?.conflicts.into_iter().map(|state| {
-            let protected = state.field == EntryField::Password || state.variants.iter().any(|variant| matches!(&variant.value, FieldValue::Attribute(value) if value.protected));
-            ConflictFieldView {
-                field: state.field, protected,
-                variants: state.variants.into_iter().map(|variant| ConflictVariantView {
-                    origins: variant.origins, value: (!protected).then_some(variant.value),
-                }).collect(),
-            }
-        }).collect();
+        let fields = mask_fields(document.entry(entry)?.conflicts);
         Ok(stamped(
             session,
             ConflictView {
@@ -166,4 +158,16 @@ impl DatabaseService {
         let id = state.change(|doc| Ok(doc.resolve_fields(context, fields, operation, now)?))?;
         Ok(stamped(session, id))
     }
+}
+
+pub(super) fn mask_fields(states: Vec<taypeer_core::FieldState>) -> Vec<ConflictFieldView> {
+    states.into_iter().map(|state| {
+            let protected = state.field == EntryField::Password || state.variants.iter().any(|variant| matches!(&variant.value, FieldValue::Attribute(value) if value.protected));
+            ConflictFieldView {
+                field: state.field, protected,
+                variants: state.variants.into_iter().map(|variant| ConflictVariantView {
+                    origins: variant.origins, value: (!protected).then_some(variant.value),
+                }).collect(),
+            }
+        }).collect()
 }

@@ -10,6 +10,7 @@ rust-version = "1.97.1"
 publish = false
 
 [workspace.dependencies]
+fractional_index = { version = "=2.0.2", default-features = false }
 sha2 = "=0.10.9"
 clap = { version = "=4.6.6", features = ["derive", "string"] }
 clap-repl = "=0.3.2"

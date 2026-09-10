@@ -15,12 +15,18 @@ use taypeer_storage::{FileStore, ReadKey};
 use zeroize::Zeroizing;
 
 pub mod generator;
+mod lifecycle;
 mod operations;
+pub use lifecycle::{InspectionTarget, InspectionView, TreeView};
 mod patch;
 mod persistence;
 pub use operations::{ConflictFieldView, ConflictVariantView, ConflictView, new_operation_id};
 pub use patch::{EntryPatch, FieldUpdate};
 pub use taypeer_document::{ConflictContext, Resolution};
+pub use taypeer_document::{
+    GroupMove, GroupNode, LifecycleAction, ObjectAddress, ObjectId, ObjectState, ObjectStatus,
+    PendingSource, PreparedLifecycle, RecoveryMode, RecoveryRequest, SiblingPosition,
+};
 
 mod draft;
 use draft::{DraftKind, DraftState};
@@ -365,7 +371,10 @@ impl DatabaseService {
             .document()
             .entries()?
             .into_iter()
-            .filter(|entry| !query.is_empty() || group.is_none_or(|group| &entry.group_id == group))
+            .filter(|entry| {
+                !query.is_empty()
+                    || group.is_none_or(|group| entry.group_id.as_ref() == Some(group))
+            })
             .filter(|entry| matches_query(entry, &query))
             .map(entry_summary)
             .collect();
@@ -399,8 +408,10 @@ impl DatabaseService {
                 .map(|group| (group.id, group.name))
                 .collect();
             for entry in self.entries(&session, None, query)?.value {
-                let group_name = groups
-                    .get(&entry.group_id)
+                let group_name = entry
+                    .group_id
+                    .as_ref()
+                    .and_then(|id| groups.get(id))
                     .cloned()
                     .ok_or(ServiceError::InvalidDocument)?;
                 results.push(stamped(

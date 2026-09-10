@@ -72,6 +72,10 @@ impl Document {
         if operation.as_str().is_empty() {
             return Err(Error::InvalidContext);
         }
+        let newer = object(&self.doc, &ROOT, "lifecycle_receipts")?;
+        if !self.doc.get_all(newer, operation.as_str())?.is_empty() {
+            return Err(Error::DuplicateId);
+        }
         let root = object(&self.doc, &ROOT, "operations")?;
         let Some(value) = unique_optional(&self.doc, &root, operation.as_str())? else {
             return Ok(None);
@@ -227,6 +231,14 @@ impl Document {
             return Err(Error::InvalidContext);
         }
         let mut unique_fields = BTreeSet::new();
+        if base.is_empty() {
+            return Err(Error::InvalidContext);
+        }
+        let basis = self.doc.fork_at(&base)?;
+        let address = objects::single(&basis, &ObjectId::Entry(context.entry.clone()))?;
+        if self.require_active_entry(&context.entry)? != address {
+            return Err(Error::InvalidContext);
+        }
         for resolution in fields {
             if !unique_fields.insert(&resolution.field) {
                 return Err(Error::InvalidContext);
@@ -234,11 +246,20 @@ impl Document {
             validate_field(&resolution.field, &resolution.value)?;
         }
         let revision = RevisionId::new(random_id());
+        let new_attributes = if matches!(intent, Intent::Restore { .. }) {
+            self.restored_attributes(&context.entry, fields)?
+        } else {
+            BTreeSet::new()
+        };
         let mut tx = self.doc.transaction_at(PatchLog::null(), &base);
-        let entries = object(&tx, &ROOT, "entries")?;
-        let target = object(&tx, &entries, context.entry.as_str())?;
+        let target = objects::entry_object(&tx, &context.entry)?;
+        let attributes = object(&tx, &target, "attributes")?;
+        for id in new_attributes {
+            tx.put_object(&attributes, id.as_str(), ObjType::Map)?;
+        }
         if let Intent::Restore { group, .. } = intent {
-            tx.put(&target, "group", group.as_str())?;
+            let destination = objects::single(&tx, &ObjectId::Group(group.clone()))?.group_ref()?;
+            tx.put(&target, "group", encode(&destination)?)?;
         }
         let mut changed = BTreeSet::new();
         for resolution in fields {
@@ -266,10 +287,47 @@ impl Document {
         };
         let revisions = object(&tx, &ROOT, "revisions")?;
         tx.put(revisions, revision.as_str(), encode(&stored)?)?;
+        let address = objects::single(&tx, &ObjectId::Entry(context.entry.clone()))?;
+        objects::record_event(&mut tx, &address, Some(revision.clone()))?;
         write_receipt(&mut tx, operation, intent, &context.entry)?;
         tx.commit();
         read_entry(&self.doc, &context.entry, None)?;
         Ok(())
+    }
+
+    fn restored_attributes(
+        &self,
+        entry: &EntryId,
+        fields: &[Resolution],
+    ) -> Result<BTreeSet<AttributeId>, Error> {
+        let target = objects::entry_object(&self.doc, entry)?;
+        let attributes = object(&self.doc, &target, "attributes")?;
+        let mut new = BTreeSet::new();
+        for resolution in fields {
+            if let (EntryField::AttributePresence(id), FieldValue::Presence(true)) =
+                (&resolution.field, &resolution.value)
+                && self.doc.get_all(&attributes, id.as_str())?.is_empty()
+            {
+                new.insert(id.clone());
+            }
+        }
+        if new.is_empty() {
+            return Ok(new);
+        }
+        // History can refer to another lifetime, but never borrow another entry's identity.
+        for address in objects::all(&self.doc)? {
+            if !matches!(&address.object, ObjectId::Entry(id) if id != entry) {
+                continue;
+            }
+            let node = objects::generation_object(&self.doc, &address)?;
+            let attributes = object(&self.doc, &node, "attributes")?;
+            for id in &new {
+                if !self.doc.get_all(&attributes, id.as_str())?.is_empty() {
+                    return Err(Error::DuplicateId);
+                }
+            }
+        }
+        Ok(new)
     }
 
     pub(super) fn revision_is_purged(&self, revision: &RevisionId) -> Result<bool, Error> {
@@ -343,6 +401,16 @@ fn all_resolutions(fields: &EntryFields, before: &EntrySnapshot) -> Vec<Resoluti
         }
     }
     for attribute in fields.attributes.values() {
+        if !before
+            .values
+            .iter()
+            .any(|state| state.field == EntryField::AttributePresence(attribute.id.clone()))
+        {
+            result.push((
+                EntryField::AttributePresence(attribute.id.clone()),
+                FieldValue::Presence(true),
+            ));
+        }
         result.push((
             EntryField::AttributeName(attribute.id.clone()),
             FieldValue::Text(Some(attribute.name.clone())),

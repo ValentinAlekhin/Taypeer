@@ -14,6 +14,10 @@ model {
     revision = entity 'Сохранённая версия' { #conceptual }
     blob = entity 'Бинарный объект' { #conceptual }
     trustSet = entity 'Доверенный набор' { #conceptual }
+    lifecycle = entity 'Жизненный цикл объекта' { #conceptual }
+    generation = entity 'Поколение состояния' { #conceptual }
+    purge = entity 'Отметка окончательной очистки' { #conceptual }
+    pending = entity 'Отложенный источник' { #conceptual }
     workingCopy = entity 'Рабочая копия' { #conceptual }
   }
   data.database -> data.group '0..* групп'
@@ -24,5 +28,10 @@ model {
   data.attachment -> data.blob 'Одно содержимое; много ссылок'
   data.revision -> data.blob 'Удерживает содержимое'
   data.database -> data.trustSet 'Линии доверия'
+  data.group -> data.generation 'Состояния при неизменном ID'
+  data.entry -> data.generation 'Состояния при неизменном ID'
+  data.generation -> data.lifecycle 'Удаление и восстановление'
+  data.purge -> data.generation 'Закрывает прежнее поколение'
+  data.pending -> data.generation 'Поздние исходные изменения'
   data.database -> data.workingCopy 'Локальные копии'
 }

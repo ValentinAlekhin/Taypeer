@@ -71,7 +71,7 @@ model {
       #partial
       style { border solid }
       technology 'Rust + Automerge'
-      description 'Адаптер Automerge: адресные изменения, история и все варианты конфликтов. Экспорт и проверенная загрузка для файлового среза.'
+      description 'Automerge: поля, размещения, поколения объектов, история и жизненный цикл. Локальные операции через Rust API и CLI сохраняют варианты; допуск и сетевой приём пока не реализованы.'
       metadata { source 'crates/taypeer-document/src/lib.rs'; contract 'docs/data-model.md'; evidence 'spikes/encrypted-sync/REPORT.md' }
     }
     crypto = component 'Защита содержимого' {

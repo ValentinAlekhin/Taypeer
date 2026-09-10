@@ -1,3 +1,4 @@
+use crate::lifecycle_args::{PendingCommand, PositionArgs, TrashCommand};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
@@ -53,6 +54,12 @@ pub(crate) enum Action {
     /// Review and explicitly resolve conflicting values.
     #[command(subcommand)]
     Conflict(ConflictCommand),
+    #[command(about = crate::output::help("help_lifecycle"))]
+    #[command(subcommand)]
+    Trash(TrashCommand),
+    #[command(about = crate::output::help("help_pending"))]
+    #[command(subcommand)]
+    Pending(PendingCommand),
     /// Generate an offline password or passphrase.
     #[command(subcommand)]
     Generate(GenerateCommand),
@@ -88,6 +95,37 @@ pub(crate) enum DatabaseCommand {
 
 #[derive(Subcommand)]
 pub(crate) enum GroupCommand {
+    #[command(about = crate::output::help("help_tree"))]
+    Tree,
+    #[command(about = crate::output::help("help_group_move"))]
+    Move {
+        id: String,
+        #[arg(long)]
+        parent: Option<String>,
+        #[command(flatten)]
+        position: PositionArgs,
+        #[arg(long)]
+        operation: Option<String>,
+    },
+    #[command(about = crate::output::help("help_group_resolve"))]
+    Resolve {
+        #[arg(long)]
+        input: PathBuf,
+        #[arg(long)]
+        operation: Option<String>,
+    },
+    #[command(about = crate::output::help("help_group_clone"))]
+    Clone {
+        id: String,
+        #[arg(long)]
+        parent: Option<String>,
+        #[arg(long)]
+        name: Option<String>,
+        #[arg(long)]
+        operation: Option<String>,
+    },
+    #[command(about = crate::output::help("help_group_trash"))]
+    Trash { id: String },
     /// List groups.
     List,
     /// Create a group.
@@ -107,6 +145,18 @@ pub(crate) enum GroupCommand {
 
 #[derive(Subcommand)]
 pub(crate) enum EntryCommand {
+    #[command(about = crate::output::help("help_entry_move"))]
+    Move {
+        id: String,
+        #[arg(long)]
+        group: String,
+        #[arg(long)]
+        review: Option<PathBuf>,
+        #[arg(long)]
+        operation: Option<String>,
+    },
+    #[command(about = crate::output::help("help_entry_trash"))]
+    Trash { id: String },
     /// List entries or search the selected database.
     List {
         #[arg(long)]
@@ -225,6 +275,13 @@ pub(crate) enum HistoryCommand {
 
 #[derive(Subcommand)]
 pub(crate) enum ConflictCommand {
+    #[command(about = crate::output::help("help_generation"))]
+    Generation {
+        #[arg(long)]
+        input: PathBuf,
+        #[arg(long)]
+        operation: Option<String>,
+    },
     /// Show the review context and masked alternatives.
     Show { entry: String },
     /// Explicitly reveal an alternative selected by entry, field and origins in JSON.

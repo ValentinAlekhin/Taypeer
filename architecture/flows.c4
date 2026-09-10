@@ -115,6 +115,18 @@ views 'Локальный файл' {
     taypeer.secretWorker -> taypeer.sessions 'Закрыть доступ и сохранить черновик'
     taypeer.cli <- taypeer.secretWorker 'Ошибка при наличии, затем завершение процесса'
   }
+  dynamic view lifecycle {
+    title 'Подтверждение корзины и очистки'
+    taypeer.cli -> taypeer.secretWorker 'Подготовить точный выбор объектов'
+    taypeer.secretWorker -> taypeer.sessions 'Проверить сессию'
+    taypeer.sessions -> taypeer.document 'Контекст, поколения и выбранное поддерево'
+    taypeer.cli <- taypeer.secretWorker 'Предпросмотр операции'
+    taypeer.cli -> taypeer.secretWorker 'Подтвердить выбор с ID операции'
+    taypeer.secretWorker -> taypeer.sessions 'Проверить сессию и отсутствие черновика'
+    taypeer.sessions -> taypeer.document 'Кандидат с отметками и квитанцией повтора'
+    taypeer.sessions -> taypeer.storage 'Надёжно сохранить кандидат'
+    taypeer.cli <- taypeer.secretWorker 'Подтверждённый результат'
+  }
   dynamic view fileSave {
     title 'Подтверждение записи в локальном файле'
     taypeer.mac -> taypeer.sessions 'Передать команду фоновому исполнителю'

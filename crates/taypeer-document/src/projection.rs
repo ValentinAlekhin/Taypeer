@@ -6,11 +6,11 @@ use super::{
     fields::read_field,
     stored_revisions,
 };
-use automerge::{ROOT, ReadDoc};
+use automerge::ReadDoc;
 use std::collections::{BTreeMap, BTreeSet};
 use taypeer_core::{
     Attribute, AttributeId, EntryField, EntryFields, EntryId, EntrySnapshot, FieldState,
-    FieldValue, GroupId, Timestamp, ValidationError,
+    FieldValue, GroupRef, Timestamp, ValidationError,
 };
 
 pub(super) fn read_entry<R: ReadDoc>(
@@ -18,13 +18,34 @@ pub(super) fn read_entry<R: ReadDoc>(
     id: &EntryId,
     pending: Option<(&BTreeSet<String>, Timestamp)>,
 ) -> Result<EntrySnapshot, Error> {
-    let entries = object(read, &ROOT, "entries")?;
-    let entry = object(read, &entries, id.as_str())?;
-    let group_id = GroupId::new(
-        unique(read, &entry, "group")?
-            .to_str()
-            .ok_or(Error::InvalidDocument)?,
-    );
+    let address = super::objects::single(read, &super::ObjectId::Entry(id.clone()))?;
+    read_entry_generation(read, &address, pending)
+}
+
+pub(super) fn read_entry_generation<R: ReadDoc>(
+    read: &R,
+    address: &super::ObjectAddress,
+    pending: Option<(&BTreeSet<String>, Timestamp)>,
+) -> Result<EntrySnapshot, Error> {
+    let super::ObjectId::Entry(id) = &address.object else {
+        return Err(Error::InvalidContext);
+    };
+    let entry = super::objects::generation_object(read, address)?;
+    let mut placements: Vec<GroupRef> = Vec::new();
+    for (value, _) in read.get_all(&entry, "group")? {
+        let destination = super::decode(&value)?;
+        if !placements.contains(&destination) {
+            placements.push(destination);
+        }
+    }
+    if placements.is_empty() {
+        return Err(Error::InvalidDocument);
+    }
+    let group_id = if let [group] = placements.as_slice() {
+        Some(group.id.clone())
+    } else {
+        None
+    };
     let created_at = unique(read, &entry, "created_at")?
         .to_i64()
         .ok_or(Error::InvalidDocument)?;
@@ -34,11 +55,13 @@ pub(super) fn read_entry<R: ReadDoc>(
         .filter(|state| state.variants.len() > 1)
         .cloned()
         .collect();
-    let modified_at = modification_time(read, id, &values, pending, created_at)?;
+    let modified_at = modification_time(read, id, &entry, &values, pending, created_at)?;
     let fields = unambiguous_fields(&values, &mut conflicts)?;
     Ok(EntrySnapshot {
         id: id.clone(),
         group_id,
+        generation: address.generation.clone(),
+        placements,
         fields,
         conflicts,
         values,
@@ -81,15 +104,21 @@ fn read_values<R: ReadDoc>(read: &R, entry: &automerge::ObjId) -> Result<Vec<Fie
 fn modification_time<R: ReadDoc>(
     read: &R,
     id: &EntryId,
+    entry: &automerge::ObjId,
     values: &[FieldState],
     pending: Option<(&BTreeSet<String>, Timestamp)>,
     created_at: Timestamp,
 ) -> Result<Timestamp, Error> {
-    let origins: BTreeSet<_> = values
+    let mut origins: BTreeSet<_> = values
         .iter()
         .flat_map(|state| state.variants.iter())
         .flat_map(|variant| variant.origins.iter().cloned())
         .collect();
+    origins.extend(
+        read.get_all(entry, "group")?
+            .into_iter()
+            .map(|(_, op)| op.to_string()),
+    );
     let mut operation_times = BTreeMap::new();
     for stored in stored_revisions(read, id)? {
         for operation in stored.changed_operations {

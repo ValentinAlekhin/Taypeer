@@ -33,8 +33,8 @@ pub struct GroupSummary {
 pub struct EntrySummary {
     /// Stable entry identifier.
     pub id: EntryId,
-    /// Owning group.
-    pub group_id: GroupId,
+    /// Owning group, absent when placement needs resolution.
+    pub group_id: Option<GroupId>,
     /// Entry label; empty if unresolved conflicts prevent a unique view.
     pub title: String,
     /// Ordinary username, if present.
@@ -145,8 +145,8 @@ pub struct AttributeView {
 pub struct EntryView {
     /// Stable entry identifier.
     pub id: EntryId,
-    /// Owning group.
-    pub group_id: GroupId,
+    /// Owning group, absent when placement needs resolution.
+    pub group_id: Option<GroupId>,
     /// Entry label; empty for an ambiguous snapshot.
     pub title: String,
     /// Optional ordinary username.
@@ -248,7 +248,7 @@ pub(super) fn matches_query(entry: &EntrySnapshot, query: &str) -> bool {
 }
 
 pub(super) fn entry_summary(entry: EntrySnapshot) -> EntrySummary {
-    let has_conflicts = entry.fields.is_none();
+    let has_conflicts = entry.has_conflicts();
     let fields = entry.fields.unwrap_or_default();
     EntrySummary {
         id: entry.id,
@@ -261,7 +261,7 @@ pub(super) fn entry_summary(entry: EntrySnapshot) -> EntrySummary {
 }
 
 pub(super) fn entry_view(entry: EntrySnapshot) -> EntryView {
-    let has_conflicts = entry.fields.is_none();
+    let has_conflicts = entry.has_conflicts();
     let fields = entry.fields.unwrap_or_default();
     EntryView {
         id: entry.id,

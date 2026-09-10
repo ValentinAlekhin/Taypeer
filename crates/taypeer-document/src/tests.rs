@@ -72,7 +72,12 @@ fn group_nesting_append_order_and_rename_preserve_identity() {
     let second = document
         .create_group("PUBLIC second".into(), Some(root.id.clone()), 3_000)
         .unwrap();
-    assert!(first.order < second.order);
+    assert!(
+        first
+            .order
+            .compare(first.id.as_str(), &second.order, second.id.as_str())
+            .is_lt()
+    );
     document
         .rename_group(&first.id, "PUBLIC renamed".into(), 4_000)
         .unwrap();
@@ -111,7 +116,7 @@ fn confirmation_is_atomic_exact_and_retryable() {
     document.save_entry(retry.clone(), 9_000).unwrap();
     let snapshot = document.entry(&entry).unwrap();
     let fields = snapshot.fields.unwrap();
-    assert_eq!(snapshot.group_id, group);
+    assert_eq!(snapshot.group_id, Some(group));
     assert_eq!(
         fields.password.as_deref(),
         Some("  PUBLIC e\u{301} пароль \n")
@@ -606,7 +611,8 @@ fn conflicting_group_names_are_preserved_without_a_winner() {
         .rename_group(&group, "PUBLIC right name".into(), 3_000)
         .unwrap();
     document.merge(&other).unwrap();
-    assert_eq!(document.groups().unwrap_err(), Error::Conflict);
+    assert!(document.groups().unwrap().is_empty());
+    assert_eq!(document.tree().unwrap()[0].names.len(), 2);
     let groups = object(&document.doc, &ROOT, "groups").unwrap();
     let group_object = object(&document.doc, &groups, group.as_str()).unwrap();
     assert_eq!(document.doc.get_all(group_object, "name").unwrap().len(), 2);
@@ -622,7 +628,7 @@ fn concurrent_sibling_appends_have_a_stable_id_tiebreaker() {
     let right = other
         .create_group("PUBLIC child right".into(), Some(group.clone()), 2_000)
         .unwrap();
-    assert_eq!(left.order, right.order);
+    assert_ne!(left.order, right.order);
     document.merge(&other).unwrap();
     other.merge(&document).unwrap();
     assert_eq!(document.groups().unwrap(), other.groups().unwrap());
