@@ -25,6 +25,9 @@ pub struct Resolution {
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(super) enum Intent {
+    Binary {
+        request: serde_json::Value,
+    },
     Clone {
         source: EntryId,
         group: GroupId,
@@ -68,7 +71,11 @@ impl Document {
         })
     }
 
-    fn receipt(&self, operation: &OperationId, intent: &Intent) -> Result<Option<EntryId>, Error> {
+    pub(super) fn receipt(
+        &self,
+        operation: &OperationId,
+        intent: &Intent,
+    ) -> Result<Option<EntryId>, Error> {
         if operation.as_str().is_empty() {
             return Err(Error::InvalidContext);
         }
@@ -117,6 +124,7 @@ impl Document {
                 (attribute.id.clone(), attribute)
             })
             .collect();
+        super::binary::renew_attachment_ids(&mut fields);
         let mut candidate = self.clone();
         let mut draft = candidate.begin_create_entry(group)?;
         draft.fields = fields;
@@ -251,11 +259,20 @@ impl Document {
         } else {
             BTreeSet::new()
         };
+        let new_attachments = if matches!(intent, Intent::Restore { .. }) {
+            super::binary::restored_attachments(&self.doc, &context.entry, fields)?
+        } else {
+            BTreeSet::new()
+        };
         let mut tx = self.doc.transaction_at(PatchLog::null(), &base);
         let target = objects::entry_object(&tx, &context.entry)?;
         let attributes = object(&tx, &target, "attributes")?;
         for id in new_attributes {
             tx.put_object(&attributes, id.as_str(), ObjType::Map)?;
+        }
+        let attachments = object(&tx, &target, "attachments")?;
+        for id in new_attachments {
+            tx.put_object(&attachments, id.as_str(), ObjType::Map)?;
         }
         if let Intent::Restore { group, .. } = intent {
             let destination = objects::single(&tx, &ObjectId::Group(group.clone()))?.group_ref()?;
@@ -371,27 +388,7 @@ impl Document {
 }
 
 fn all_resolutions(fields: &EntryFields, before: &EntrySnapshot) -> Vec<Resolution> {
-    let mut result = vec![
-        (
-            EntryField::Title,
-            FieldValue::Text(Some(fields.title.clone())),
-        ),
-        (
-            EntryField::Username,
-            FieldValue::Text(fields.username.clone()),
-        ),
-        (
-            EntryField::Password,
-            FieldValue::Text(fields.password.clone()),
-        ),
-        (EntryField::Url, FieldValue::Text(fields.url.clone())),
-        (EntryField::Notes, FieldValue::Text(fields.notes.clone())),
-        (EntryField::Tags, FieldValue::Tags(fields.tags.clone())),
-        (
-            EntryField::ExpiresAt,
-            FieldValue::Timestamp(fields.expires_at),
-        ),
-    ];
+    let mut result = super::fields::form_fields(fields);
     for state in &before.values {
         if let EntryField::AttributePresence(id) = &state.field {
             result.push((
@@ -420,6 +417,7 @@ fn all_resolutions(fields: &EntryFields, before: &EntrySnapshot) -> Vec<Resoluti
             FieldValue::Attribute(attribute.value.clone()),
         ));
     }
+    super::binary::attachment_resolutions(fields, before, &mut result);
     result
         .into_iter()
         .map(|(field, value)| Resolution { field, value })

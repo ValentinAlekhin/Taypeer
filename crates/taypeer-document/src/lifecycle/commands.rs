@@ -433,6 +433,7 @@ impl Document {
                 },
                 now,
             )?;
+            tx.put(&target, "icon", encode(&original.icons[0])?)?;
             objects::record_event(&mut tx, target_address, None)?;
         }
         for address in &selected {
@@ -441,6 +442,7 @@ impl Document {
             }
             let original = projection::read_entry_generation(&self.doc, address, None)?;
             let mut fields = original.fields.ok_or(Error::Conflict)?;
+            crate::binary::renew_attachment_ids(&mut fields);
             fields.attributes = fields
                 .attributes
                 .into_values()
@@ -509,6 +511,7 @@ pub(super) fn initialize_group(
     now: Timestamp,
 ) -> Result<(), Error> {
     tx.put(node, "created_at", now)?;
+    tx.put(node, "icon", encode(&IconRef::Default)?)?;
     tx.put_object(node, "name_times", ObjType::Map)?;
     tx.put_object(node, "placement_times", ObjType::Map)?;
     groups::put_group_name(tx, node, name, now)?;
@@ -528,6 +531,7 @@ pub(super) fn initialize_entry(
     tx.put(&node, "created_at", now)?;
     tx.put(&node, "group", encode(parent)?)?;
     tx.put_object(&node, "attributes", ObjType::Map)?;
+    tx.put_object(&node, "attachments", ObjType::Map)?;
     apply_form(tx, &node, None, fields, revision)?;
     Ok(())
 }

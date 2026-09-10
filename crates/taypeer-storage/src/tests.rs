@@ -135,13 +135,15 @@ fn authentication_versions_exclusivity_and_backup_retention() {
         Err(Error::UnsupportedVersion)
     ));
     assert_eq!(fs::read(&path).unwrap(), changed);
-    changed[8..12].copy_from_slice(&[1, 0, 1, 0]);
-    fs::write(&path, &changed).unwrap();
-    assert!(matches!(
-        FileStore::open(&path),
-        Err(Error::UnsupportedVersion)
-    ));
-    assert_eq!(fs::read(&path).unwrap(), changed);
+    for schema in [1, 2] {
+        changed[8..12].copy_from_slice(&[1, 0, schema, 0]);
+        fs::write(&path, &changed).unwrap();
+        assert!(matches!(
+            FileStore::open(&path),
+            Err(Error::UnsupportedVersion)
+        ));
+        assert_eq!(fs::read(&path).unwrap(), changed);
+    }
     fs::write(&path, original).unwrap();
     assert!(matches!(
         FileStore::create(&path, b"PUBLIC password", b"PUBLIC replacement"),

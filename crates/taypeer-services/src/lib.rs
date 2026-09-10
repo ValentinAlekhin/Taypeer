@@ -11,10 +11,13 @@ use taypeer_core::SavedRevision;
 use taypeer_document::Document;
 /// File operation failures exposed through the service boundary.
 pub use taypeer_storage::Error as StorageError;
-use taypeer_storage::{FileStore, ReadKey};
+use taypeer_storage::{BlobStore, FileStore, ReadKey};
 use zeroize::Zeroizing;
 
+mod binary;
 pub mod generator;
+pub mod icons;
+pub use binary::*;
 mod lifecycle;
 mod operations;
 pub use lifecycle::{InspectionTarget, InspectionView, TreeView};
@@ -89,6 +92,10 @@ pub enum ServiceError {
     SessionExhausted,
     /// The in-memory document failed validation.
     InvalidDocument,
+    /// New attachment contents exceed the current database quota.
+    AttachmentLimit,
+    /// An explicit image download or validation failed.
+    Icon(icons::IconError),
     /// An encrypted file operation failed without exposing paths or secret content.
     Storage(taypeer_storage::Error),
 }
@@ -108,6 +115,8 @@ impl fmt::Display for ServiceError {
             Self::InvalidContext => "the draft context is invalid",
             Self::SessionExhausted => "no further session generation is available",
             Self::InvalidDocument => "the document is invalid",
+            Self::AttachmentLimit => "the attachment limit is exceeded",
+            Self::Icon(_) => "the image could not be loaded",
             Self::Storage(_) => "the encrypted file operation failed",
         })
     }
@@ -130,6 +139,7 @@ impl From<taypeer_document::Error> for ServiceError {
 
 struct DatabaseState {
     document: Option<Document>,
+    blobs: Option<BlobStore>,
     label: String,
     file: Option<FileStore>,
     key: Option<ReadKey>,
@@ -221,6 +231,7 @@ impl DatabaseService {
             DatabaseState {
                 label: document.name().into(),
                 document: Some(document),
+                blobs: Some(BlobStore::new()?),
                 file: None,
                 key: None,
                 generation: 0,
@@ -567,6 +578,20 @@ impl DatabaseService {
         let now = (self.clock)();
         let state = self.checked_mut(session)?;
         let draft = state.draft.as_ref().ok_or(ServiceError::NoDraft)?;
+        if draft.adds_binary_content() {
+            let mut refs = state.document().blob_references()?.attachments;
+            refs.extend(
+                draft
+                    .document()?
+                    .fields()
+                    .attachments
+                    .values()
+                    .map(|a| a.blob.clone()),
+            );
+            if state.blobs()?.unique_bytes(&refs) > taypeer_core::DATABASE_ATTACHMENT_LIMIT {
+                return Err(ServiceError::AttachmentLimit);
+            }
+        }
         let mut candidate = state.document().clone();
         let id = draft.save(&mut candidate, now)?;
         state.commit(candidate)?;

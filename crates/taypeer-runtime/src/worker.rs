@@ -72,6 +72,34 @@ fn dispatch(
     command: Command,
 ) -> Result<Value, RuntimeError> {
     Ok(match command {
+        Command::BinaryView(target) => value(&service.binary_view(session, &target)?.value)?,
+        Command::EditBinary { request, operation } => {
+            value(&service.edit_binary(session, &request, &operation)?.value)?
+        }
+        Command::ExportBinary {
+            target,
+            blob,
+            path,
+            overwrite,
+        } => value(
+            &service
+                .export_binary(session, &target, &blob, &path, overwrite)?
+                .value,
+        )?,
+        Command::StorageUsage => value(&service.storage_usage(session)?.value)?,
+        Command::CollectBlobs(operation) => {
+            value(&service.collect_blobs(session, &operation)?.value)?
+        }
+        Command::GroupFavicons {
+            group,
+            recursive,
+            replace,
+            operation,
+        } => value(
+            &service
+                .group_favicons(session, &group, recursive, replace, &operation)?
+                .value,
+        )?,
         Command::Tree => value(&service.tree(session)?.value)?,
         Command::Trash => value(&service.trash(session)?.value)?,
         Command::Inspect(target) => value(&service.inspect_object(session, &target)?.value)?,

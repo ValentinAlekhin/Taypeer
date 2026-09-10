@@ -77,6 +77,14 @@ impl Host {
 
     pub fn execute(&mut self, action: Action) -> Result<Value, CliError> {
         let command = match action {
+            Action::Attachment(command) => crate::binary_host::attachment(command, &self.input)?,
+            Action::Icon(crate::binary_args::IconCommand::List) => {
+                return serde_json::to_value(taypeer_core::LUCIDE_KEYS)
+                    .map_err(|_| CliError::Input);
+            }
+            Action::Icon(command) => crate::binary_host::icon(command, &self.input)?,
+            Action::Appearance(command) => crate::binary_host::appearance(command, &self.input)?,
+            Action::Storage(command) => crate::binary_host::storage(command)?,
             Action::Trash(command) => crate::lifecycle_host::trash(command, &self.input)?,
             Action::Pending(command) => crate::lifecycle_host::pending(command, &self.input)?,
             Action::Db(command) => return self.database(command),

@@ -155,6 +155,7 @@ fn purge_old_delivery_and_late_source_recovery_preserve_generations() {
             .all(|s| s.address.object != ObjectId::Entry(entry.clone()))
     );
     let request = RecoveryRequest {
+        icon: None,
         source: source.id.clone(),
         mode: RecoveryMode::Restore,
         destination: Some(destination.clone()),
@@ -207,6 +208,7 @@ fn purge_old_delivery_and_late_source_recovery_preserve_generations() {
     let clone = reopened
         .recover_source(
             &RecoveryRequest {
+                icon: None,
                 source: second[0].id.clone(),
                 mode: RecoveryMode::Clone,
                 destination: Some(destination),
@@ -420,6 +422,7 @@ fn recovered_parent_never_adopts_late_children_of_its_old_generation() {
         .unwrap();
     doc.recover_source(
         &RecoveryRequest {
+            icon: None,
             source: source.id,
             mode: RecoveryMode::Restore,
             destination: Some(destination.clone()),
@@ -477,6 +480,7 @@ fn concurrent_recoveries_and_generation_review_keep_an_unseen_third_choice() {
     );
     doc.merge(&offline).unwrap();
     let request = RecoveryRequest {
+        icon: None,
         source: doc.pending_sources().unwrap()[0].id.clone(),
         mode: RecoveryMode::Restore,
         destination: Some(destination),
@@ -610,6 +614,7 @@ fn old_forms_cannot_save_under_a_recovered_parent_or_closed_entry() {
     let source = doc.pending_sources().unwrap()[0].id.clone();
     doc.recover_source(
         &RecoveryRequest {
+            icon: None,
             source,
             mode: RecoveryMode::Restore,
             destination: None,
@@ -650,6 +655,7 @@ fn historical_restore_imports_attributes_from_another_retained_generation() {
     );
     doc.merge(&late).unwrap();
     let mut request = RecoveryRequest {
+        icon: None,
         source: doc.pending_sources().unwrap()[0].id.clone(),
         mode: RecoveryMode::Restore,
         destination: Some(destination.clone()),

@@ -17,6 +17,9 @@ pub enum RecoveryMode {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RecoveryRequest {
+    /// Explicit group-icon choice when the original source has conflicting icons.
+    #[serde(default)]
+    pub icon: Option<IconRef>,
     /// Stable source event returned by the pending list.
     pub source: String,
     /// Identity policy.
@@ -255,11 +258,21 @@ impl Document {
                     },
                     now,
                 )?;
+                let icon = match &request.icon {
+                    Some(icon) => icon,
+                    None => {
+                        let [icon] = original.icons.as_slice() else {
+                            return Err(Error::Conflict);
+                        };
+                        icon
+                    }
+                };
+                tx.put(&node, "icon", encode(icon)?)?;
                 tx.put(&node, "created_at", created)?;
                 objects::record_event(&mut tx, &target, None)?;
             }
             SourcePreview::Entry(original) => {
-                if request.name.is_some() {
+                if request.name.is_some() || request.icon.is_some() {
                     return Err(Error::InvalidContext);
                 }
                 let mut fields = request
@@ -268,6 +281,7 @@ impl Document {
                     .or(original.fields)
                     .ok_or(Error::Conflict)?;
                 if request.mode == RecoveryMode::Clone {
+                    crate::binary::renew_attachment_ids(&mut fields);
                     fields.attributes = fields
                         .attributes
                         .into_values()

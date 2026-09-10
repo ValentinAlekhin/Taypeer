@@ -31,6 +31,41 @@ impl Drop for Boot {
 /// No command implicitly reveals a protected value.
 #[derive(Serialize, Deserialize)]
 pub enum Command {
+    /// Read binary-only metadata from an explicit scope.
+    BinaryView(taypeer_services::BinaryTarget),
+    /// Stage or confirm a retryable binary command.
+    EditBinary {
+        /// Explicit source and target; binary bytes never enter JSON IPC.
+        request: taypeer_services::BinaryRequest,
+        /// Retry identity.
+        operation: OperationId,
+    },
+    /// Explicitly export one accessible binary variant to a selected path.
+    ExportBinary {
+        /// Visibility scope checked by the service.
+        target: taypeer_services::BinaryTarget,
+        /// Selected content variant.
+        blob: taypeer_core::BlobId,
+        /// User-selected export destination.
+        path: PathBuf,
+        /// Explicit permission to replace a destination.
+        overwrite: bool,
+    },
+    /// Quota, retained contents and separate local storage usage.
+    StorageUsage,
+    /// Rebuild retention and durably remove unreachable binary sections.
+    CollectBlobs(OperationId),
+    /// Explicit batch favicon acquisition, with a separate result per entry.
+    GroupFavicons {
+        /// Selected group.
+        group: GroupId,
+        /// Include descendant groups.
+        recursive: bool,
+        /// Explicitly replace existing icons.
+        replace: bool,
+        /// Stable batch retry identity.
+        operation: OperationId,
+    },
     /// Read the complete retained tree, conflicts and causal heads.
     Tree,
     /// List objects retained in the trash.
@@ -96,7 +131,7 @@ pub enum Command {
     /// Extract one late source into a fresh lifetime.
     RecoverSource {
         /// Explicit source, identity policy, destination and optional conflict choice.
-        request: RecoveryRequest,
+        request: Box<RecoveryRequest>,
         /// Durable idempotency key.
         operation: OperationId,
     },

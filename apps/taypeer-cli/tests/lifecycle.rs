@@ -44,7 +44,11 @@ fn fixture() -> (Document, GroupId, GroupId, EntryId) {
     (doc, a, b, entry)
 }
 fn persist(path: &Path, doc: &Document) {
-    FileStore::create(path, PASSWORD, &doc.export()).unwrap();
+    let blobs = taypeer_storage::BlobStore::new().unwrap();
+    let clear = doc.export();
+    let reader = blobs.bundle(&clear).unwrap();
+    let length = reader.length();
+    FileStore::create_stream(path, PASSWORD, reader, length, 500).unwrap();
 }
 fn confirm(path: &Path, input: &Path, prepared: &Value, operation: &str) {
     fs::write(input, serde_json::to_vec(prepared).unwrap()).unwrap();

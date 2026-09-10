@@ -75,13 +75,14 @@ pub(crate) fn pending(command: PendingCommand, input: &Input) -> Result<Command,
             name,
             operation: op,
         } => Command::RecoverSource {
-            request: RecoveryRequest {
+            request: Box::new(RecoveryRequest {
+                icon: None,
                 source,
                 mode: RecoveryMode::Restore,
                 destination: destination.map(GroupId::new),
                 name,
                 fields: None,
-            },
+            }),
             operation: operation(op)?,
         },
         PendingCommand::Clone {
@@ -90,13 +91,14 @@ pub(crate) fn pending(command: PendingCommand, input: &Input) -> Result<Command,
             name,
             operation: op,
         } => Command::RecoverSource {
-            request: RecoveryRequest {
+            request: Box::new(RecoveryRequest {
+                icon: None,
                 source,
                 mode: RecoveryMode::Clone,
                 destination: destination.map(GroupId::new),
                 name,
                 fields: None,
-            },
+            }),
             operation: operation(op)?,
         },
         PendingCommand::Recover {

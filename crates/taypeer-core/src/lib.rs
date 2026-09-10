@@ -2,6 +2,8 @@
 //!
 //! These types define no file format, authentication, or durable storage contract.
 
+mod binary;
+pub use binary::*;
 mod order;
 pub use order::{OrderError, OrderKey};
 
@@ -40,6 +42,14 @@ identifier!(
 identifier!(GroupId, "Stable identity of a group.");
 identifier!(OperationId, "Identity of one idempotent user operation.");
 identifier!(EntryId, "Stable identity of an entry.");
+identifier!(
+    AttachmentId,
+    "Identity of an attachment independent of its name."
+);
+identifier!(
+    BlobId,
+    "Opaque identity of immutable binary content within one database."
+);
 identifier!(AttributeId, "Stable identity of a custom attribute.");
 identifier!(
     RevisionId,
@@ -62,6 +72,8 @@ pub struct Group {
     pub order: OrderKey,
     /// Current state generation.
     pub generation: GenerationId,
+    /// Stored icon; reading it never accesses the network.
+    pub icon: IconRef,
     /// Creation time.
     pub created_at: Timestamp,
     /// Most recent meaningful local change time.
@@ -125,6 +137,10 @@ pub struct EntryFields {
     pub expires_at: Option<Timestamp>,
     /// Custom attributes keyed by their stable identity.
     pub attributes: BTreeMap<AttributeId, Attribute>,
+    /// Independently addressed attachment references, never binary contents.
+    pub attachments: BTreeMap<AttachmentId, Attachment>,
+    /// Explicit presentation values; absent colors follow the UI theme.
+    pub appearance: Appearance,
 }
 
 /// A structural validation failure; it never contains user-entered content.
@@ -132,6 +148,10 @@ pub struct EntryFields {
 pub enum ValidationError {
     /// A group name is empty.
     EmptyGroupName,
+    /// Attachment names must be nonempty.
+    EmptyAttachmentName,
+    /// An attachment map key disagrees with its identity.
+    AttachmentIdentityMismatch,
     /// An entry title is empty.
     EmptyTitle,
     /// An attribute name is empty.
@@ -163,6 +183,14 @@ impl EntryFields {
     pub fn validate(&self) -> Result<(), ValidationError> {
         if self.title.is_empty() {
             return Err(ValidationError::EmptyTitle);
+        }
+        for (id, attachment) in &self.attachments {
+            if id != &attachment.id {
+                return Err(ValidationError::AttachmentIdentityMismatch);
+            }
+            if attachment.name.is_empty() {
+                return Err(ValidationError::EmptyAttachmentName);
+            }
         }
         let mut names = BTreeSet::new();
         for (id, attr) in &self.attributes {
@@ -203,6 +231,18 @@ pub enum EntryField {
     AttributeValue(AttributeId),
     /// Explicit existence, preserving concurrent deletion and edits.
     AttributePresence(AttributeId),
+    /// Attachment name.
+    AttachmentName(AttachmentId),
+    /// Immutable content reference.
+    AttachmentBlob(AttachmentId),
+    /// Existence witnessed by every attachment edit.
+    AttachmentPresence(AttachmentId),
+    /// Icon and source form one atomic value.
+    Icon,
+    /// Explicit foreground color.
+    Foreground,
+    /// Explicit background color.
+    Background,
 }
 
 /// A typed atomic field value. Debug deliberately reveals no contents.
@@ -218,6 +258,12 @@ pub enum FieldValue {
     Attribute(AttributeValue),
     /// Whether an attribute is present.
     Presence(bool),
+    /// Immutable binary content identity.
+    Blob(BlobId),
+    /// Icon and its encrypted provenance.
+    Icon(IconRef),
+    /// Optional sRGB RGBA color.
+    Color(Option<Color>),
 }
 
 /// One displayed value and all original operations that supplied that value.
@@ -312,6 +358,9 @@ macro_rules! redacted_debug {
 }
 redacted_debug!(
     Group,
+    Attachment,
+    IconRef,
+    Appearance,
     AttributeValue,
     Attribute,
     EntryFields,

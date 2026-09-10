@@ -34,6 +34,8 @@ pub struct GroupNode {
     pub address: ObjectAddress,
     /// Distinct names. Multiple names require explicit resolution.
     pub names: Vec<String>,
+    /// All stored icon alternatives, including acquisition provenance.
+    pub icons: Vec<taypeer_core::IconRef>,
     /// Complete placement alternatives.
     pub placements: Vec<GroupPlacement>,
     /// Product availability.
@@ -101,9 +103,22 @@ pub(super) fn read_group(read: &impl ReadDoc, address: &ObjectAddress) -> Result
     if names.is_empty() || placements.is_empty() {
         return Err(Error::InvalidDocument);
     }
+    for (value, _) in read.get_all(&obj, "icon_modified_at")? {
+        times.push(value.to_i64().ok_or(Error::InvalidDocument)?);
+    }
     let created_at = unique(read, &obj, "created_at")?
         .to_i64()
         .ok_or(Error::InvalidDocument)?;
+    let mut icons = Vec::new();
+    for (value, _) in read.get_all(&obj, "icon")? {
+        let icon = decode(&value)?;
+        if !icons.contains(&icon) {
+            icons.push(icon);
+        }
+    }
+    if icons.is_empty() {
+        return Err(Error::InvalidDocument);
+    }
     let (status, conflict) = own_status(read, address)?;
     let current = objects::current(read, &address.object)?;
     Ok(GroupNode {
@@ -112,7 +127,8 @@ pub(super) fn read_group(read: &impl ReadDoc, address: &ObjectAddress) -> Result
         placement_conflict: placements.len() != 1 || current.len() != 1,
         placements,
         status,
-        conflicted: conflict || current.len() != 1,
+        conflicted: conflict || current.len() != 1 || icons.len() != 1,
+        icons,
         current: current.contains(address),
         created_at,
         modified_at: times.into_iter().max().unwrap_or(created_at),
@@ -248,6 +264,11 @@ pub(super) fn read_groups(read: &impl ReadDoc) -> Result<Vec<Group>, Error> {
             id,
             generation: node.address.generation,
             name: node.names[0].clone(),
+            icon: if node.icons.len() == 1 {
+                node.icons[0].clone()
+            } else {
+                taypeer_core::IconRef::Default
+            },
             parent: placement.parent.as_ref().map(|p| p.id.clone()),
             order: placement.order.clone(),
             created_at: node.created_at,

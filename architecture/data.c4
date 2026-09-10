@@ -13,6 +13,8 @@ model {
     attachment = entity 'Вложение' { #conceptual }
     revision = entity 'Сохранённая версия' { #conceptual }
     blob = entity 'Бинарный объект' { #conceptual }
+    appearance = entity 'Оформление' { #conceptual }
+    draft = entity 'Локальный черновик' { #conceptual }
     trustSet = entity 'Доверенный набор' { #conceptual }
     lifecycle = entity 'Жизненный цикл объекта' { #conceptual }
     generation = entity 'Поколение состояния' { #conceptual }
@@ -27,6 +29,11 @@ model {
   data.entry -> data.revision 'История'
   data.attachment -> data.blob 'Одно содержимое; много ссылок'
   data.revision -> data.blob 'Удерживает содержимое'
+  data.entry -> data.appearance 'Иконка и явные цвета'
+  data.group -> data.appearance 'Иконка группы'
+  data.appearance -> data.blob 'Пользовательское изображение'
+  data.draft -> data.blob 'Собственная зашифрованная копия'
+  data.pending -> data.blob 'Удерживает до разбора ссылок'
   data.database -> data.trustSet 'Линии доверия'
   data.group -> data.generation 'Состояния при неизменном ID'
   data.entry -> data.generation 'Состояния при неизменном ID'

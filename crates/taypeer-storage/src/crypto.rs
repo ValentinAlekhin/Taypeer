@@ -12,7 +12,7 @@ use zeroize::Zeroizing;
 const PREFIX: usize = 32;
 const WRAPPED: usize = 104;
 pub(super) const HEADER: usize = 136;
-const CHUNK: usize = 1024 * 1024;
+pub(super) const CHUNK: usize = 1024 * 1024;
 pub(super) const MAX_PAYLOAD: u64 = 16 * 1024 * 1024 * 1024;
 pub(super) const MAX_ENCODED_SIZE: u64 =
     HEADER as u64 + MAX_PAYLOAD + (MAX_PAYLOAD.div_ceil(CHUNK as u64) + 1) * 40;
@@ -22,7 +22,7 @@ const MAGIC: &[u8; 8] = b"TAYPEER\0";
 /// This does not guarantee erasure of plaintext in other allocations.
 pub struct ReadKey(Zeroizing<[u8; 32]>);
 
-fn random<const N: usize>() -> Result<[u8; N], Error> {
+pub(super) fn random<const N: usize>() -> Result<[u8; N], Error> {
     let mut bytes = [0; N];
     OsRng
         .try_fill_bytes(&mut bytes)
@@ -46,7 +46,7 @@ fn seal(key: &ReadKey, nonce: &[u8], aad: &[u8], clear: &[u8]) -> Result<Vec<u8>
         .encrypt(XNonce::from_slice(nonce), Payload { msg: clear, aad })
         .map_err(|_| Error::TooLarge)
 }
-fn open(
+pub(super) fn open(
     key: &ReadKey,
     nonce: &[u8],
     aad: &[u8],
@@ -65,7 +65,7 @@ pub(super) fn validate(header: &[u8], file_length: u64) -> Result<(), Error> {
     if header.len() != HEADER || &header[..8] != MAGIC {
         return Err(Error::InvalidFile);
     }
-    if header[8..12] != [1, 0, 2, 0] {
+    if header[8..12] != [1, 0, 3, 0] {
         return Err(Error::UnsupportedVersion);
     }
     let t = iterations(header)?;
@@ -117,7 +117,7 @@ pub(super) fn create_header(password: &[u8], target_ms: u32) -> Result<(Vec<u8>,
     };
     let key = ReadKey(Zeroizing::new(random()?));
     let mut bytes = Vec::from(MAGIC.as_slice());
-    bytes.extend([1, 0, 2, 0]);
+    bytes.extend([1, 0, 3, 0]);
     bytes.extend(iterations.to_le_bytes());
     bytes.extend(salt);
     let nonce = random::<24>()?;
@@ -144,7 +144,7 @@ pub(super) fn unlock_key(header: &[u8], password: &[u8]) -> Result<ReadKey, Erro
     Ok(key)
 }
 
-fn chunk_aad(header: &[u8], index: u64, final_chunk: bool) -> Vec<u8> {
+pub(super) fn chunk_aad(header: &[u8], index: u64, final_chunk: bool) -> Vec<u8> {
     let mut data = aad(header, b"/chunk/v1");
     data.extend(index.to_le_bytes());
     data.push(u8::from(final_chunk));
@@ -251,4 +251,12 @@ pub(super) fn open_draft(
         &aad(&header[..WRAPPED], b"/local-draft"),
         &bytes[24..],
     )
+}
+
+/// Independent staging key; never persisted alongside its ciphertext.
+pub(super) fn staging() -> Result<(Vec<u8>, ReadKey), Error> {
+    let mut header = vec![0; HEADER];
+    header[..8].copy_from_slice(b"TAYSTAGE");
+    header[8..104].copy_from_slice(&random::<96>()?);
+    Ok((header, ReadKey(Zeroizing::new(random()?))))
 }

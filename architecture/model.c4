@@ -57,7 +57,7 @@ model {
       #partial
       technology 'Rust'
       style { color blue; border solid }
-      description 'Предметные типы, адресные правки и проверки групп, записей и атрибутов первого среза. Без UI, ОС и Automerge.'
+      description 'Предметные типы, адресные правки и проверки групп, записей, вложений и оформления. Без UI, ОС и Automerge.'
       metadata { source 'crates/taypeer-core/src/lib.rs'; contract 'docs/data-model.md' }
     }
     sessions = component 'Сессии и сценарии БД' {
@@ -71,7 +71,7 @@ model {
       #partial
       style { border solid }
       technology 'Rust + Automerge'
-      description 'Automerge: поля, размещения, поколения объектов, история и жизненный цикл. Локальные операции через Rust API и CLI сохраняют варианты; допуск и сетевой приём пока не реализованы.'
+      description 'Automerge: поля, размещения, поколения, история и ссылки на бинарное содержимое. Локальные операции через Rust API и CLI сохраняют варианты; допуск и сетевой приём пока не реализованы.'
       metadata { source 'crates/taypeer-document/src/lib.rs'; contract 'docs/data-model.md'; evidence 'spikes/encrypted-sync/REPORT.md' }
     }
     crypto = component 'Защита содержимого' {
@@ -85,7 +85,7 @@ model {
       #partial
       style { border solid }
       technology 'Rust'
-      description 'Локальный файловый срез: атомарная запись и снимки через taypeer-storage. Зашифрованная очередь остаётся запланирована.'
+      description 'Потоковые бинарные секции, зашифрованный staging, атомарная запись и снимки. Зашифрованная очередь остаётся запланирована.'
       metadata { source 'crates/taypeer-storage/src/file.rs'; contract 'docs/storage.md'; evidence 'spikes/encrypted-sync/REPORT.md' }
     }
     sync = component 'Зашифрованный обмен' {
@@ -125,9 +125,9 @@ model {
       metadata { source 'resources/theme.toml'; contract 'spec.md#тема-интерфейса' }
     }
     iconLoader = component 'Загрузка иконок' {
-      #planned
-      description 'Загрузка только по явному действию, результат входит в правки записи.'
-      metadata { contract 'spec.md' }
+      #partial
+      description 'Явные HTTP(S)-запросы, проверка изображений и ограниченные ресурсы; результат входит в черновик. Локальные адреса разрешены, переход с публичного сайта внутрь сети запрещён.'
+      metadata { source 'crates/taypeer-services/src/icons/mod.rs'; contract 'docs/core-cli.md'; evidence 'crates/taypeer-services/src/icons/tests.rs' }
     }
     macPlatform = component 'Адаптеры macOS' {
       #partial
@@ -190,8 +190,10 @@ model {
   taypeer.sessions -> taypeer.generator 'Создание секрета'
   taypeer.sessions -> taypeer.iconLoader 'Явная загрузка'
   taypeer.sessions -> taypeer.local 'Зашифрованный черновик'
+  taypeer.storage -> files 'Потоковый ввод и явный экспорт бинарных данных'
   taypeer.sessions -> taypeer.demo 'Временные документы и черновики режима demo'
   taypeer.document -> taypeer.core 'Значения и конфликты'
+  taypeer.storage -> taypeer.core 'Типизированные бинарные ссылки и лимиты'
   taypeer.evolution -> taypeer.document 'Преобразование представления'
   taypeer.evolution -> taypeer.trust 'Проверка полномочий и происхождения'
   taypeer.sync -> taypeer.trust 'Проверка допуска'

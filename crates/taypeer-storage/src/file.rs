@@ -1,4 +1,4 @@
-use crate::{Error, MAX_FILE_SIZE, ReadKey, crypto};
+use crate::{BlobStore, Error, MAX_FILE_SIZE, ReadKey, crypto, stream::DecryptReader};
 use sha2::{Digest, Sha256};
 use std::{
     fs::{self, File, OpenOptions},
@@ -7,6 +7,14 @@ use std::{
 };
 use tempfile::NamedTempFile;
 use zeroize::Zeroizing;
+
+/// Authenticated local draft candidates, unpublished until the service validates references.
+pub struct BinaryDraft {
+    /// Serialized editor state in a zeroizing buffer.
+    pub document: Zeroizing<Vec<u8>>,
+    /// Independently staged immutable content owned by the draft.
+    pub blobs: BlobStore,
+}
 
 /// One exclusively opened local file. The handle holds no plaintext or read key.
 /// Sidecars remain local; copying the database does not require them for reading.
@@ -211,6 +219,62 @@ impl FileStore {
     /// Canonical path of this local working copy; never part of the portable document.
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// Open a sectioned payload, authenticating all sections before returning candidates.
+    pub fn unlock_bundle(
+        &mut self,
+        password: &[u8],
+    ) -> Result<(ReadKey, Zeroizing<Vec<u8>>, BlobStore), Error> {
+        let mut input = File::open(&self.path)?;
+        let candidate = header(&mut input)?;
+        let before = fingerprint(&mut input)?;
+        input.seek(SeekFrom::Start(crypto::HEADER as u64))?;
+        let key = crypto::unlock_key(&candidate, password)?;
+        let (document, blobs) =
+            BlobStore::read_bundle(DecryptReader::new(&mut input, &key, candidate.clone())?)?;
+        if fingerprint(&mut input)? != before {
+            return Err(Error::Changed);
+        }
+        self.header = candidate;
+        self.fingerprint = before;
+        self.uncertain = false;
+        Ok((key, document, blobs))
+    }
+
+    /// Atomically persist an independently encrypted binary draft bundle.
+    pub fn save_binary_draft(
+        &self,
+        key: &ReadKey,
+        document: &[u8],
+        blobs: &BlobStore,
+    ) -> Result<(), Error> {
+        let reader = blobs.bundle(document)?;
+        let length = reader.length();
+        let mut header = self.header.clone();
+        header[..8].copy_from_slice(b"TAYDRFT3");
+        let mut temp = NamedTempFile::new_in(parent(&self.path)?)?;
+        crypto::encrypt_stream(&header, key, reader, length, &mut temp)?;
+        persist(temp, &sibling(&self.path, ".draft"), false)
+    }
+
+    /// Read the entire local draft bundle; missing and invalid drafts are distinct.
+    pub fn load_binary_draft(&self, key: &ReadKey) -> Result<Option<BinaryDraft>, Error> {
+        let path = sibling(&self.path, ".draft");
+        if !path.try_exists()? {
+            return Ok(None);
+        }
+        let mut input = File::open(path)?;
+        let mut header = vec![0; crypto::HEADER];
+        input.read_exact(&mut header)?;
+        if &header[..8] != b"TAYDRFT3" || header[8..104] != self.header[8..104] {
+            return Err(Error::Authentication);
+        }
+        if input.metadata()?.len() > crypto::MAX_ENCODED_SIZE {
+            return Err(Error::TooLarge);
+        }
+        let (document, blobs) = BlobStore::read_bundle(DecryptReader::new(input, key, header)?)?;
+        Ok(Some(BinaryDraft { document, blobs }))
     }
 
     /// Authenticate a bounded document into a zeroizing buffer.

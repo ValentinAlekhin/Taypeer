@@ -24,6 +24,22 @@ impl From<RuntimeError> for CliError {
 impl CliError {
     pub fn key(&self) -> &'static str {
         match self {
+            Self::Runtime(taypeer_runtime::RuntimeError::Service(
+                taypeer_services::ServiceError::AttachmentLimit,
+            )) => "attachment_limit",
+            Self::Runtime(taypeer_runtime::RuntimeError::Service(
+                taypeer_services::ServiceError::Icon(
+                    taypeer_services::icons::IconError::NetworkBoundary,
+                ),
+            )) => "icon_network_boundary",
+            Self::Runtime(taypeer_runtime::RuntimeError::Service(
+                taypeer_services::ServiceError::Icon(_),
+            )) => "icon_error",
+            Self::Runtime(taypeer_runtime::RuntimeError::Service(
+                taypeer_services::ServiceError::Storage(
+                    taypeer_services::StorageError::MissingBlob,
+                ),
+            )) => "missing_blob",
             Self::Runtime(_) => "runtime_error",
             Self::Input => "input_error",
             Self::PasswordMismatch => "password_mismatch",

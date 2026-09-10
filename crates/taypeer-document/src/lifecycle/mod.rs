@@ -295,7 +295,7 @@ impl Document {
         })
     }
 
-    fn action_receipt(
+    pub(super) fn action_receipt(
         &self,
         operation: &OperationId,
         intent: &impl Serialize,
@@ -322,6 +322,7 @@ impl Document {
     pub(super) fn validate_structure(&self) -> Result<(), Error> {
         groups::tree(&self.doc)?;
         let mut owners = BTreeMap::new();
+        let mut attachment_owners = BTreeMap::new();
         for address in objects::all(&self.doc)? {
             objects::life(&self.doc, &address)?;
             objects::purge(&self.doc, &address)?;
@@ -337,6 +338,15 @@ impl Document {
                         return Err(Error::DuplicateId);
                     }
                 }
+                let attachments = object(&self.doc, &entry, "attachments")?;
+                for attachment in self.doc.keys(attachments) {
+                    if attachment_owners
+                        .insert(attachment, id.clone())
+                        .is_some_and(|owner| &owner != id)
+                    {
+                        return Err(Error::DuplicateId);
+                    }
+                }
                 stored_revisions(&self.doc, id)?;
             }
         }
@@ -347,7 +357,7 @@ impl Document {
     }
 }
 
-fn parse_heads(doc: &Automerge, heads: &[String]) -> Result<Vec<ChangeHash>, Error> {
+pub(super) fn parse_heads(doc: &Automerge, heads: &[String]) -> Result<Vec<ChangeHash>, Error> {
     let hashes: Vec<_> = heads
         .iter()
         .map(|h| h.parse().map_err(|_| Error::InvalidContext))
@@ -358,7 +368,7 @@ fn parse_heads(doc: &Automerge, heads: &[String]) -> Result<Vec<ChangeHash>, Err
     Ok(hashes)
 }
 
-fn put_receipt(
+pub(super) fn put_receipt(
     tx: &mut Transaction<'_>,
     operation: &OperationId,
     intent: &impl Serialize,

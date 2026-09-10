@@ -9,8 +9,8 @@ use super::{
 use automerge::ReadDoc;
 use std::collections::{BTreeMap, BTreeSet};
 use taypeer_core::{
-    Attribute, AttributeId, EntryField, EntryFields, EntryId, EntrySnapshot, FieldState,
-    FieldValue, GroupRef, Timestamp, ValidationError,
+    Attachment, AttachmentId, Attribute, AttributeId, EntryField, EntryFields, EntryId,
+    EntrySnapshot, FieldState, FieldValue, GroupRef, Timestamp, ValidationError,
 };
 
 pub(super) fn read_entry<R: ReadDoc>(
@@ -80,6 +80,9 @@ fn read_values<R: ReadDoc>(read: &R, entry: &automerge::ObjId) -> Result<Vec<Fie
         EntryField::Notes,
         EntryField::Tags,
         EntryField::ExpiresAt,
+        EntryField::Icon,
+        EntryField::Foreground,
+        EntryField::Background,
     ] {
         values.push(read_field(read, entry, field)?);
     }
@@ -95,6 +98,20 @@ fn read_values<R: ReadDoc>(read: &R, entry: &automerge::ObjId) -> Result<Vec<Fie
             ] {
                 values.push(read_field(read, entry, field)?);
             }
+        }
+        values.push(presence);
+    }
+    let attachments = object(read, entry, "attachments")?;
+    for key in read.keys(attachments) {
+        let id = AttachmentId::new(key);
+        let presence = read_field(read, entry, EntryField::AttachmentPresence(id.clone()))?;
+        if !matches!(presence.variants.as_slice(), [v] if v.value == FieldValue::Presence(false)) {
+            values.push(read_field(
+                read,
+                entry,
+                EntryField::AttachmentName(id.clone()),
+            )?);
+            values.push(read_field(read, entry, EntryField::AttachmentBlob(id))?);
         }
         values.push(presence);
     }
@@ -172,6 +189,9 @@ fn project_fields(values: &[FieldState]) -> Result<EntryFields, Error> {
     let mut names = BTreeMap::new();
     let mut attr_values = BTreeMap::new();
     let mut present = BTreeSet::new();
+    let mut attachment_names = BTreeMap::new();
+    let mut attachment_blobs = BTreeMap::new();
+    let mut attachments = BTreeSet::new();
     for state in values {
         let [variant] = state.variants.as_slice() else {
             return Err(Error::Conflict);
@@ -194,6 +214,23 @@ fn project_fields(values: &[FieldState]) -> Result<EntryFields, Error> {
                 present.insert(id.clone());
             }
             (EntryField::AttributePresence(_), FieldValue::Presence(false)) => {}
+            (EntryField::Icon, FieldValue::Icon(value)) => result.appearance.icon = value.clone(),
+            (EntryField::Foreground, FieldValue::Color(value)) => {
+                result.appearance.foreground = *value
+            }
+            (EntryField::Background, FieldValue::Color(value)) => {
+                result.appearance.background = *value
+            }
+            (EntryField::AttachmentName(id), FieldValue::Text(Some(value))) => {
+                attachment_names.insert(id.clone(), value.clone());
+            }
+            (EntryField::AttachmentBlob(id), FieldValue::Blob(value)) => {
+                attachment_blobs.insert(id.clone(), value.clone());
+            }
+            (EntryField::AttachmentPresence(id), FieldValue::Presence(true)) => {
+                attachments.insert(id.clone());
+            }
+            (EntryField::AttachmentPresence(_), FieldValue::Presence(false)) => {}
             _ => return Err(Error::InvalidDocument),
         }
     }
@@ -203,6 +240,13 @@ fn project_fields(values: &[FieldState]) -> Result<EntryFields, Error> {
         result
             .attributes
             .insert(id.clone(), Attribute { id, name, value });
+    }
+    for id in attachments {
+        let name = attachment_names.remove(&id).ok_or(Error::InvalidDocument)?;
+        let blob = attachment_blobs.remove(&id).ok_or(Error::InvalidDocument)?;
+        result
+            .attachments
+            .insert(id.clone(), Attachment { id, name, blob });
     }
     Ok(result)
 }

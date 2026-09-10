@@ -124,6 +124,17 @@ def main():
             assert b'"error"' not in terminal.command(f"group move {group} --first --operation PUBLIC-PTY-move")
             assert b"PUBLIC_PTY_ENTRY_CANARY" not in terminal.transcript
             assert b"PUBLIC_PTY_MASTER_CANARY" not in terminal.transcript
+            attachment_input = Path(directory) / "PUBLIC attachment.txt"
+            attachment_input.write_bytes(b"PUBLIC PTY attachment contents")
+            terminal.command(f"draft edit {entry}")
+            add_attachment = f'attachment add --draft "{attachment_input}" --operation PUBLIC-PTY-attachment'
+            assert b'"error"' not in terminal.command(add_attachment)
+            assert len(json_response(terminal.command("attachment list --draft"))["attachments"]) == 1
+            terminal.command("draft discard")
+            assert json_response(terminal.command(f"attachment list --entry {entry}"))["attachments"] == []
+            terminal.command(f"draft edit {entry}")
+            assert b'"error"' not in terminal.command(add_attachment)
+            assert b'"error"' not in terminal.command("icon set --draft key-round --operation PUBLIC-PTY-icon")
             terminal.command("db lock")
             denied = terminal.command("entry list")
             assert b'"Closed"' in denied
@@ -133,6 +144,15 @@ def main():
             terminal.wait(b"\x1b[6n")
             terminal.wait(b"\x1b[?25h")
             assert b"PUBLIC entry" in terminal.command("entry list")
+            assert b'"error"' in terminal.command("attachment list --draft")
+            assert b'"error"' not in terminal.command("draft restore")
+            restored = json_response(terminal.command("attachment list --draft"))
+            assert len(restored["attachments"]) == 1
+            blob = restored["attachments"][0]["contents"][0]["id"]
+            output = Path(directory) / "PUBLIC exported.txt"
+            assert b'"error"' not in terminal.command(f'attachment export --draft {blob} --output "{output}"')
+            assert output.read_bytes() == attachment_input.read_bytes()
+            assert b'"error"' not in terminal.command("draft save")
             terminal.send(f'entry create --group {group} --title "PUBLIC cancelled" --password-prompt')
             terminal.wait(b"Entry password: ")
             os.write(terminal.fd, b"\x03")
@@ -164,7 +184,7 @@ def main():
             )
             assert result.returncode == 0, "worker retained the writer lock after exit"
             assert len(json.loads(result.stdout)) == 1
-        print("CLI PTY: hidden input, cancellation, draft guard, trash/restore, move, lock, close and reopen passed")
+        print("CLI PTY: hidden input, cancellation, draft guard, trash/restore, move, binary draft cancel/restore/export/save, lock, close and reopen passed")
     finally:
         terminal.close()
 

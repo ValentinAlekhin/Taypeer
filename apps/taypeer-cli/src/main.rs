@@ -1,6 +1,8 @@
 //! Taypeer's command client and private database-worker entry point.
 
 mod args;
+mod binary_args;
+mod binary_host;
 mod host;
 mod input;
 mod lifecycle_args;

@@ -1,10 +1,15 @@
 //! Version-one streaming encrypted files under development. See docs/storage.md.
 
+mod blobs;
+mod bundle;
 mod crypto;
 mod file;
+mod stream;
 
+pub use blobs::BlobStore;
+pub use bundle::BundleReader;
 pub use crypto::ReadKey;
-pub use file::FileStore;
+pub use file::{BinaryDraft, FileStore};
 
 /// Categorized failures without paths, passwords or parser diagnostics.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -19,6 +24,10 @@ pub enum Error {
     UnsupportedVersion,
     /// The bounded reader or writer rejected an oversized file.
     TooLarge,
+    /// Required immutable content is not locally available.
+    MissingBlob,
+    /// An immutable binary identity was reused for different content.
+    BlobMismatch,
     /// The operating system could not complete an I/O operation.
     Io,
     /// The file is already open by another writer.
@@ -39,8 +48,14 @@ impl std::fmt::Display for Error {
 }
 impl std::error::Error for Error {}
 impl From<std::io::Error> for Error {
-    fn from(_: std::io::Error) -> Self {
-        Self::Io
+    fn from(error: std::io::Error) -> Self {
+        // Streaming adapters preserve our sanitized authentication/format categories.
+        // Ordinary OS diagnostics, including paths, never escape this boundary.
+        error
+            .get_ref()
+            .and_then(|inner| inner.downcast_ref::<Self>())
+            .copied()
+            .unwrap_or(Self::Io)
     }
 }
 
@@ -49,3 +64,6 @@ pub const MAX_FILE_SIZE: usize = 64 * 1024 * 1024;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod binary_tests;

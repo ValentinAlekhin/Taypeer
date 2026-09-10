@@ -52,7 +52,10 @@ pub enum InspectionView {
     },
 }
 
-fn inspect(document: &Document, target: &InspectionTarget) -> Result<SourcePreview, ServiceError> {
+pub(super) fn inspect(
+    document: &Document,
+    target: &InspectionTarget,
+) -> Result<SourcePreview, ServiceError> {
     Ok(match target {
         InspectionTarget::Source(id) => document.preview_source(id)?,
         InspectionTarget::Object(address) => match &address.object {

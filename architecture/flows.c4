@@ -101,6 +101,19 @@ views 'Сценарии' {
 }
 
 views 'Локальный файл' {
+  dynamic view binarySave {
+    title 'Вложения и сохранение бинарного черновика'
+    taypeer.cli -> taypeer.secretWorker 'Добавить файл или явно загрузить иконку'
+    taypeer.secretWorker -> taypeer.sessions 'Проверить текущую сессию и черновик'
+    taypeer.sessions -> taypeer.iconLoader 'Явная загрузка и проверка изображения при необходимости'
+    taypeer.sessions -> taypeer.storage 'Зашифрованное временное содержимое и дедупликация'
+    taypeer.sessions -> taypeer.local 'Собственный бинарный черновик'
+    taypeer.cli -> taypeer.secretWorker 'Подтвердить запись с ID операции'
+    taypeer.sessions -> taypeer.document 'Ссылки, варианты и одна сохранённая версия'
+    taypeer.sessions -> taypeer.storage 'Проверить удержание и атомарно записать секции'
+    taypeer.storage -> taypeer.vault 'Каталог, документ и нужные blobs в одном файле'
+    taypeer.cli <- taypeer.secretWorker 'Надёжно сохранённый результат'
+  }
   dynamic view cliSession {
     title 'Командная сессия и блокировка'
     description 'CLI использует отдельный процесс БД. Завершение процесса не доказывает очистку копий терминала, swap или физической RAM.'

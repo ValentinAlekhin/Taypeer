@@ -26,6 +26,8 @@ pub struct GroupSummary {
     pub name: String,
     /// Parent group, or no parent for the visible top level.
     pub parent: Option<GroupId>,
+    /// Stored icon; this value does not trigger network acquisition.
+    pub icon: taypeer_core::IconRef,
 }
 
 /// A table/search row; password and protected attributes are never included.
@@ -161,6 +163,10 @@ pub struct EntryView {
     pub expires_at: Option<i64>,
     /// Attributes with protected values removed.
     pub attributes: Vec<AttributeView>,
+    /// Exact attachment metadata; binary contents require explicit export.
+    pub attachments: Vec<taypeer_core::Attachment>,
+    /// Stored presentation values.
+    pub appearance: taypeer_core::Appearance,
     /// Whether a password field exists, including an explicitly empty one.
     pub has_password: bool,
     /// Whether conflict resolution is required before editing or revealing.
@@ -225,6 +231,7 @@ pub(super) fn group_summary(group: Group) -> GroupSummary {
         id: group.id,
         name: group.name,
         parent: group.parent,
+        icon: group.icon,
     }
 }
 
@@ -282,6 +289,8 @@ pub(super) fn entry_view(entry: EntrySnapshot) -> EntryView {
                 protected: attribute.value.protected,
             })
             .collect(),
+        attachments: fields.attachments.into_values().collect(),
+        appearance: fields.appearance,
         has_password: fields.password.is_some(),
         has_conflicts,
         created_at: entry.created_at,

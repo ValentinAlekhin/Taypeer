@@ -18,7 +18,7 @@ enum DraftStatus {
     Interrupted,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub(super) struct DraftState {
     document: EntryDraft,
     baseline: EntryFields,
@@ -26,6 +26,7 @@ pub(super) struct DraftState {
     status: DraftStatus,
     attribute_order: Vec<AttributeId>,
     expiry_input: Option<String>,
+    binary_receipts: BTreeMap<taypeer_core::OperationId, serde_json::Value>,
 }
 
 impl DraftState {
@@ -37,9 +38,57 @@ impl DraftState {
             kind,
             status: DraftStatus::Active,
             expiry_input: None,
+            binary_receipts: BTreeMap::new(),
         }
     }
 
+    pub(super) fn document(&self) -> Result<&EntryDraft, ServiceError> {
+        self.require_active()?;
+        Ok(&self.document)
+    }
+    pub(super) fn document_mut(&mut self) -> Result<&mut EntryDraft, ServiceError> {
+        self.require_active()?;
+        Ok(&mut self.document)
+    }
+    pub(super) fn binary_receipt(
+        &self,
+        operation: &taypeer_core::OperationId,
+        intent: &serde_json::Value,
+    ) -> Result<bool, ServiceError> {
+        self.require_active()?;
+        match self.binary_receipts.get(operation) {
+            Some(old) if old == intent => Ok(true),
+            Some(_) => Err(ServiceError::InvalidInput),
+            None => Ok(false),
+        }
+    }
+    pub(super) fn record_binary(
+        &mut self,
+        operation: taypeer_core::OperationId,
+        intent: serde_json::Value,
+    ) {
+        self.binary_receipts.insert(operation, intent);
+    }
+    pub(super) fn adds_binary_content(&self) -> bool {
+        self.document
+            .fields()
+            .attachments
+            .iter()
+            .any(|(id, attachment)| {
+                self.baseline
+                    .attachments
+                    .get(id)
+                    .is_none_or(|old| old.blob != attachment.blob)
+            })
+    }
+    pub(super) fn binary_references(&self) -> BTreeSet<taypeer_core::BlobId> {
+        let mut refs = BTreeSet::new();
+        for fields in [&self.baseline, self.document.fields()] {
+            refs.extend(fields.attachments.values().map(|a| a.blob.clone()));
+            refs.extend(fields.appearance.icon.blob().cloned());
+        }
+        refs
+    }
     pub(super) fn entry_id(&self) -> Option<&EntryId> {
         match self.kind {
             DraftKind::New => None,
@@ -125,6 +174,8 @@ impl DraftState {
             tags: fields.tags.into_iter().collect(),
             expires_at: fields.expires_at,
             attributes,
+            attachments: candidate.fields().attachments.clone(),
+            appearance: candidate.fields().appearance.clone(),
         };
         self.document = candidate;
         self.attribute_order = attribute_order;

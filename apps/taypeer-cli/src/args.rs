@@ -34,6 +34,14 @@ pub(crate) struct Cli {
 
 #[derive(Subcommand)]
 pub(crate) enum Action {
+    #[command(about = crate::output::help("help_attachment"), subcommand)]
+    Attachment(crate::binary_args::AttachmentCommand),
+    #[command(about = crate::output::help("help_icon"), subcommand)]
+    Icon(crate::binary_args::IconCommand),
+    #[command(about = crate::output::help("help_appearance"), subcommand)]
+    Appearance(crate::binary_args::AppearanceCommand),
+    #[command(about = crate::output::help("help_storage"), subcommand)]
+    Storage(crate::binary_args::StorageCommand),
     /// Start an interactive session.
     Session,
     /// Create, open, select, lock or close databases.

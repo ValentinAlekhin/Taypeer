@@ -9,11 +9,13 @@ use std::{
     fmt,
 };
 use taypeer_core::{
-    Attribute, AttributeId, AttributeValue, DatabaseId, EntryField, EntryFields, EntryId,
-    EntrySnapshot, FieldValue, Group, GroupId, RevisionId, RevisionKind, SavedRevision, Timestamp,
-    ValidationError, validate_group_name,
+    Attachment, AttachmentId, Attribute, AttributeId, AttributeValue, BlobId, DatabaseId,
+    EntryField, EntryFields, EntryId, EntrySnapshot, FieldValue, Group, GroupId, IconRef,
+    RevisionId, RevisionKind, SavedRevision, Timestamp, ValidationError, validate_group_name,
 };
 
+mod binary;
+pub use binary::BlobReferences;
 mod codec;
 mod fields;
 mod groups;
@@ -98,6 +100,19 @@ impl EntryDraft {
     pub fn fields_mut(&mut self) -> &mut EntryFields {
         &mut self.fields
     }
+    /// Adds an independently addressed reference to staged binary data.
+    pub fn add_attachment(&mut self, name: String, blob: BlobId) -> AttachmentId {
+        let id = AttachmentId::new(random_id());
+        self.fields.attachments.insert(
+            id.clone(),
+            Attachment {
+                id: id.clone(),
+                name,
+                blob,
+            },
+        );
+        id
+    }
     /// Adds a local attribute with an independently generated stable identity.
     pub fn add_attribute(&mut self, name: String, value: String, protected: bool) -> AttributeId {
         let id = AttributeId::new(random_id());
@@ -151,7 +166,7 @@ impl Document {
         let database_id = DatabaseId::new(random_id());
         let mut doc = Automerge::new();
         let mut tx = doc.transaction();
-        tx.put(ROOT, "schema", 2_u64)?;
+        tx.put(ROOT, "schema", 3_u64)?;
         tx.put(ROOT, "database_id", database_id.as_str())?;
         tx.put(ROOT, "name", name.as_str())?;
         tx.put(ROOT, "created_at", now)?;
@@ -186,7 +201,7 @@ impl Document {
     /// This parser is not a substitute for outer authentication or resource limits.
     pub fn load(bytes: &[u8]) -> Result<Self, Error> {
         let doc = Automerge::load(bytes)?;
-        if unique(&doc, &ROOT, "schema")?.to_u64() != Some(2) {
+        if unique(&doc, &ROOT, "schema")?.to_u64() != Some(3) {
             return Err(Error::InvalidDocument);
         }
         let database_id = DatabaseId::new(
@@ -253,6 +268,7 @@ impl Document {
             name,
             parent,
             order,
+            icon: IconRef::Default,
             created_at: now,
             modified_at: now,
         };
@@ -271,6 +287,7 @@ impl Document {
         tx.put(&object, "created_at", now)?;
         tx.put_object(&object, "name_times", ObjType::Map)?;
         put_group_name(&mut tx, &object, &group.name, now)?;
+        tx.put(&object, "icon", encode(&group.icon)?)?;
         objects::record_event(&mut tx, &address, None)?;
         tx.commit();
         Ok(group)
@@ -395,8 +412,14 @@ impl Document {
             }
         }
         if draft.original.as_ref() == Some(&draft.fields) {
+            if let Some((operation, intent)) = receipt {
+                let mut tx = self.doc.transaction();
+                operations::write_receipt(&mut tx, operation, intent, &draft.entry_id)?;
+                tx.commit();
+            }
             return Ok(draft.entry_id);
         }
+        binary::validate_attachment_owners(&self.doc, &draft.entry_id, &draft.fields)?;
         let new_attributes: BTreeSet<_> = draft
             .fields
             .attributes
@@ -440,6 +463,7 @@ impl Document {
             tx.put(&entry, "group", encode(&destination)?)?;
             tx.put(&entry, "created_at", now)?;
             tx.put_object(&entry, "attributes", ObjType::Map)?;
+            tx.put_object(&entry, "attachments", ObjType::Map)?;
             entry
         } else {
             objects::entry_object(&tx, &draft.entry_id)?
@@ -503,6 +527,9 @@ impl Document {
                 EntryField::AttributeName(_)
                     | EntryField::AttributeValue(_)
                     | EntryField::AttributePresence(_)
+                    | EntryField::AttachmentName(_)
+                    | EntryField::AttachmentBlob(_)
+                    | EntryField::AttachmentPresence(_)
             ) {
                 return Err(Error::InvalidDocument);
             }
@@ -675,3 +702,6 @@ fn stored_revisions<R: ReadDoc>(read: &R, id: &EntryId) -> Result<Vec<StoredRevi
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod binary_tests;

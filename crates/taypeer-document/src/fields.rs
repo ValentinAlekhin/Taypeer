@@ -31,7 +31,12 @@ fn field_key(field: &EntryField) -> &str {
         EntryField::ExpiresAt => "expires_at",
         EntryField::AttributeName(_) => "name",
         EntryField::AttributeValue(_) => "value",
-        EntryField::AttributePresence(_) => "presence",
+        EntryField::AttributePresence(_) | EntryField::AttachmentPresence(_) => "presence",
+        EntryField::AttachmentName(_) => "name",
+        EntryField::AttachmentBlob(_) => "blob",
+        EntryField::Icon => "icon",
+        EntryField::Foreground => "foreground",
+        EntryField::Background => "background",
     }
 }
 
@@ -42,6 +47,12 @@ fn field_object<R: ReadDoc>(read: &R, entry: &ObjId, field: &EntryField) -> Resu
         | EntryField::AttributePresence(id) => {
             let attrs = object(read, entry, "attributes")?;
             object(read, &attrs, id.as_str())
+        }
+        EntryField::AttachmentName(id)
+        | EntryField::AttachmentBlob(id)
+        | EntryField::AttachmentPresence(id) => {
+            let attachments = object(read, entry, "attachments")?;
+            object(read, &attachments, id.as_str())
         }
         _ => Ok(entry.clone()),
     }
@@ -84,6 +95,11 @@ pub(super) fn validate_field(field: &EntryField, value: &FieldValue) -> Result<(
             }
             true
         }
+        (EntryField::AttachmentName(_), FieldValue::Text(Some(name))) => !name.is_empty(),
+        (EntryField::AttachmentBlob(_), FieldValue::Blob(_))
+        | (EntryField::AttachmentPresence(_), FieldValue::Presence(_))
+        | (EntryField::Icon, FieldValue::Icon(_))
+        | (EntryField::Foreground | EntryField::Background, FieldValue::Color(_)) => true,
         (EntryField::AttributeValue(_), FieldValue::Attribute(_))
         | (EntryField::AttributePresence(_), FieldValue::Presence(_)) => true,
         _ => false,
@@ -110,6 +126,9 @@ pub(super) fn put_field(
         FieldValue::Timestamp(Some(value)) => ScalarValue::Timestamp(value),
         FieldValue::Tags(value) => encode(&value)?,
         FieldValue::Attribute(value) => encode(&value)?,
+        FieldValue::Blob(value) => encode(&value)?,
+        FieldValue::Icon(value) => encode(&value)?,
+        FieldValue::Color(value) => encode(&value)?,
         FieldValue::Presence(alive) => encode(&Presence {
             alive,
             operation: revision.as_str().into(),
@@ -125,8 +144,20 @@ pub(super) fn put_field(
     Ok(())
 }
 
-fn form_fields(fields: &EntryFields) -> Vec<(EntryField, FieldValue)> {
+pub(super) fn form_fields(fields: &EntryFields) -> Vec<(EntryField, FieldValue)> {
     vec![
+        (
+            EntryField::Icon,
+            FieldValue::Icon(fields.appearance.icon.clone()),
+        ),
+        (
+            EntryField::Foreground,
+            FieldValue::Color(fields.appearance.foreground),
+        ),
+        (
+            EntryField::Background,
+            FieldValue::Color(fields.appearance.background),
+        ),
         (
             EntryField::Title,
             FieldValue::Text(Some(fields.title.clone())),
@@ -226,6 +257,7 @@ pub(super) fn apply_form(
             )?;
         }
     }
+    super::binary::apply_attachments(tx, entry, original, fields, revision, &mut changed)?;
     Ok(changed)
 }
 
@@ -236,7 +268,8 @@ fn decode_field(field: &EntryField, value: &Value<'_>) -> Result<FieldValue, Err
         | EntryField::Password
         | EntryField::Url
         | EntryField::Notes
-        | EntryField::AttributeName(_) => {
+        | EntryField::AttributeName(_)
+        | EntryField::AttachmentName(_) => {
             if value == &Value::Scalar(std::borrow::Cow::Owned(ScalarValue::Null)) {
                 FieldValue::Text(None)
             } else {
@@ -255,7 +288,12 @@ fn decode_field(field: &EntryField, value: &Value<'_>) -> Result<FieldValue, Err
             })
         }
         EntryField::AttributeValue(_) => FieldValue::Attribute(decode(value)?),
-        EntryField::AttributePresence(_) => FieldValue::Presence(decode::<Presence>(value)?.alive),
+        EntryField::AttributePresence(_) | EntryField::AttachmentPresence(_) => {
+            FieldValue::Presence(decode::<Presence>(value)?.alive)
+        }
+        EntryField::AttachmentBlob(_) => FieldValue::Blob(decode(value)?),
+        EntryField::Icon => FieldValue::Icon(decode(value)?),
+        EntryField::Foreground | EntryField::Background => FieldValue::Color(decode(value)?),
     };
     validate_field(field, &decoded)?;
     Ok(decoded)
