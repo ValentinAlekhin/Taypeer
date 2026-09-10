@@ -41,6 +41,18 @@ model {
       description 'Команды, ограниченные представления и события для Android.'
       metadata { evidence 'spikes/android-compose/REPORT.md'; contract 'docs/architecture.md' }
     }
+    cli = app 'Командный клиент' {
+      #partial
+      technology 'Rust + clap + clap-repl'
+      description 'Подкоманды и интерактивная сессия над общим Rust API; JSON для автоматизации, явное раскрытие секретов.'
+      metadata { source 'apps/taypeer-cli/src/main.rs'; contract 'docs/core-cli.md'; evidence 'apps/taypeer-cli/tests/files.rs' }
+    }
+    secretWorker = component 'Процесс открытой БД' {
+      #partial
+      technology 'Rust; отдельный процесс'
+      description 'Владеет открытым документом и ключами чтения. Блокировка инвалидирует сессию и завершает процесс даже при ошибке черновика.'
+      metadata { source 'crates/taypeer-runtime/src/lib.rs'; contract 'docs/core-cli.md'; evidence 'apps/taypeer-cli/tests/files.rs' }
+    }
     core = component 'Ядро предметной области' {
       #partial
       technology 'Rust'
@@ -101,10 +113,10 @@ model {
       metadata { contract 'spec.md#импорт-и-экспорт-kdbx' }
     }
     generator = component 'Генератор секретов' {
-      #planned
+      #partial
       technology 'Rust'
       description 'Пароли и фразы из встроенного словаря с криптографическим источником случайности.'
-      metadata { contract 'spec.md' }
+      metadata { source 'crates/taypeer-services/src/generator.rs'; contract 'spec.md' }
     }
     theme = component 'Тема и локальные настройки' {
       #partial
@@ -157,6 +169,14 @@ model {
 
   owner -> taypeer.mac 'Работает с БД'
   owner -> taypeer.android 'Работает с БД'
+  owner -> taypeer.cli 'Команды и интерактивная сессия'
+  taypeer.cli -> taypeer.secretWorker 'Ограниченные команды через приватные каналы'
+  taypeer.cli -> taypeer.generator 'Явная генерация секрета'
+  taypeer.cli -> taypeer.macPlatform 'Защищённое локальное состояние и события ОС'
+  taypeer.cli -> taypeer.sync 'Запуск и остановка обмена'
+  taypeer.secretWorker -> taypeer.sessions 'Последовательные команды текущей сессии'
+  taypeer.secretWorker -> taypeer.document 'Открытый документ и адресные изменения'
+  taypeer.secretWorker -> taypeer.crypto 'Ключи чтения и защита кандидатов'
   taypeer.mac -> taypeer.sessions 'Команды Rust'
   taypeer.android -> taypeer.ffi 'Команды и события'
   taypeer.ffi -> taypeer.sessions 'Сценарии Rust'

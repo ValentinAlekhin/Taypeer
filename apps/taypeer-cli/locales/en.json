@@ -1,0 +1,17 @@
+{
+  "master_password": "Master password: ",
+  "repeat_password": "Repeat master password: ",
+  "entry_password": "Entry password: ",
+  "done": "Done",
+  "runtime_error": "The database operation failed",
+  "input_error": "Cannot read valid input",
+  "password_mismatch": "Passwords do not match",
+  "stdin_conflict": "The master password and entry input cannot share stdin",
+  "no_database": "Select a database first",
+  "unknown_database": "The database is not open in this session",
+  "already_open": "The database is already open",
+  "session_only": "This command requires an interactive session",
+  "io_error": "The terminal operation failed",
+  "session_ready": "Taypeer session. Use 'db open', 'db create' or --help. Ctrl-D exits.",
+  "session_locked": "All databases locked after inactivity"
+}

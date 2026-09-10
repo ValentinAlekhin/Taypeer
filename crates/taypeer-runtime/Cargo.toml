@@ -1,0 +1,17 @@
+[package]
+name = "taypeer-runtime"
+description = "Process-isolated Rust host for Taypeer database commands"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+taypeer-services.workspace = true
+taypeer-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+zeroize.workspace = true
+
+[lints]
+workspace = true

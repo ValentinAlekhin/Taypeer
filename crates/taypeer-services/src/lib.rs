@@ -14,7 +14,13 @@ pub use taypeer_storage::Error as StorageError;
 use taypeer_storage::{FileStore, ReadKey};
 use zeroize::Zeroizing;
 
+pub mod generator;
+mod operations;
+mod patch;
 mod persistence;
+pub use operations::{ConflictFieldView, ConflictVariantView, ConflictView, new_operation_id};
+pub use patch::{EntryPatch, FieldUpdate};
+pub use taypeer_document::{ConflictContext, Resolution};
 
 mod draft;
 use draft::{DraftKind, DraftState};
@@ -26,7 +32,7 @@ pub const DEMO_PASSWORD: &str = "SYNTHETIC-ONLY-Жук-42";
 
 /// A logical marker for one generation of one unlocked demonstration database.
 /// This public marker is not a cryptographic or unforgeable credential.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SessionToken {
     /// Database to which the command or response belongs.
     pub database: DatabaseId,
@@ -35,7 +41,7 @@ pub struct SessionToken {
 }
 
 /// A response that the UI must accept only while its session remains current.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct SessionValue<T> {
     /// Session that produced this response.
     pub session: SessionToken,
@@ -51,7 +57,7 @@ pub use views::{
 use views::{attribute_value, entry_summary, entry_view, group_summary, matches_query, password};
 
 /// Structured error categories containing no form values or credentials.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ServiceError {
     /// Requested database, group, entry, attribute, or revision does not exist.
     NotFound,

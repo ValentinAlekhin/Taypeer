@@ -31,6 +31,7 @@ macro_rules! identifier {
 
 identifier!(DatabaseId, "Identity of one logical database.");
 identifier!(GroupId, "Stable identity of a group.");
+identifier!(OperationId, "Identity of one idempotent user operation.");
 identifier!(EntryId, "Stable identity of an entry.");
 identifier!(AttributeId, "Stable identity of a custom attribute.");
 identifier!(
@@ -246,6 +247,12 @@ pub enum RevisionKind {
     Create,
     /// A subsequent confirmed edit.
     Save,
+    /// Initial state of a clone with fresh identities.
+    Clone,
+    /// Explicitly restored historical state.
+    Restore,
+    /// Explicit resolution of observed conflicting variants.
+    Resolve,
 }
 
 /// An immutable logical entry revision, committed together with its edits.

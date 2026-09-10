@@ -17,7 +17,9 @@ use taypeer_core::{
 mod codec;
 mod fields;
 mod groups;
+mod operations;
 mod projection;
+pub use operations::{ConflictContext, Resolution};
 
 use codec::{decode, encode, object, unique, unique_optional};
 use fields::{apply_form, put_field, validate_field};
@@ -148,6 +150,8 @@ impl Document {
         tx.put_object(ROOT, "groups", ObjType::Map)?;
         tx.put_object(ROOT, "entries", ObjType::Map)?;
         tx.put_object(ROOT, "revisions", ObjType::Map)?;
+        tx.put_object(ROOT, "operations", ObjType::Map)?;
+        tx.put_object(ROOT, "purged_revisions", ObjType::Map)?;
         tx.commit();
         Ok(Self {
             database_id,
@@ -345,6 +349,16 @@ impl Document {
     ///
     /// Replaying the same draft is idempotent. A failed confirmation leaves this document intact.
     pub fn save_entry(&mut self, draft: EntryDraft, now: Timestamp) -> Result<EntryId, Error> {
+        self.confirm_entry(draft, now, None, None)
+    }
+
+    fn confirm_entry(
+        &mut self,
+        draft: EntryDraft,
+        now: Timestamp,
+        kind: Option<RevisionKind>,
+        receipt: Option<(&taypeer_core::OperationId, &operations::Intent)>,
+    ) -> Result<EntryId, Error> {
         if draft.database_id != self.database_id {
             return Err(Error::InvalidContext);
         }
@@ -434,11 +448,11 @@ impl Document {
             id: draft.revision_id.clone(),
             entry_id: draft.entry_id.clone(),
             saved_at: now,
-            kind: if draft.original.is_none() {
+            kind: kind.unwrap_or(if draft.original.is_none() {
                 RevisionKind::Create
             } else {
                 RevisionKind::Save
-            },
+            }),
             base: draft.base.iter().map(ToString::to_string).collect(),
             snapshot,
         };
@@ -449,6 +463,9 @@ impl Document {
         };
         let revisions = object(&tx, &ROOT, "revisions")?;
         tx.put(revisions, draft.revision_id.as_str(), encode(&stored)?)?;
+        if let Some((operation, intent)) = receipt {
+            operations::write_receipt(&mut tx, operation, intent, &draft.entry_id)?;
+        }
         tx.commit();
         // Conflicts are valid results, but malformed known structure is not.
         read_entry(&candidate, &draft.entry_id, None)?;
@@ -544,10 +561,12 @@ impl Document {
     /// Reads immutable confirmations, sorted by display time and stable revision ID.
     pub fn history(&self, id: &EntryId) -> Result<Vec<SavedRevision>, Error> {
         self.entry(id)?;
-        let mut revisions: Vec<_> = stored_revisions(&self.doc, id)?
-            .into_iter()
-            .map(|stored| stored.revision)
-            .collect();
+        let mut revisions = Vec::new();
+        for stored in stored_revisions(&self.doc, id)? {
+            if !self.revision_is_purged(&stored.revision.id)? {
+                revisions.push(stored.revision);
+            }
+        }
         revisions.sort_by(|a, b| (a.saved_at, &a.id).cmp(&(b.saved_at, &b.id)));
         Ok(revisions)
     }

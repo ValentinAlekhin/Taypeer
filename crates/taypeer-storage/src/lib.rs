@@ -1,4 +1,4 @@
-//! Experimental version-zero encrypted files. See docs/storage.md for guarantees and limits.
+//! Version-one streaming encrypted files under development. See docs/storage.md.
 
 mod crypto;
 mod file;
@@ -7,7 +7,7 @@ pub use crypto::ReadKey;
 pub use file::FileStore;
 
 /// Categorized failures without paths, passwords or parser diagnostics.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Error {
     /// Empty master passwords are forbidden; whitespace remains significant.
     EmptyPassword,
@@ -44,7 +44,7 @@ impl From<std::io::Error> for Error {
     }
 }
 
-/// Maximum encoded container size for this experimental schema.
+/// Maximum in-memory document or draft size; streaming payloads have a separate bound.
 pub const MAX_FILE_SIZE: usize = 64 * 1024 * 1024;
 
 #[cfg(test)]

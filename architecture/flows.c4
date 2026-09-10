@@ -101,6 +101,20 @@ views 'Сценарии' {
 }
 
 views 'Локальный файл' {
+  dynamic view cliSession {
+    title 'Командная сессия и блокировка'
+    description 'CLI использует отдельный процесс БД. Завершение процесса не доказывает очистку копий терминала, swap или физической RAM.'
+    taypeer.cli -> taypeer.secretWorker 'Открыть БД и выполнить команду'
+    taypeer.secretWorker -> taypeer.sessions 'Команда текущей сессии'
+    taypeer.sessions -> taypeer.document 'Подготовить изменение'
+    taypeer.sessions -> taypeer.crypto 'Зашифровать кандидат'
+    taypeer.sessions -> taypeer.storage 'Зафиксировать одним писателем'
+    taypeer.secretWorker <- taypeer.sessions 'Подтверждённый результат'
+    taypeer.cli <- taypeer.secretWorker 'Ограниченное представление'
+    taypeer.cli -> taypeer.secretWorker 'Заблокировать'
+    taypeer.secretWorker -> taypeer.sessions 'Закрыть доступ и сохранить черновик'
+    taypeer.cli <- taypeer.secretWorker 'Ошибка при наличии, затем завершение процесса'
+  }
   dynamic view fileSave {
     title 'Подтверждение записи в локальном файле'
     taypeer.mac -> taypeer.sessions 'Передать команду фоновому исполнителю'

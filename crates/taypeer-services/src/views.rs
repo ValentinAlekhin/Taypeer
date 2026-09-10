@@ -1,12 +1,13 @@
 //! Presentation values and explicit secret access returned by the service.
 
 use super::ServiceError;
+use serde::{Deserialize, Serialize};
 use std::fmt;
 use taypeer_core::{AttributeId, DatabaseId, EntryId, GroupId, RevisionId};
 use taypeer_core::{EntrySnapshot, Group};
 
 /// Non-secret catalog data available while a database is locked.
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct DatabaseSummary {
     /// Stable database identifier.
     pub id: DatabaseId,
@@ -17,7 +18,7 @@ pub struct DatabaseSummary {
 }
 
 /// A group visible within an unlocked database.
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct GroupSummary {
     /// Stable group identifier.
     pub id: GroupId,
@@ -28,7 +29,7 @@ pub struct GroupSummary {
 }
 
 /// A table/search row; password and protected attributes are never included.
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct EntrySummary {
     /// Stable entry identifier.
     pub id: EntryId,
@@ -45,7 +46,7 @@ pub struct EntrySummary {
 }
 
 /// A search row with the database and group needed to navigate to its source.
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct SearchResult {
     /// Public database label.
     pub database_name: String,
@@ -56,7 +57,7 @@ pub struct SearchResult {
 }
 
 /// Editable form retaining the distinction between absent and explicitly empty fields.
-#[derive(Clone, Default, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EditableEntry {
     /// Required entry label.
     pub title: String,
@@ -83,7 +84,7 @@ impl fmt::Debug for EditableEntry {
 }
 
 /// One editable attribute; new attributes receive an identifier on draft update.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EditableAttribute {
     /// Existing identifier, or None only for a new attribute.
     pub id: Option<AttributeId>,
@@ -102,7 +103,7 @@ impl fmt::Debug for EditableAttribute {
 }
 
 /// The single local form currently associated with a database.
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct DraftView {
     /// Existing entry identifier; None denotes a not-yet-saved entry.
     pub entry_id: Option<EntryId>,
@@ -118,7 +119,7 @@ pub struct DraftView {
 }
 
 /// Non-secret identity of an interrupted editor awaiting explicit restoration.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PendingDraftSummary {
     /// Existing entry, or None for a not-yet-saved entry.
     pub entry_id: Option<EntryId>,
@@ -127,7 +128,7 @@ pub struct PendingDraftSummary {
 }
 
 /// An attribute in a read-only view; protected values remain absent.
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct AttributeView {
     /// Stable attribute identifier.
     pub id: AttributeId,
@@ -140,7 +141,7 @@ pub struct AttributeView {
 }
 
 /// Read-only entry details with masked password and protected attributes.
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct EntryView {
     /// Stable entry identifier.
     pub id: EntryId,
@@ -171,7 +172,7 @@ pub struct EntryView {
 }
 
 /// A history row with no secret values.
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct RevisionSummary {
     /// Stable saved revision identifier.
     pub id: RevisionId,
@@ -204,7 +205,7 @@ redacted_debug!(
 
 /// A value returned only by explicit reveal; formatting never prints its contents.
 #[derive(Clone)]
-pub struct SecretValue(String);
+pub struct SecretValue(zeroize::Zeroizing<String>);
 
 impl SecretValue {
     /// Borrow the revealed text for a current, explicitly requested UI presentation.
@@ -293,7 +294,7 @@ pub(super) fn password(entry: EntrySnapshot) -> Result<SecretValue, ServiceError
         .fields
         .ok_or(ServiceError::Conflict)?
         .password
-        .map(SecretValue)
+        .map(|value| SecretValue(zeroize::Zeroizing::new(value)))
         .ok_or(ServiceError::NotFound)
 }
 
@@ -306,6 +307,6 @@ pub(super) fn attribute_value(
         .ok_or(ServiceError::Conflict)?
         .attributes
         .remove(attribute)
-        .map(|attribute| SecretValue(attribute.value.value))
+        .map(|attribute| SecretValue(zeroize::Zeroizing::new(attribute.value.value)))
         .ok_or(ServiceError::NotFound)
 }

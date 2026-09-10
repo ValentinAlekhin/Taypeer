@@ -1,0 +1,109 @@
+use crate::args::Language;
+use serde_json::Value;
+use std::{collections::BTreeMap, io::Write, sync::OnceLock};
+use taypeer_runtime::RuntimeError;
+use zeroize::Zeroizing;
+
+#[derive(Debug)]
+pub(crate) enum CliError {
+    Runtime(RuntimeError),
+    Input,
+    PasswordMismatch,
+    StdinConflict,
+    NoDatabase,
+    UnknownDatabase,
+    AlreadyOpen,
+    SessionOnly,
+    Io,
+}
+impl From<RuntimeError> for CliError {
+    fn from(error: RuntimeError) -> Self {
+        Self::Runtime(error)
+    }
+}
+impl CliError {
+    pub fn key(&self) -> &'static str {
+        match self {
+            Self::Runtime(_) => "runtime_error",
+            Self::Input => "input_error",
+            Self::PasswordMismatch => "password_mismatch",
+            Self::StdinConflict => "stdin_conflict",
+            Self::NoDatabase => "no_database",
+            Self::UnknownDatabase => "unknown_database",
+            Self::AlreadyOpen => "already_open",
+            Self::SessionOnly => "session_only",
+            Self::Io => "io_error",
+        }
+    }
+}
+
+pub(crate) fn message(language: Language, key: &str) -> String {
+    type Catalog = BTreeMap<String, String>;
+    static EN: OnceLock<Catalog> = OnceLock::new();
+    static RU: OnceLock<Catalog> = OnceLock::new();
+    let (cell, source) = match language {
+        Language::En => (&EN, include_str!("../locales/en.json")),
+        Language::Ru => (&RU, include_str!("../locales/ru.json")),
+    };
+    cell.get_or_init(|| {
+        serde_json::from_str(source).expect("embedded CLI translations are validated by tests")
+    })
+    .get(key)
+    .cloned()
+    .unwrap_or_else(|| key.into())
+}
+
+pub(crate) fn print_result(
+    mut value: Value,
+    json: bool,
+    language: Language,
+) -> Result<(), CliError> {
+    let result = write_result(&value, json, language);
+    taypeer_runtime::erase_view(&mut value);
+    result
+}
+
+fn write_result(value: &Value, json: bool, language: Language) -> Result<(), CliError> {
+    let text = if json {
+        serde_json::to_string(value).map_err(|_| CliError::Io)?
+    } else {
+        match value {
+            Value::Null => message(language, "done"),
+            Value::String(value) => value.clone(),
+            _ => serde_json::to_string_pretty(value).map_err(|_| CliError::Io)?,
+        }
+    };
+    let text = Zeroizing::new(text);
+    writeln!(std::io::stdout().lock(), "{}", text.as_str()).map_err(|_| CliError::Io)
+}
+
+pub(crate) fn print_error(error: &CliError, json: bool, language: Language) {
+    let detail = match error {
+        CliError::Runtime(error) => Some(error),
+        _ => None,
+    };
+    let output = if json {
+        serde_json::json!({"error": {"code": error.key(), "message": message(language, error.key()), "detail": detail}}).to_string()
+    } else {
+        match detail {
+            Some(detail) => format!("{} ({detail})", message(language, error.key())),
+            None => message(language, error.key()),
+        }
+    };
+    // Reporting to a closed stderr cannot repair the original operation.
+    let _ = writeln!(std::io::stderr().lock(), "{output}");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn catalogs_have_identical_keys_and_no_empty_messages() {
+        let en: BTreeMap<String, String> =
+            serde_json::from_str(include_str!("../locales/en.json")).unwrap();
+        let ru: BTreeMap<String, String> =
+            serde_json::from_str(include_str!("../locales/ru.json")).unwrap();
+        assert_eq!(en.keys().collect::<Vec<_>>(), ru.keys().collect::<Vec<_>>());
+        assert!(en.values().chain(ru.values()).all(|s| !s.is_empty()));
+    }
+}

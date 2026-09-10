@@ -1,7 +1,8 @@
 use crate::{Error, MAX_FILE_SIZE, ReadKey, crypto};
+use sha2::{Digest, Sha256};
 use std::{
     fs::{self, File, OpenOptions},
-    io::{Read, Write},
+    io::{Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
 };
 use tempfile::NamedTempFile;
@@ -12,7 +13,8 @@ use zeroize::Zeroizing;
 pub struct FileStore {
     path: PathBuf,
     _lock: File,
-    bytes: Vec<u8>,
+    header: Vec<u8>,
+    fingerprint: [u8; 32],
     uncertain: bool,
 }
 
@@ -83,68 +85,207 @@ fn lock(path: &Path) -> Result<File, Error> {
     Ok(file)
 }
 
+fn fingerprint(file: &mut File) -> Result<[u8; 32], Error> {
+    file.seek(SeekFrom::Start(0))?;
+    let length = file.metadata()?.len();
+    if length > crypto::MAX_ENCODED_SIZE {
+        return Err(Error::TooLarge);
+    }
+    let mut bounded = (&mut *file).take(length + 1);
+    let mut consumed = 0;
+    let mut hash = Sha256::new();
+    let mut buffer = vec![0; 1024 * 1024];
+    loop {
+        let n = bounded.read(&mut buffer)?;
+        consumed += n as u64;
+        if consumed > length {
+            return Err(Error::Changed);
+        }
+        if n == 0 {
+            break;
+        }
+        hash.update(&buffer[..n]);
+    }
+    if consumed != length {
+        return Err(Error::Changed);
+    }
+    file.seek(SeekFrom::Start(0))?;
+    Ok(hash.finalize().into())
+}
+
+fn header(file: &mut File) -> Result<Vec<u8>, Error> {
+    let mut bytes = vec![0; crypto::HEADER];
+    file.read_exact(&mut bytes)
+        .map_err(|_| Error::InvalidFile)?;
+    crypto::validate(&bytes, file.metadata()?.len())?;
+    Ok(bytes)
+}
+
+fn persist(temp: NamedTempFile, path: &Path, create: bool) -> Result<(), Error> {
+    temp.as_file().sync_all()?;
+    if create {
+        temp.persist_noclobber(path).map_err(|error| {
+            if error.error.kind() == std::io::ErrorKind::AlreadyExists {
+                Error::AlreadyExists
+            } else {
+                Error::Io
+            }
+        })?;
+    } else {
+        temp.persist(path).map_err(|_| Error::Io)?;
+    }
+    File::open(parent(path)?)?
+        .sync_all()
+        .map_err(|_| Error::CommitUncertain)
+}
+
+fn copy_durable(source: &Path, destination: &Path) -> Result<(), Error> {
+    let mut input = File::open(source)?;
+    let mut output = NamedTempFile::new_in(parent(destination)?)?;
+    let length = input.metadata()?.len();
+    if length > crypto::MAX_ENCODED_SIZE {
+        return Err(Error::TooLarge);
+    }
+    if std::io::copy(&mut (&mut input).take(length + 1), &mut output)? != length {
+        return Err(Error::Changed);
+    }
+    persist(output, destination, true)
+}
+
 impl FileStore {
-    /// Create a new encrypted database, refusing to replace an existing path.
+    /// Create a new encrypted database without replacing an existing path.
     pub fn create(path: &Path, password: &[u8], clear: &[u8]) -> Result<(Self, ReadKey), Error> {
+        if clear.len() > MAX_FILE_SIZE {
+            return Err(Error::TooLarge);
+        }
+        Self::create_stream(path, password, clear, clear.len() as u64, 1000)
+    }
+
+    /// Create a bounded, authenticated stream without buffering the entire payload.
+    /// Input must contain exactly `length` bytes; failure never publishes a partial file.
+    pub fn create_stream(
+        path: &Path,
+        password: &[u8],
+        clear: impl Read,
+        length: u64,
+        target_ms: u32,
+    ) -> Result<(Self, ReadKey), Error> {
         let path = canonical_destination(path)?;
         let guard = lock(&path)?;
         if path.try_exists()? {
             return Err(Error::AlreadyExists);
         }
-        let (bytes, key) = crypto::create(password, clear)?;
-        atomic_write(&path, &bytes, true)?;
+        let (initial, key) = crypto::create_header(password, target_ms)?;
+        let mut temp = NamedTempFile::new_in(parent(&path)?)?;
+        let header = crypto::encrypt_stream(&initial, &key, clear, length, &mut temp)?;
+        let fingerprint = fingerprint(temp.as_file_mut())?;
+        persist(temp, &path, true)?;
         Ok((
             Self {
                 path,
                 _lock: guard,
-                bytes,
+                header,
+                fingerprint,
                 uncertain: false,
             },
             key,
         ))
     }
-    /// Open and structurally check the encrypted file without deriving a key.
+
+    /// Exclusively open and structurally validate the file without a read key.
     pub fn open(path: &Path) -> Result<Self, Error> {
         let path = path.canonicalize()?;
         let guard = lock(&path)?;
-        let bytes = read(&path)?;
-        crypto::validate(&bytes)?;
+        let mut file = File::open(&path)?;
+        let header = header(&mut file)?;
+        let fingerprint = fingerprint(&mut file)?;
         Ok(Self {
             path,
             _lock: guard,
-            bytes,
+            header,
+            fingerprint,
             uncertain: false,
         })
     }
-    /// Selected canonical path, suitable for local presentation only.
+
+    /// Canonical path of this local working copy; never part of the portable document.
     pub fn path(&self) -> &Path {
         &self.path
     }
-    /// Authenticate the file and return an owned key and zeroizing plaintext buffer.
+
+    /// Authenticate a bounded document into a zeroizing buffer.
+    /// Larger payloads must use the streaming API and an atomic destination.
     pub fn unlock(&mut self, password: &[u8]) -> Result<(ReadKey, Zeroizing<Vec<u8>>), Error> {
-        let bytes = read(&self.path)?;
-        let result = crypto::unlock(&bytes, password)?;
-        self.bytes = bytes;
-        self.uncertain = false;
-        Ok(result)
+        let mut input = File::open(&self.path)?;
+        let candidate = header(&mut input)?;
+        if crypto::payload_length(&candidate)? > MAX_FILE_SIZE as u64 {
+            return Err(Error::TooLarge);
+        }
+        let mut clear = Zeroizing::new(Vec::new());
+        let key = self.unlock_reader(password, &mut input, candidate, &mut *clear)?;
+        Ok((key, clear))
     }
-    /// Save ciphertext before callers publish the corresponding in-memory candidate.
-    /// Any error leaves the caller responsible for retaining its unconfirmed form.
+
+    /// Authenticate the stream into a provisional sink, returning its read key only on success.
+    /// A failing stream may have written a prefix: the caller MUST discard the sink
+    /// on error and must not publish/use any output until this method returns Ok.
+    pub fn unlock_to(
+        &mut self,
+        password: &[u8],
+        output: &mut impl Write,
+    ) -> Result<ReadKey, Error> {
+        let mut input = File::open(&self.path)?;
+        let candidate = header(&mut input)?;
+        self.unlock_reader(password, &mut input, candidate, output)
+    }
+
+    fn unlock_reader(
+        &mut self,
+        password: &[u8],
+        input: &mut File,
+        header: Vec<u8>,
+        output: &mut impl Write,
+    ) -> Result<ReadKey, Error> {
+        let fingerprint_before = fingerprint(input)?;
+        input.seek(SeekFrom::Start(crypto::HEADER as u64))?;
+        let key = crypto::unlock_key(&header, password)?;
+        crypto::decrypt_stream(&header, &key, input, output)?;
+        if fingerprint(input)? != fingerprint_before {
+            return Err(Error::Changed);
+        }
+        self.header = header;
+        self.fingerprint = fingerprint_before;
+        self.uncertain = false;
+        Ok(key)
+    }
+
+    /// Encrypt and commit a document before callers publish their in-memory candidate.
     pub fn save(&mut self, key: &ReadKey, clear: &[u8]) -> Result<(), Error> {
+        if clear.len() > MAX_FILE_SIZE {
+            return Err(Error::TooLarge);
+        }
+        self.save_stream(key, clear, clear.len() as u64)
+    }
+
+    /// Commit a stream with bounded memory and exactly ten previous automatic snapshots.
+    pub fn save_stream(
+        &mut self,
+        key: &ReadKey,
+        clear: impl Read,
+        length: u64,
+    ) -> Result<(), Error> {
         if self.uncertain {
             return Err(Error::CommitUncertain);
         }
-        if read(&self.path)? != self.bytes {
-            return Err(Error::Changed);
-        }
-        let next = crypto::encrypt(&self.bytes, key, clear)?;
+        self.check_unchanged()?;
+        let mut temp = NamedTempFile::new_in(parent(&self.path)?)?;
+        let next = crypto::encrypt_stream(&self.header, key, clear, length, &mut temp)?;
+        let next_fingerprint = fingerprint(temp.as_file_mut())?;
         let directory = sibling(&self.path, ".backups");
         fs::create_dir_all(&directory)?;
         let mut backups = backup_files(&directory)?;
-        // A failed attempt may already have saved this exact source. Retrying must not
-        // evict distinct historical snapshots by accumulating duplicate backups.
         let already_backed_up = match backups.last() {
-            Some((_, path)) => read(path)? == self.bytes,
+            Some((_, path)) => fingerprint(&mut File::open(path)?)? == self.fingerprint,
             None => false,
         };
         if !already_backed_up {
@@ -153,19 +294,22 @@ impl FileStore {
                 .map_or(Some(0), |(n, _)| n.checked_add(1))
                 .ok_or(Error::Io)?;
             let path = directory.join(format!("{generation:020}.taypeer"));
-            atomic_write(&path, &self.bytes, true)?;
+            copy_durable(&self.path, &path)?;
+            if fingerprint(&mut File::open(&path)?)? != self.fingerprint {
+                return Err(Error::Changed);
+            }
             backups.push((generation, path));
         }
-        // Directory creation itself must also reach disk before replacing the source.
         File::open(parent(&self.path)?)?.sync_all()?;
-        let result = atomic_write(&self.path, &next, false);
+        self.check_unchanged()?;
+        let result = persist(temp, &self.path, false);
         if result == Err(Error::CommitUncertain) {
             self.uncertain = true;
         }
         result?;
-        self.bytes = next;
+        self.header = next;
+        self.fingerprint = next_fingerprint;
         for (_, path) in backups.iter().take(backups.len().saturating_sub(10)) {
-            // Retention cleanup failure is reported as uncertain completion, never a false success.
             if fs::remove_file(path).is_err() {
                 self.uncertain = true;
                 return Err(Error::CommitUncertain);
@@ -179,20 +323,30 @@ impl FileStore {
             })?;
         Ok(())
     }
-    /// Save a separately encrypted local interrupted form; it is not a confirmed revision.
+
+    fn check_unchanged(&self) -> Result<(), Error> {
+        if fingerprint(&mut File::open(&self.path)?)? != self.fingerprint {
+            return Err(Error::Changed);
+        }
+        Ok(())
+    }
+
+    /// Save a separately encrypted local form, never a confirmed revision.
     pub fn save_draft(&self, key: &ReadKey, clear: &[u8]) -> Result<(), Error> {
-        let bytes = crypto::seal_draft(&self.bytes, key, clear)?;
+        let bytes = crypto::seal_draft(&self.header, key, clear)?;
         atomic_write(&sibling(&self.path, ".draft"), &bytes, false)
     }
-    /// Read a local interrupted form, distinguishing absence from corruption.
+
+    /// Read the local form, distinguishing absence from corrupt ciphertext.
     pub fn load_draft(&self, key: &ReadKey) -> Result<Option<Zeroizing<Vec<u8>>>, Error> {
         let path = sibling(&self.path, ".draft");
         if !path.try_exists()? {
             return Ok(None);
         }
-        crypto::open_draft(&self.bytes, key, &read(&path)?).map(Some)
+        crypto::open_draft(&self.header, key, &read(&path)?).map(Some)
     }
-    /// Explicitly discard the local interrupted form, syncing its removal.
+
+    /// Explicitly discard the local form and durably record its removal.
     pub fn discard_draft(&self) -> Result<(), Error> {
         match fs::remove_file(sibling(&self.path, ".draft")) {
             Ok(()) => File::open(parent(&self.path)?)?
