@@ -208,5 +208,13 @@
   "ui.touch_id_unavailable": "Touch ID пока не подключён",
   "ui.trash_group_confirm": "Переместить группу и её содержимое в корзину?",
   "ui.metadata_conflict": "В описании или названии есть конфликтующие изменения. Редактирование станет доступно после их разрешения.",
-  "ui.settings_not_saved": "Не удалось сохранить настройки. Действуют предыдущие значения."
+  "ui.settings_not_saved": "Не удалось сохранить настройки. Действуют предыдущие значения.",
+  "ui.size_bytes": "Б",
+  "ui.size_kb": "КБ",
+  "ui.size_mb": "МБ",
+  "ui.size_gb": "ГБ",
+  "ui.size_tb": "ТБ",
+  "ui.size_pb": "ПБ",
+  "ui.size_eb": "ЭБ",
+  "ui.decimal_separator": ","
 }

@@ -208,5 +208,13 @@
   "ui.touch_id_unavailable": "Touch ID is not connected yet",
   "ui.trash_group_confirm": "Move this group and its contents to the trash?",
   "ui.metadata_conflict": "This description or name has conflicting changes. Editing is unavailable until they are resolved.",
-  "ui.settings_not_saved": "Settings could not be saved. Previous settings are still in use."
+  "ui.settings_not_saved": "Settings could not be saved. Previous settings are still in use.",
+  "ui.size_bytes": "B",
+  "ui.size_kb": "KB",
+  "ui.size_mb": "MB",
+  "ui.size_gb": "GB",
+  "ui.size_tb": "TB",
+  "ui.size_pb": "PB",
+  "ui.size_eb": "EB",
+  "ui.decimal_separator": "."
 }

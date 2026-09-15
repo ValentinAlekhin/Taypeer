@@ -382,7 +382,7 @@ impl Render for AppView {
                     .text_color(cx.theme().muted_foreground)
                     .when(active, |el| {
                         el.child(style::icon("database"))
-                            .child(format!("{file_bytes} B"))
+                            .child(style::file_size(file_bytes))
                     })
                     .when_some(notice, |el, notice| el.child(tr(notice)))
                     .child(div().flex_1())

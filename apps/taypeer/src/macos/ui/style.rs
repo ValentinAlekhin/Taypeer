@@ -72,6 +72,37 @@ pub(super) fn stamp(time: i64) -> String {
     crate::ui_state::format_date(time)
 }
 
+/// Decimal file sizes, matching macOS: 1 KB = 1,000 bytes.
+pub(super) fn file_size(bytes: u64) -> String {
+    let units = [
+        "ui.size_bytes",
+        "ui.size_kb",
+        "ui.size_mb",
+        "ui.size_gb",
+        "ui.size_tb",
+        "ui.size_pb",
+        "ui.size_eb",
+    ];
+    let mut value = bytes as f64;
+    let mut unit = 0;
+    while value >= 1000. && unit < units.len() - 1 {
+        value /= 1000.;
+        unit += 1;
+    }
+    // Promote a rounded boundary instead of displaying "1000 KB".
+    value = (value * 10.).round() / 10.;
+    if value >= 1000. && unit < units.len() - 1 {
+        value /= 1000.;
+        unit += 1;
+    }
+    let number = format!("{value:.1}");
+    let number = number
+        .strip_suffix(".0")
+        .unwrap_or(&number)
+        .replace('.', tr("ui.decimal_separator").as_ref());
+    format!("{number}\u{a0}{}", tr(units[unit]))
+}
+
 /// Kit's plain Dialog requires an explicit footer; actions retain its focus trap.
 pub(super) fn dialog_actions() -> AnyElement {
     h_flex()
