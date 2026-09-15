@@ -1,8 +1,7 @@
-//! Portable state for the synthetic UI. No database service, filesystem or GPUI.
+//! Portable navigation, masked projections and the service-backed editor.
 
 mod catalog;
 mod draft;
-mod fixtures;
 mod navigation;
 
 pub(crate) use catalog::*;

@@ -12,6 +12,8 @@ bundle="target/Taypeer Demo.app"
 mkdir -p "$bundle/Contents/MacOS"
 mkdir -p "$bundle/Contents/Resources"
 cp target/debug/taypeer "$bundle/Contents/MacOS/taypeer"
+helper=$(target/debug/taypeer __platform-helper)
+cp "$helper" "$bundle/Contents/MacOS/taypeer-platform"
 cp apps/taypeer/Info.plist "$bundle/Contents/Info.plist"
 cp target/macos/Taypeer.icns "$bundle/Contents/Resources/Taypeer.icns"
 cp wireframes/assets/LICENSE-LUCIDE.txt "$bundle/Contents/Resources/LICENSE-LUCIDE.txt"

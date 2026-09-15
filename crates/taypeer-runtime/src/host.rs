@@ -187,6 +187,25 @@ impl RuntimeHost {
         password: String,
         name: Option<String>,
     ) -> Result<Worker, RuntimeError> {
+        self.open_configured(
+            executable,
+            path,
+            password,
+            name.map(|name| taypeer_services::CreateDatabase {
+                name,
+                description: None,
+                policy: Default::default(),
+            }),
+        )
+    }
+    /// Open or create through a plaintext process with the complete initial form.
+    pub fn open_configured(
+        &self,
+        executable: &Path,
+        path: &Path,
+        password: String,
+        form: Option<taypeer_services::CreateDatabase>,
+    ) -> Result<Worker, RuntimeError> {
         let path = canonical_path(path)?;
         let existed = self
             .context
@@ -198,7 +217,7 @@ impl RuntimeHost {
             executable,
             &path,
             password,
-            name,
+            form,
             Arc::clone(&self.context),
             self.runtime.handle(),
             &self.sessions,

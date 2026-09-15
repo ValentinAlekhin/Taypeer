@@ -22,6 +22,7 @@ mod codec;
 mod fields;
 mod groups;
 mod lifecycle;
+mod metadata;
 mod objects;
 mod operations;
 pub use groups::{GroupNode, ObjectStatus};

@@ -101,8 +101,17 @@ fn open_native(
     service: &mut DatabaseService,
 ) -> Result<SessionToken, RuntimeError> {
     let profile = crate::profile::NativeProfile::load(&boot.profile)?;
-    let seed = match boot.create_name.take() {
-        Some(name) => {
+    let form = boot.create_form.take().or_else(|| {
+        boot.create_name
+            .take()
+            .map(|name| taypeer_services::CreateDatabase {
+                name,
+                description: None,
+                policy: Default::default(),
+            })
+    });
+    let seed = match form {
+        Some(form) => {
             let author = profile.author()?;
             let identity =
                 taypeer_trust::Identity::new(author.public(), profile.transport_public())
@@ -111,13 +120,12 @@ fn open_native(
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_err(|_| RuntimeError::Protocol)?
                 .as_millis();
-            Some(DatabaseService::prepare_managed(
-                name,
+            Some(DatabaseService::prepare_managed_form(
+                form,
                 boot.password.as_bytes(),
                 &author,
                 identity,
                 now.try_into().map_err(|_| RuntimeError::Protocol)?,
-                Default::default(),
             )?)
         }
         None => None,
@@ -289,6 +297,7 @@ fn dispatch(
             )?;
             Value::Null
         }
+        Command::IconPreview(target) => value(&service.icon_preview(session, &target)?)?,
         Command::BinaryView(target) => value(&service.binary_view(session, &target)?.value)?,
         Command::EditBinary { request, operation } => {
             value(&service.edit_binary(session, &request, &operation)?.value)?
@@ -382,6 +391,46 @@ fn dispatch(
                 .resolve_generation(session, &address, &heads, &operation)?
                 .value,
         )?,
+        Command::DatabaseInfo => value(&service.database_info(session)?)?,
+        Command::SetDatabaseInfo { name, description } => {
+            service.update_database_info(session, name, description)?;
+            Value::Null
+        }
+        Command::GroupInfo => value(&service.group_info(session)?)?,
+        Command::SaveGroup { form, operation } => {
+            value(&service.save_group_form(session, form, &operation)?)?
+        }
+        Command::EditorView => value(&service.editor_view(session)?)?,
+        Command::PatchAttribute { patch, remove } => {
+            service.patch_attribute(session, patch, remove)?;
+            Value::Null
+        }
+        Command::DraftExpiry(input) => {
+            service.set_draft_expiry_input(session, input)?;
+            Value::Null
+        }
+        Command::RevealEditor(attribute) => {
+            value(&service.reveal_editor(session, attribute.as_ref())?.expose())?
+        }
+        Command::RevealRevision {
+            entry,
+            revision,
+            attribute,
+        } => {
+            let secret = match attribute {
+                Some(attribute) => {
+                    service
+                        .reveal_revision_attribute(session, &entry, &revision, &attribute)?
+                        .value
+                }
+                None => {
+                    service
+                        .reveal_revision_password(session, &entry, &revision)?
+                        .value
+                }
+            };
+            value(&secret.expose())?
+        }
         Command::Groups => value(&service.groups(session)?.value)?,
         Command::CreateGroup { name, parent } => {
             value(&service.create_group(session, name, parent)?.value)?

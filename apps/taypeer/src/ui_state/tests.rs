@@ -1,215 +1,103 @@
 use super::*;
+use crate::backend::{Query, Snapshot};
 
-fn first(catalog: &CatalogStore) -> (DatabaseId, EntryId) {
-    let db = catalog
-        .databases()
-        .find(|db| !db.entries.is_empty())
-        .unwrap();
-    (db.id, *db.entries.keys().next().unwrap())
-}
-
-#[test]
-fn draft_spans_fields_attributes_and_appearance_without_changing_saved_content() {
-    let mut catalog = CatalogStore::samples();
-    let (db, id) = first(&catalog);
-    let original = catalog.entry(db, id).unwrap().content.clone();
-    let mut editor = EditorStore::existing(db, catalog.entry(db, id).unwrap());
-    editor.edit(|content| {
-        EntryField::Title.set(content, "Changed title".into());
-        content.attributes.push(Attribute {
-            key: "Extra".into(),
-            value: "PUBLIC".into(),
-            protected: true,
-        });
-        content.background = Some(0x123456);
-    });
-    assert!(editor.dirty());
-    assert!(catalog.entry(db, id).unwrap().content == original);
-    editor.validate().unwrap();
-    catalog
-        .save_entry(db, editor.group(), Some(id), editor.content().clone())
-        .unwrap();
-    assert!(catalog.entry(db, id).unwrap().content == *editor.content());
-    let after = catalog.entry(db, id).unwrap().revisions.len();
-    catalog
-        .save_entry(db, editor.group(), Some(id), editor.content().clone())
-        .unwrap();
-    assert_eq!(catalog.entry(db, id).unwrap().revisions.len(), after);
-}
-
-#[test]
-fn failed_form_validation_preserves_input_and_catalog() {
-    let catalog = CatalogStore::samples();
-    let (db, id) = first(&catalog);
-    let mut editor = EditorStore::existing(db, catalog.entry(db, id).unwrap());
-    editor.edit(|content| {
-        content.title.clear();
-        content.notes = "Keep my unfinished input".into();
-    });
-    assert_eq!(editor.validate(), Err(FormError::RequiredName));
-    assert!(editor.content().notes == "Keep my unfinished input");
-    assert!(!catalog.entry(db, id).unwrap().content.title.is_empty());
-}
-
-#[test]
-fn search_excludes_protected_values_and_locked_databases() {
-    let catalog = CatalogStore::samples();
-    let (db, _) = first(&catalog);
-    let mut nav = NavigationState::default();
-    nav.select_database(db, &catalog);
-    nav.unlocked.insert(db);
-    nav.scope = SearchScope::AllUnlocked;
-    for query in ["PUBLIC-UI", "PUBLIC-RECOVERY", "PUBLIC-PERSONAL"] {
-        nav.query = query.into();
-        assert!(nav.rows(&catalog).is_empty());
+fn snapshot(
+    database: DatabaseId,
+    rows: Vec<taypeer_services::EntrySummary>,
+    query: &str,
+) -> Snapshot {
+    Snapshot {
+        query: Query {
+            search: query.into(),
+            ..Default::default()
+        },
+        info: taypeer_services::DatabaseInfo {
+            id: database,
+            name: "PUBLIC database".into(),
+            description: None,
+            writable: true,
+            managing: false,
+            metadata_conflict: false,
+        },
+        groups: Vec::new(),
+        previews: Vec::new(),
+        binary: None,
+        rows,
+        entry: None,
+        history: Vec::new(),
+        pending: None,
+        usage: taypeer_services::StorageUsage {
+            attachment_bytes: 0,
+            attachment_limit: 100,
+            over_limit: false,
+            retained_bytes: 0,
+            draft_bytes: 0,
+            file_bytes: 42,
+            missing: Vec::new(),
+            unknown_references: false,
+        },
+        policy: Default::default(),
+        writable: true,
     }
-    nav.query = "Example Studio".into();
-    assert_eq!(nav.rows(&catalog).len(), 1);
-    nav.query = "long-public-username".into();
+}
+fn row(id: &str) -> taypeer_services::EntrySummary {
+    taypeer_services::EntrySummary {
+        id: EntryId::new(id),
+        group_id: Some(GroupId::new("PUBLIC group")),
+        title: "PUBLIC result".into(),
+        username: None,
+        url: None,
+        has_conflicts: false,
+        notes: None,
+        modified_at: 1000,
+        appearance: Default::default(),
+    }
+}
+#[test]
+fn only_matching_service_results_from_unlocked_databases_are_visible() {
+    let db = DatabaseId::new("PUBLIC db");
+    let other = DatabaseId::new("PUBLIC other db");
+    let mut catalog = CatalogStore::default();
+    catalog.add_path(db.clone(), "PUBLIC.taypeer".into());
+    catalog.add_path(other.clone(), "PUBLIC-other.taypeer".into());
+    catalog.apply(
+        &db,
+        snapshot(db.clone(), vec![row("PUBLIC a")], "first query"),
+    );
+    catalog.apply(
+        &other,
+        snapshot(other.clone(), vec![row("PUBLIC b")], "second query"),
+    );
+    let mut nav = NavigationState::default();
+    nav.select_database(db.clone(), &catalog);
+    nav.unlocked.extend([db.clone(), other.clone()]);
+    nav.scope = SearchScope::AllUnlocked;
+    nav.query = "second query".into();
+    assert_eq!(
+        nav.rows(&catalog),
+        vec![(other.clone(), EntryId::new("PUBLIC b"))]
+    );
+    nav.lock(&other);
+    catalog.clear(&other);
     assert!(nav.rows(&catalog).is_empty());
-    for database in catalog.databases() {
-        nav.unlocked.insert(database.id);
-    }
-    assert_eq!(nav.rows(&catalog).len(), 1);
+    assert!(catalog.database(&other).unwrap().entries.is_empty());
+    assert!(!catalog.database(&other).unwrap().writable);
 }
-
 #[test]
-fn sorting_keeps_selection_and_search_result_navigation_has_a_return_path() {
-    let catalog = CatalogStore::samples();
-    let (db, id) = first(&catalog);
+fn lock_clears_selection_and_pending_navigation_but_keeps_the_file_open() {
+    let db = DatabaseId::new("PUBLIC db");
+    let mut catalog = CatalogStore::default();
+    catalog.add_path(db.clone(), "PUBLIC.taypeer".into());
     let mut nav = NavigationState::default();
-    nav.select_database(db, &catalog);
-    nav.unlocked.insert(db);
-    nav.selected = Some(id);
-    let initial = nav.rows(&catalog);
-    nav.sort_by(Column::Title);
-    let mut expected = initial;
-    expected.reverse();
-    assert_eq!(nav.rows(&catalog), expected);
-    assert_eq!(nav.selected, Some(id));
-    for database in catalog.databases() {
-        nav.unlocked.insert(database.id);
-    }
-    nav.scope = SearchScope::AllUnlocked;
-    nav.query = "long-public-username".into();
-    let result = nav.rows(&catalog)[0];
-    nav.select_entry(result.0, result.1, &catalog);
-    assert_eq!(nav.database, Some(result.0));
-    assert!(nav.query.is_empty());
-    nav.return_to_search();
-    assert_eq!(nav.database, Some(db));
-    assert_eq!(nav.query, "long-public-username");
-    assert_eq!(nav.rows(&catalog), vec![result]);
-}
-
-#[test]
-fn lock_hides_selection_and_keeps_only_the_current_database_draft() {
-    let catalog = CatalogStore::samples();
-    let (db, id) = first(&catalog);
-    let mut nav = NavigationState::default();
-    nav.select_database(db, &catalog);
-    nav.unlocked.insert(db);
-    nav.selected = Some(id);
-    let mut editor = EditorStore::existing(db, catalog.entry(db, id).unwrap());
-    editor.edit(|content| content.notes = "Unsaved UI draft".into());
-    nav.lock(Some(editor));
+    nav.select_database(db.clone(), &catalog);
+    nav.unlocked.insert(db.clone());
+    nav.selected = Some(EntryId::new("PUBLIC selected"));
+    nav.pending = Some(Destination::Quit);
+    nav.lock(&db);
     assert!(!nav.is_unlocked());
-    assert!(nav.selected.is_none());
-    assert!(nav.rows(&catalog).is_empty());
-    let recovered = nav.suspended.remove(&db).unwrap();
-    assert!(recovered.content().notes == "Unsaved UI draft");
-    assert!(catalog.entry(db, id).unwrap().content.notes != "Unsaved UI draft");
-    nav.unlocked.insert(db);
-    assert!(!nav.rows(&catalog).is_empty());
+    assert!(nav.selected.is_none() && nav.pending.is_none());
+    assert!(nav.opened.contains(&db));
     nav.close_database(&catalog);
     assert_eq!(nav.route, Route::Welcome);
     assert!(nav.opened.is_empty());
-}
-
-#[test]
-fn history_restores_content_and_clears_only_the_selected_entry() {
-    let mut catalog = CatalogStore::samples();
-    let (db, id) = first(&catalog);
-    let entry = catalog.entry(db, id).unwrap();
-    let group = entry.group;
-    let original = entry.content.clone();
-    let sequence = entry.revisions[0].sequence;
-    let mut changed = original.clone();
-    changed.password = "PUBLIC-NEW-VALUE".into();
-    catalog.save_entry(db, group, Some(id), changed).unwrap();
-    catalog.restore_revision(db, id, sequence).unwrap();
-    assert!(catalog.entry(db, id).unwrap().content == original);
-    assert_eq!(catalog.entry(db, id).unwrap().revisions.len(), 3);
-    let other = catalog
-        .database(db)
-        .unwrap()
-        .entries
-        .values()
-        .find(|e| e.id != id)
-        .unwrap();
-    let other_id = other.id;
-    let other_count = other.revisions.len();
-    catalog.clear_history(db, id).unwrap();
-    assert!(catalog.entry(db, id).unwrap().revisions.is_empty());
-    assert_eq!(
-        catalog.entry(db, other_id).unwrap().revisions.len(),
-        other_count
-    );
-}
-
-#[test]
-fn new_database_has_no_implicit_group_and_ids_are_never_reused() {
-    let mut catalog = CatalogStore::samples();
-    let db = catalog
-        .create_database("New demo".into(), String::new())
-        .unwrap();
-    assert!(catalog.database(db).unwrap().groups.is_empty());
-    let group = catalog
-        .save_group(
-            db,
-            None,
-            None,
-            "Group".into(),
-            String::new(),
-            "folder".into(),
-        )
-        .unwrap();
-    let a = catalog
-        .save_entry(
-            db,
-            group,
-            None,
-            EntryContent {
-                title: "A".into(),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-    let b = catalog
-        .save_entry(
-            db,
-            group,
-            None,
-            EntryContent {
-                title: "B".into(),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-    assert_ne!(a, b);
-    let other = catalog
-        .create_database("Other".into(), String::new())
-        .unwrap();
-    assert_eq!(
-        catalog.save_entry(
-            other,
-            group,
-            Some(a),
-            EntryContent {
-                title: "Bad reference".into(),
-                ..Default::default()
-            }
-        ),
-        Err(FormError::MissingObject)
-    );
 }

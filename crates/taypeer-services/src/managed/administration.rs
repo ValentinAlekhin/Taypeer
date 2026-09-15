@@ -36,6 +36,15 @@ impl ManagedState {
     }
 }
 impl DatabaseService {
+    /// Whether this session holds the current managing credential.
+    pub fn can_manage(&self, session: &SessionToken) -> Result<bool, ServiceError> {
+        Ok(self
+            .checked(session)?
+            .managed
+            .as_ref()
+            .is_some_and(|managed| managed.manager().is_ok()))
+    }
+
     /// Public verified authority and portable workflow state, without any credential or bearer secret.
     pub fn authority(
         &self,

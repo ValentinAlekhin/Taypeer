@@ -31,13 +31,12 @@ impl Sidebar {
                 let group = tree
                     .read(cx)
                     .selected_item()
-                    .and_then(|item| item.id.parse::<u64>().ok())
-                    .map(GroupId);
+                    .map(|item| GroupId::new(item.id.as_str()));
                 if let Some(group) = group
-                    && this.store.read(cx).state().group != Some(group)
+                    && this.store.read(cx).state().group.clone() != Some(group.clone())
                 {
                     this.store.update(cx, |store, cx| {
-                        store.navigate(Destination::Group(group), window, cx)
+                        store.navigate(Destination::Group(group.clone()), window, cx)
                     });
                 }
             }),
@@ -63,13 +62,13 @@ impl Sidebar {
     }
     fn sync(&mut self, cx: &mut Context<Self>) {
         let store = self.store.read(cx);
-        let Some(db) = store.state().database else {
+        let Some(db) = store.state().database.clone() else {
             return;
         };
         let catalog = store.catalog().read(cx);
-        let source = (db, catalog.version());
-        if self.source != Some(source) {
-            let Some(database) = catalog.database(db) else {
+        let source = (db.clone(), catalog.version());
+        if self.source.as_ref() != Some(&source) {
+            let Some(database) = catalog.database(&db) else {
                 return;
             };
             fn items(
@@ -82,24 +81,28 @@ impl Sidebar {
                     .iter()
                     .filter(|group| group.parent == parent)
                     .map(|group| {
-                        let id = group.id.0.to_string();
+                        let id = group.id.as_str().to_owned();
                         TreeItem::new(id.clone(), group.name.clone())
                             .expanded(initial || expanded.contains(&id))
-                            .children(items(groups, Some(group.id), expanded, initial))
+                            .children(items(groups, Some(group.id.clone()), expanded, initial))
                     })
                     .collect()
             }
-            let initial = self.source.is_none_or(|old| old.0 != db);
+            let initial = self.source.as_ref().is_none_or(|old| old.0 != db);
             if initial {
-                self.expanded = database.groups.iter().map(|g| g.id.0.to_string()).collect();
+                self.expanded = database
+                    .groups
+                    .iter()
+                    .map(|g| g.id.as_str().to_owned())
+                    .collect();
             }
             let items = items(&database.groups, None, &self.expanded, initial);
             self.tree.update(cx, |tree, cx| tree.set_items(items, cx));
             self.source = Some(source);
         }
-        let group = self.store.read(cx).state().group;
+        let group = self.store.read(cx).state().group.clone();
         if let Some(group) = group {
-            let key: SharedString = group.0.to_string().into();
+            let key: SharedString = group.as_str().to_owned().into();
             if self
                 .tree
                 .read(cx)
@@ -137,26 +140,58 @@ impl Render for Sidebar {
                         icon_button("group-menu", "ellipsis", "ui.group_actions").dropdown_menu(
                             move |menu, _, cx| {
                                 let state = menu_store.read(cx);
-                                let parent = state.state().group;
+                                let parent = state.state().group.clone();
                                 let child = menu_store.clone();
                                 let edit = menu_store.clone();
+                                let edit_parent = parent.clone();
+                                let clone = menu_store.clone();
+                                let delete = menu_store.clone();
+                                let writable = state.writable(cx) && parent.is_some();
                                 menu.item(
                                     PopupMenuItem::new(tr("add_child"))
                                         .disabled(parent.is_none())
                                         .on_click(move |_, window, cx| {
-                                            forms::group(child.clone(), None, parent, window, cx)
+                                            forms::group(
+                                                child.clone(),
+                                                None,
+                                                parent.clone(),
+                                                window,
+                                                cx,
+                                            )
                                         }),
                                 )
                                 .item(
                                     PopupMenuItem::new(tr("edit_group"))
-                                        .disabled(parent.is_none())
+                                        .disabled(edit_parent.is_none())
                                         .on_click(move |_, window, cx| {
-                                            forms::group(edit.clone(), parent, None, window, cx)
+                                            forms::group(
+                                                edit.clone(),
+                                                edit_parent.clone(),
+                                                None,
+                                                window,
+                                                cx,
+                                            )
                                         }),
                                 )
                                 .separator()
-                                .item(PopupMenuItem::new(tr("ui.clone_group")).disabled(true))
-                                .item(PopupMenuItem::new(tr("ui.delete_group")).disabled(true))
+                                .item(
+                                    PopupMenuItem::new(tr("ui.clone_group"))
+                                        .disabled(!writable)
+                                        .on_click(move |_, window, cx| {
+                                            clone.update(cx, |store, cx| {
+                                                store.navigate(Destination::CloneGroup, window, cx)
+                                            })
+                                        }),
+                                )
+                                .item(
+                                    PopupMenuItem::new(tr("ui.delete_group"))
+                                        .disabled(!writable)
+                                        .on_click(move |_, window, cx| {
+                                            delete.update(cx, |store, cx| {
+                                                store.navigate(Destination::TrashGroup, window, cx)
+                                            })
+                                        }),
+                                )
                             },
                         ),
                     )
@@ -183,20 +218,16 @@ impl Render for Sidebar {
                     .into_any_element()
             } else {
                 Tree::new(&self.tree, move |ix, entry, selected, _, cx| {
-                    let target = entry.item().id.as_str().parse::<u64>().ok().map(GroupId);
+                    let target = Some(GroupId::new(entry.item().id.as_str()));
                     let store_click = store.clone();
                     let state = store.read(cx);
-                    let count = state
+                    let group = state
                         .state()
                         .database
+                        .as_ref()
                         .and_then(|db| state.catalog().read(cx).database(db))
-                        .map(|db| {
-                            db.entries
-                                .values()
-                                .filter(|e| Some(e.group) == target)
-                                .count()
-                        })
-                        .unwrap_or(0);
+                        .and_then(|db| db.groups.iter().find(|g| Some(g.id.clone()) == target));
+                    let count = group.map_or(0, |g| g.entry_count);
                     ListItem::new(("group", ix))
                         .h(rems(2.25))
                         .px_2()
@@ -212,16 +243,10 @@ impl Render for Sidebar {
                                         "chevron-right"
                                     }))
                                 }))
-                                .child(icon(
-                                    state
-                                        .state()
-                                        .database
-                                        .and_then(|db| state.catalog().read(cx).database(db))
-                                        .and_then(|db| {
-                                            db.groups.iter().find(|g| Some(g.id) == target)
-                                        })
-                                        .map(|g| g.icon.as_str())
-                                        .unwrap_or("folder"),
+                                .child(super::images::stored_icon(
+                                    group.map_or("folder", |g| g.icon.as_str()),
+                                    group.and_then(|g| g.icon_blob.as_ref()),
+                                    cx,
                                 ))
                                 .child(div().flex_1().truncate().child(entry.item().label.clone()))
                                 .child(
@@ -232,23 +257,26 @@ impl Render for Sidebar {
                                 ),
                         )
                         .on_click(move |_, window, cx| {
-                            if let Some(group) = target {
+                            if let Some(group) = &target {
                                 store_click.update(cx, |store, cx| {
-                                    store.navigate(Destination::Group(group), window, cx)
+                                    store.navigate(Destination::Group(group.clone()), window, cx)
                                 });
                             }
                         })
                 })
                 .context_menu(move |_, entry, menu, _, _| {
-                    let id = entry.item().id.parse::<u64>().ok().map(GroupId);
+                    let id = Some(GroupId::new(entry.item().id.as_str()));
                     let edit = context_store.clone();
                     let child = context_store.clone();
+                    let child_id = id.clone();
                     menu.item(PopupMenuItem::new(tr("edit_group")).on_click(
-                        move |_, window, cx| forms::group(edit.clone(), id, None, window, cx),
+                        move |_, window, cx| {
+                            forms::group(edit.clone(), id.clone(), None, window, cx)
+                        },
                     ))
                     .item(
                         PopupMenuItem::new(tr("add_child")).on_click(move |_, window, cx| {
-                            forms::group(child.clone(), None, id, window, cx)
+                            forms::group(child.clone(), None, child_id.clone(), window, cx)
                         }),
                     )
                 })

@@ -1,4 +1,5 @@
 //! PUBLIC-only process fixture: real dispatch, service and dev5 files, no native credentials.
+mod presentation;
 mod stalled;
 use super::*;
 use crate::{
@@ -27,14 +28,21 @@ fn synthetic_open(
 ) -> Result<SessionToken, RuntimeError> {
     let author = || AuthorKey::from_seed(&[19; 32]);
     let transport = Arc::new(TransportKey::from_seed(&[59; 32]));
-    if let Some(name) = boot.create_name.take() {
-        let seed = DatabaseService::prepare_managed(
-            name,
+    if let Some(form) = boot.create_form.take().or_else(|| {
+        boot.create_name
+            .take()
+            .map(|name| taypeer_services::CreateDatabase {
+                name,
+                description: None,
+                policy: Default::default(),
+            })
+    }) {
+        let seed = DatabaseService::prepare_managed_form(
+            form,
             boot.password.as_bytes(),
             &author(),
             Identity::new(author().public(), transport.public()).unwrap(),
             1,
-            Default::default(),
         )?;
         drop(
             seed.create(&boot.path, &transport, None)
@@ -59,7 +67,7 @@ fn synthetic_open(
     Ok(service.open_managed(
         Box::new(stalled::Persistence(port)),
         boot.password.as_bytes(),
-        || Ok(Some(author())),
+        || Ok((std::env::var_os("TAYPEER_PUBLIC_READ_ONLY").is_none()).then(author)),
     )?)
 }
 
@@ -86,7 +94,19 @@ impl CallbackHandler for NoIo {
     }
 }
 fn open(sessions: &SessionController, path: &Path, create: bool) -> Arc<Client> {
-    let mut child = Process::new(std::env::current_exe().unwrap())
+    open_mode(sessions, path, create, false)
+}
+fn open_mode(
+    sessions: &SessionController,
+    path: &Path,
+    create: bool,
+    read_only: bool,
+) -> Arc<Client> {
+    let mut process = Process::new(std::env::current_exe().unwrap());
+    if read_only {
+        process.env("TAYPEER_PUBLIC_READ_ONLY", "1");
+    }
+    let mut child = process
         .args([
             "--exact",
             "worker::tests::synthetic_child",
@@ -119,7 +139,12 @@ fn open(sessions: &SessionController, path: &Path, create: bool) -> Arc<Client> 
     let boot = Boot {
         path: path.to_owned(),
         password: PASSWORD.into(),
-        create_name: create.then(|| "PUBLIC database".into()),
+        create_name: None,
+        create_form: create.then(|| taypeer_services::CreateDatabase {
+            name: "PUBLIC database".into(),
+            description: Some("PUBLIC initial description".into()),
+            policy: Default::default(),
+        }),
         profile: spool.path().to_owned(),
         spool: spool.path().to_owned(),
         invitation: None,

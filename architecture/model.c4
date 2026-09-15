@@ -22,7 +22,7 @@ model {
       #partial
       technology 'Rust + GPUI + GPUI Kit'
       style { color blue; border solid }
-      description 'Компонентный macOS UI на образцах в памяти. Отдельный headless smoke проверяет Rust-сервис; подключение UI к рабочим БД отложено.'
+      description 'Компонентный macOS UI подключается к общему runtime через типизированный адаптер и процессы БД. Headless smoke остаётся отдельной проверкой сервиса.'
       metadata {
         source 'apps/taypeer/src/main.rs'
         evidence 'spikes/gpui-android/MACOS-2026-09-09.md'
@@ -153,9 +153,9 @@ model {
     macPlatform = component 'Адаптеры macOS' {
       #partial
       style { border solid }
-      technology 'Rust + API macOS'
-      description 'Локальные credentials для runtime и CLI. Системные файловые диалоги, биометрия, буфер и lifecycle нового UI ещё не подключены.'
-      metadata { source 'crates/taypeer-runtime/src/profile.rs'; contract 'docs/architecture.md' }
+      technology 'Rust + Swift / AppKit'
+      description 'Credentials runtime, файловые диалоги GPUI и отдельный безоконный AppKit helper для lifecycle и буфера с проверкой владения. Биометрия пока недоступна.'
+      metadata { source 'apps/taypeer/src/macos/platform.rs'; contract 'docs/architecture.md' }
     }
     androidPlatform = component 'Адаптеры Android' {
       #planned
@@ -193,6 +193,7 @@ model {
   taypeer.sessionGuard -> taypeer.local 'Несекретная настройка таймера'
   taypeer.coordinator -> taypeer.sessionGuard 'Инвалидировать сессию при изменении доверия'
   taypeer.cli -> taypeer.generator 'Явная генерация секрета'
+  taypeer.mac -> taypeer.generator 'Явная генерация секрета'
   taypeer.cli -> taypeer.macPlatform 'Защищённое локальное состояние и события ОС'
   taypeer.cli -> taypeer.sync 'Запуск и остановка обмена'
   taypeer.cli -> taypeer.coordinator 'Время жизни зарегистрированных рабочих копий'
@@ -204,8 +205,8 @@ model {
   taypeer.secretWorker -> taypeer.document 'Открытый документ и адресные изменения'
   taypeer.secretWorker -> taypeer.crypto 'Ключи чтения и защита кандидатов'
   taypeer.secretWorker -> taypeer.macPlatform 'Авторский credential после проверки пароля'
-  taypeer.mac -> taypeer.sessions 'Headless smoke; интеграция UI запланирована'
-  taypeer.mac -> taypeer.coordinator 'Запланировано: writer рабочего файла'
+  taypeer.mac -> taypeer.sessions 'Переносимый headless smoke'
+  taypeer.mac -> taypeer.coordinator 'Жизненный цикл рабочих файлов через runtime'
   taypeer.android -> taypeer.ffi 'Команды и события'
   taypeer.ffi -> taypeer.sessions 'Сценарии Rust'
   taypeer.sessions -> taypeer.core 'Правила предметной области'
@@ -237,13 +238,13 @@ model {
   taypeer.kdbx -> taypeer.core 'Представимые данные'
   taypeer.kdbx -> files 'Отдельный импорт или экспорт'
   taypeer.iconLoader -> websites 'Запрос по действию пользователя'
-  taypeer.mac -> taypeer.macPlatform 'Запланировано: платформенные действия'
+  taypeer.mac -> taypeer.macPlatform 'Файловые диалоги, буфер и события ОС'
   taypeer.android -> taypeer.androidPlatform 'Платформенные действия'
   taypeer.macPlatform -> macos 'API ОС'
   taypeer.androidPlatform -> androidos 'API ОС'
   taypeer.macPlatform -> taypeer.local 'Защита локальных данных'
   taypeer.androidPlatform -> taypeer.local 'Защита локальных данных'
-  taypeer.macPlatform -> taypeer.sessions 'Lifecycle и блокировка'
+  taypeer.macPlatform -> taypeer.sessionGuard 'Сон и блокировка пользовательской сессии'
   taypeer.androidPlatform -> taypeer.ffi 'Lifecycle и блокировка'
   taypeer.ffi -> taypeer.sync 'Фоновое получение'
   taypeer.macPlatform -> taypeer.sync 'Фоновое получение'

@@ -1,4 +1,4 @@
-//! Welcome and synthetic unlock screens; their input dies when the screen closes.
+//! Welcome and unlock screens; input belongs to the screen lifetime.
 
 use super::{forms, style::*, workspace::WorkspaceStore};
 use crate::ui_state::DatabaseId;
@@ -16,6 +16,7 @@ pub(super) struct SessionView {
     store: Entity<WorkspaceStore>,
     password: Entity<InputState>,
     database: Option<DatabaseId>,
+    secret_epoch: u64,
     error: bool,
     _subscriptions: Vec<Subscription>,
 }
@@ -23,39 +24,56 @@ impl SessionView {
     pub fn new(store: Entity<WorkspaceStore>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let password = input("", true, window, cx);
         let subscriptions = vec![
-            cx.observe(&store, |_, _, cx| cx.notify()),
-            cx.subscribe_in(&password, window, |this, _, event: &InputEvent, _, cx| {
-                if matches!(event, InputEvent::PressEnter { .. }) {
-                    this.unlock(cx);
-                } else {
+            cx.observe_in(&store, window, |this, store, window, cx| {
+                let state = store.read(cx);
+                let epoch = state.secret_epoch();
+                if state.state().is_unlocked() || this.secret_epoch != epoch {
+                    this.secret_epoch = epoch;
+                    this.password
+                        .update(cx, |input, cx| input.set_value("", window, cx));
                     this.error = false;
-                    cx.notify();
                 }
+                cx.notify();
             }),
+            cx.subscribe_in(
+                &password,
+                window,
+                |this, _, event: &InputEvent, window, cx| {
+                    if matches!(event, InputEvent::PressEnter { .. }) {
+                        this.unlock(window, cx);
+                    } else {
+                        this.error = false;
+                        cx.notify();
+                    }
+                },
+            ),
         ];
         Self {
             store,
             password,
             database: None,
+            secret_epoch: 0,
             error: false,
             _subscriptions: subscriptions,
         }
     }
-    fn unlock(&mut self, cx: &mut Context<Self>) {
+    fn unlock(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.password.read(cx).value().is_empty() {
             self.error = true;
             cx.notify();
             return;
         }
-        self.store.update(cx, |store, cx| store.unlock(cx));
+        self.store.update(cx, |store, cx| {
+            store.unlock(self.password.read(cx).value().to_string(), window, cx)
+        });
     }
 }
 impl Render for SessionView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let store = self.store.read(cx);
-        let database = store.state().database;
+        let database = store.state().database.clone();
         if database != self.database {
-            self.database = database;
+            self.database = database.clone();
             self.error = false;
             self.password.update(cx, |input, cx| {
                 input.set_value("", window, cx);
@@ -66,6 +84,7 @@ impl Render for SessionView {
         }
         let store = self.store.read(cx);
         let name = database
+            .as_ref()
             .and_then(|db| store.catalog().read(cx).database(db))
             .map(|db| db.name.clone());
         v_flex()
@@ -99,12 +118,15 @@ impl Render for SessionView {
             )
             .when(database.is_some(), |el| {
                 el.child(
-                    div().w(rems(24.)).child(
+                    div().w(rems(24.)).child(super::clipboard::secret_field(
                         Input::new(&self.password)
                             .aria_label(tr("password"))
                             .mask_toggle()
-                            .bordered(false),
-                    ),
+                            .bordered(false)
+                            .disabled(store.busy()),
+                        &self.password,
+                        true,
+                    )),
                 )
                 .when(self.error, |el| {
                     el.child(
@@ -117,7 +139,8 @@ impl Render for SessionView {
                     Button::new("unlock")
                         .primary()
                         .label(tr("unlock"))
-                        .on_click(cx.listener(|this, _, _, cx| this.unlock(cx))),
+                        .disabled(store.busy())
+                        .on_click(cx.listener(|this, _, window, cx| this.unlock(window, cx))),
                 )
             })
             .when(database.is_none(), |el| {
@@ -135,9 +158,9 @@ impl Render for SessionView {
                         .child(
                             Button::new("welcome-open")
                                 .icon(icon("folder-open"))
-                                .label(tr("ui.open_sample"))
+                                .label(tr("ui.open_file"))
                                 .on_click(cx.listener(|this, _, window, cx| {
-                                    forms::choose_sample(this.store.clone(), window, cx)
+                                    forms::choose_file(this.store.clone(), window, cx)
                                 })),
                         ),
                 )

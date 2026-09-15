@@ -1,6 +1,6 @@
 [package]
 name = "taypeer"
-description = "Taypeer macOS UI prototype on synthetic data"
+description = "Taypeer macOS client"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,6 +8,15 @@ publish.workspace = true
 
 [dependencies]
 taypeer-services.workspace = true
+taypeer-core.workspace = true
+taypeer-runtime.workspace = true
+taypeer-trust.workspace = true
+taypeer-storage.workspace = true
+zeroize.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+tempfile.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 gpui-kit.workspace = true

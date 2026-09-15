@@ -352,10 +352,35 @@ impl DatabaseService {
         now: i64,
         policy: DatabasePolicy,
     ) -> Result<ArchiveSeed, ServiceError> {
+        Self::prepare_managed_form(
+            crate::CreateDatabase {
+                name,
+                description: None,
+                policy,
+            },
+            password,
+            author,
+            identity,
+            now,
+        )
+    }
+    /// Prepare all creation form values before any working file is published.
+    pub fn prepare_managed_form(
+        form: crate::CreateDatabase,
+        password: &[u8],
+        author: &AuthorKey,
+        identity: Identity,
+        now: i64,
+    ) -> Result<ArchiveSeed, ServiceError> {
+        let policy = form.policy;
         if identity.device != author.device_id() {
             return Err(ServiceError::Unauthorized);
         }
-        let document = Document::new_with_writer(name, now, *author.device_id().as_bytes())?;
+        let mut document =
+            Document::new_with_writer(form.name.clone(), now, *author.device_id().as_bytes())?;
+        if form.description.is_some() {
+            document.update_metadata(form.name, form.description)?;
+        }
         let (header, key) = taypeer_storage::create_epoch(password, policy.kdf_target_ms())?;
         let mut metadata = Checkpoint {
             version: 1,

@@ -1,6 +1,6 @@
-//! Window navigation and projections over the synthetic catalog.
+//! Window navigation and projections over loaded service results.
 
-use super::{CatalogStore, DatabaseId, EditorStore, EntryContent, EntryId, GroupId};
+use super::{CatalogStore, DatabaseId, EntryId, GroupId, RevisionId};
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
@@ -79,10 +79,17 @@ pub(crate) enum Destination {
     Group(GroupId),
     Entry(DatabaseId, EntryId),
     NewEntry,
+    CreateDatabase,
+    GroupForm {
+        id: Option<GroupId>,
+        parent: Option<GroupId>,
+    },
+    CloneGroup,
+    TrashGroup,
     CloseDatabase,
     CancelEdit,
     SearchResults,
-    RestoreRevision(u64),
+    RestoreRevision(RevisionId),
     ClearHistory,
     Quit,
 }
@@ -102,7 +109,7 @@ pub(crate) struct NavigationState {
     pub selected: Option<EntryId>,
     pub opened: BTreeSet<DatabaseId>,
     pub unlocked: BTreeSet<DatabaseId>,
-    pub suspended: BTreeMap<DatabaseId, EditorStore>,
+    pub suspended: BTreeMap<DatabaseId, taypeer_services::PendingDraftSummary>,
     pub query: String,
     pub scope: SearchScope,
     pub sort: Column,
@@ -137,18 +144,17 @@ impl Default for NavigationState {
 
 impl NavigationState {
     pub fn is_unlocked(&self) -> bool {
-        self.database.is_some_and(|db| self.unlocked.contains(&db))
+        self.database
+            .as_ref()
+            .is_some_and(|db| self.unlocked.contains(db))
     }
     pub fn select_database(&mut self, db: DatabaseId, catalog: &CatalogStore) {
-        if catalog.database(db).is_none() {
+        let Some(item) = catalog.database(&db) else {
             return;
-        }
-        self.opened.insert(db);
+        };
+        self.opened.insert(db.clone());
         self.database = Some(db);
-        self.group = catalog
-            .database(db)
-            .and_then(|db| db.groups.first())
-            .map(|g| g.id);
+        self.group = item.groups.first().map(|g| g.id.clone());
         self.selected = None;
         self.query.clear();
         self.bookmark = None;
@@ -161,8 +167,8 @@ impl NavigationState {
             self.unlocked.remove(&db);
             self.suspended.remove(&db);
         }
-        if let Some(db) = self.opened.first().copied() {
-            self.select_database(db, catalog)
+        if let Some(db) = self.opened.first().cloned() {
+            self.select_database(db, catalog);
         } else {
             self.route = Route::Welcome;
             self.group = None;
@@ -171,37 +177,35 @@ impl NavigationState {
             self.bookmark = None;
         }
     }
-    pub fn lock(&mut self, draft: Option<EditorStore>) {
-        if let Some(db) = self.database {
-            self.unlocked.remove(&db);
-            if let Some(draft) = draft.filter(|d| d.dirty()) {
-                self.suspended.insert(db, draft);
-            }
+    pub fn lock(&mut self, db: &DatabaseId) {
+        self.unlocked.remove(db);
+        self.suspended.remove(db);
+        if self.database.as_ref() == Some(db) {
+            self.selected = None;
+            self.query.clear();
+            self.bookmark = None;
+            self.pending = None;
+            self.tab = EntryTab::Overview;
+            self.route = Route::Workspace;
         }
-        self.selected = None;
-        self.query.clear();
-        self.bookmark = None;
-        self.pending = None;
-        self.tab = EntryTab::Overview;
-        self.route = Route::Workspace;
     }
     pub fn select_entry(&mut self, db: DatabaseId, id: EntryId, catalog: &CatalogStore) {
         if !self.unlocked.contains(&db) {
             return;
         }
-        let Some(entry) = catalog.entry(db, id) else {
+        let Some(entry) = catalog.entry(&db, &id) else {
             return;
         };
         if !self.query.is_empty() && self.bookmark.is_none() {
             self.bookmark = Some(SearchBookmark {
-                database: self.database,
-                group: self.group,
+                database: self.database.clone(),
+                group: self.group.clone(),
                 query: self.query.clone(),
                 scope: self.scope,
             });
         }
         self.database = Some(db);
-        self.group = Some(entry.group);
+        self.group = entry.group.clone();
         self.selected = Some(id);
         self.tab = EntryTab::Overview;
         if self.bookmark.is_some() {
@@ -222,29 +226,26 @@ impl NavigationState {
         self.sort = column;
     }
     pub fn rows(&self, catalog: &CatalogStore) -> Vec<(DatabaseId, EntryId)> {
-        let query = self.query.to_lowercase();
         let mut rows = Vec::new();
         for db in catalog.databases() {
-            if !self.unlocked.contains(&db.id) {
-                continue;
-            }
-            if (query.is_empty() || self.scope == SearchScope::Current)
-                && self.database != Some(db.id)
+            if db.query != self.query
+                || !self.unlocked.contains(&db.id)
+                || ((self.query.is_empty() || self.scope == SearchScope::Current)
+                    && self.database.as_ref() != Some(&db.id))
             {
                 continue;
             }
             for entry in db.entries.values() {
-                if if query.is_empty() {
-                    Some(entry.group) == self.group
-                } else {
-                    matches_search(&entry.content, &query)
-                } {
-                    rows.push((db.id, entry.id));
+                // Search membership comes from the service response; never reimplement its matching rules.
+                if db.row_ids.contains(&entry.id)
+                    && (!self.query.is_empty() || entry.group == self.group)
+                {
+                    rows.push((db.id.clone(), entry.id.clone()));
                 }
             }
         }
         rows.sort_by_cached_key(|(db, id)| {
-            let Some(entry) = catalog.entry(*db, *id) else {
+            let Some(entry) = catalog.entry(db, id) else {
                 return String::new();
             };
             match self.sort {
@@ -253,7 +254,7 @@ impl NavigationState {
                 Column::Url => entry.content.url.to_lowercase(),
                 Column::Notes => entry.content.notes.to_lowercase(),
                 Column::Modified => format!("{:020}", entry.modified),
-                Column::Location => catalog.group_path(*db, entry.group).to_lowercase(),
+                Column::Location => catalog.group_path(db, entry.group.as_ref()).to_lowercase(),
             }
         });
         if self.descending {
@@ -261,20 +262,4 @@ impl NavigationState {
         }
         rows
     }
-}
-
-fn matches_search(content: &EntryContent, query: &str) -> bool {
-    [
-        &content.title,
-        &content.username,
-        &content.url,
-        &content.tags,
-        &content.notes,
-    ]
-    .into_iter()
-    .any(|v| v.to_lowercase().contains(query))
-        || content
-            .attributes
-            .iter()
-            .any(|a| !a.protected && a.value.to_lowercase().contains(query))
 }

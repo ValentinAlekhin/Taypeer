@@ -12,6 +12,47 @@ mod types;
 pub use types::*;
 
 impl DatabaseService {
+    /// Read one unique local icon through its checked visibility scope. No network or plaintext file.
+    pub fn icon_preview(
+        &self,
+        session: &SessionToken,
+        target: &BinaryTarget,
+    ) -> Result<Option<IconPreview>, ServiceError> {
+        use std::io::Read;
+        let view = self.binary_view(session, target)?.value;
+        let [icon] = view.icons.as_slice() else {
+            return Ok(None);
+        };
+        let Some(blob) = icon.blob() else {
+            return Ok(None);
+        };
+        let state = self.checked(session)?;
+        if state.blobs()?.length(blob).is_none() {
+            return Ok(None);
+        }
+        let mut bytes = zeroize::Zeroizing::new(Vec::new());
+        state
+            .blobs()?
+            .reader(blob)?
+            .take(ICON_LIMIT + 1)
+            .read_to_end(&mut bytes)
+            .map_err(StorageError::from)?;
+        icons::validate(&bytes).map_err(ServiceError::Icon)?;
+        let encoding = match image::guess_format(&bytes) {
+            Ok(image::ImageFormat::Png) => IconEncoding::Png,
+            Ok(image::ImageFormat::Jpeg) => IconEncoding::Jpeg,
+            Ok(image::ImageFormat::WebP) => IconEncoding::Webp,
+            Ok(image::ImageFormat::Gif) => IconEncoding::Gif,
+            Ok(image::ImageFormat::Ico) => IconEncoding::Ico,
+            _ => IconEncoding::Svg,
+        };
+        Ok(Some(IconPreview {
+            blob: blob.clone(),
+            encoding,
+            bytes,
+        }))
+    }
+
     /// Download favicons for direct group members, optionally including descendants or replacing icons.
     /// Retry checks each durable receipt before making another network request.
     pub fn group_favicons(

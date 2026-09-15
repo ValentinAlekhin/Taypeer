@@ -60,7 +60,7 @@ impl Entries {
         let store = self.store.read(cx);
         let rows = store.state().rows(store.catalog().read(cx));
         let selected = rows.iter().position(|(db, id)| {
-            Some(*db) == store.state().database && Some(*id) == store.state().selected
+            Some(db.clone()) == store.state().database && Some(id.clone()) == store.state().selected
         });
         let index = selected.map_or(0, |index| {
             if down {
@@ -70,7 +70,7 @@ impl Entries {
             }
         });
         if let Some((db, id)) = rows.get(index) {
-            let target = Destination::Entry(*db, *id);
+            let target = Destination::Entry(db.clone(), id.clone());
             self.store
                 .update(cx, |store, cx| store.navigate(target, window, cx));
         }
@@ -140,11 +140,12 @@ impl Render for Entries {
             );
         }
         let mut body = TableBody::new();
-        for (row_index, (db, id)) in rows.iter().copied().enumerate() {
-            let Some(entry) = catalog.entry(db, id) else {
+        for (row_index, (db, id)) in rows.iter().cloned().enumerate() {
+            let Some(entry) = catalog.entry(&db, &id) else {
                 continue;
             };
-            let selected = state.database == Some(db) && state.selected == Some(id);
+            let selected =
+                state.database.as_ref() == Some(&db) && state.selected.as_ref() == Some(&id);
             let mut row = TableRow::new()
                 .h(rems(2.25))
                 .when_some(entry.content.background, |row, color| row.bg(rgb(color)))
@@ -159,10 +160,12 @@ impl Render for Entries {
                     Column::Url => entry.content.url.clone(),
                     Column::Notes => entry.content.notes.replace('\n', " "),
                     Column::Modified => stamp(entry.modified),
-                    Column::Location => catalog.group_path(db, entry.group),
+                    Column::Location => catalog.group_path(&db, entry.group.as_ref()),
                 };
                 let value = text.clone();
                 let target = self.store.clone();
+                let db = db.clone();
+                let id = id.clone();
                 let focus = self.focus.clone();
                 row = row.child(
                     TableCell::new().p_0().flex_1().min_w_0().child(
@@ -176,7 +179,11 @@ impl Render for Entries {
                             .gap_2()
                             .cursor_pointer()
                             .when(*column == Column::Title, |el| {
-                                el.child(icon(&entry.content.icon))
+                                el.child(super::images::stored_icon(
+                                    &entry.content.icon,
+                                    entry.content.icon_blob.as_ref(),
+                                    cx,
+                                ))
                             })
                             .when(*column != Column::Title, |el| {
                                 el.text_xs().text_color(cx.theme().muted_foreground)
@@ -188,7 +195,11 @@ impl Render for Entries {
                             .on_click(move |_, window, cx| {
                                 focus.focus(window, cx);
                                 target.update(cx, |store, cx| {
-                                    store.navigate(Destination::Entry(db, id), window, cx)
+                                    store.navigate(
+                                        Destination::Entry(db.clone(), id.clone()),
+                                        window,
+                                        cx,
+                                    )
                                 });
                             }),
                     ),

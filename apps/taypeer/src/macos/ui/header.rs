@@ -27,9 +27,10 @@ impl Header {
 impl Render for Header {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let state = self.store.read(cx);
-        let selected = state.state().database;
+        let selected = state.state().database.clone();
         let catalog = state.catalog().clone();
         let title = selected
+            .as_ref()
             .and_then(|id| catalog.read(cx).database(id))
             .map(|db| db.name.clone())
             .unwrap_or_else(|| "Taypeer".into());
@@ -47,7 +48,7 @@ impl Render for Header {
                         div()
                             .text_xs()
                             .text_color(cx.theme().muted_foreground)
-                            .child(tr("ui.demo")),
+                            .child("Taypeer"),
                     )
                     .child(div().flex_1())
                     .child(
@@ -59,10 +60,10 @@ impl Render for Header {
                             .dropdown_menu(move |mut menu, _, cx| {
                                 let state = menu_store.read(cx);
                                 for id in &state.state().opened {
-                                    let Some(db) = catalog.read(cx).database(*id) else {
+                                    let Some(db) = catalog.read(cx).database(id) else {
                                         continue;
                                     };
-                                    let target = *id;
+                                    let target = id.clone();
                                     let store = menu_store.clone();
                                     menu = menu.item(
                                         PopupMenuItem::new(db.name.clone())
@@ -71,11 +72,11 @@ impl Render for Header {
                                             } else {
                                                 "lock"
                                             }))
-                                            .checked(selected == Some(*id))
+                                            .checked(selected == Some(id.clone()))
                                             .on_click(move |_, window, cx| {
                                                 store.update(cx, |store, cx| {
                                                     store.navigate(
-                                                        Destination::Database(target),
+                                                        Destination::Database(target.clone()),
                                                         window,
                                                         cx,
                                                     )
@@ -90,12 +91,18 @@ impl Render for Header {
                                 menu.separator()
                                     .item(PopupMenuItem::new(tr("create_db")).on_click(
                                         move |_, window, cx| {
-                                            forms::database(create.clone(), None, window, cx)
+                                            create.update(cx, |store, cx| {
+                                                store.navigate(
+                                                    Destination::CreateDatabase,
+                                                    window,
+                                                    cx,
+                                                )
+                                            })
                                         },
                                     ))
-                                    .item(PopupMenuItem::new(tr("ui.open_sample")).on_click(
+                                    .item(PopupMenuItem::new(tr("ui.open_file")).on_click(
                                         move |_, window, cx| {
-                                            forms::choose_sample(open.clone(), window, cx)
+                                            forms::choose_file(open.clone(), window, cx)
                                         },
                                     ))
                                     .separator()

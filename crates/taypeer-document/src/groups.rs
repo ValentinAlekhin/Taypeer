@@ -103,8 +103,10 @@ pub(super) fn read_group(read: &impl ReadDoc, address: &ObjectAddress) -> Result
     if names.is_empty() || placements.is_empty() {
         return Err(Error::InvalidDocument);
     }
-    for (value, _) in read.get_all(&obj, "icon_modified_at")? {
-        times.push(value.to_i64().ok_or(Error::InvalidDocument)?);
+    for key in ["icon_modified_at", "description_modified_at"] {
+        for (value, _) in read.get_all(&obj, key)? {
+            times.push(value.to_i64().ok_or(Error::InvalidDocument)?);
+        }
     }
     let created_at = unique(read, &obj, "created_at")?
         .to_i64()

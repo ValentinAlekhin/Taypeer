@@ -1,63 +1,78 @@
-//! Entry read view, historical snapshots and the common editor header.
-
+//! Masked details and lazy historical projections; reveal is a separate service command.
 pub(super) use super::generator::open_generator;
 use super::{editor::EditorView, style::*, workspace::WorkspaceStore};
 use crate::ui_state::*;
-use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
-    component::{
-        button::*,
-        menu::{DropdownMenu, PopupMenuItem},
-        *,
-    },
+    component::{button::*, *},
+    prelude::FluentBuilder,
     *,
 };
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
+use taypeer_runtime::Command;
+use zeroize::Zeroizing;
 
 pub(super) struct Inspector {
     store: Entity<WorkspaceStore>,
     fields: Option<(EntityId, Entity<EditorView>)>,
     identity: Option<(DatabaseId, EntryId)>,
-    revealed: BTreeSet<String>,
-    revision: Option<u64>,
-    snapshot: Option<u64>,
+    revealed: BTreeMap<String, Zeroizing<String>>,
+    revision: Option<RevisionId>,
+    snapshot: Option<RevisionId>,
     compare: bool,
     scroll: ScrollHandle,
     _subscription: Subscription,
 }
 impl Inspector {
     pub fn new(store: Entity<WorkspaceStore>, cx: &mut Context<Self>) -> Self {
-        let subscription = cx.observe(&store, |_, _, cx| cx.notify());
         Self {
+            _subscription: cx.observe(&store, |this, store, cx| {
+                let state = store.read(cx).state();
+                if !state.is_unlocked()
+                    || this.identity.as_ref().is_some_and(|(db, entry)| {
+                        Some(db) != state.database.as_ref()
+                            || Some(entry) != state.selected.as_ref()
+                    })
+                {
+                    this.revealed.clear();
+                    this.fields = None;
+                }
+                cx.notify();
+            }),
             store,
             fields: None,
             identity: None,
-            revealed: BTreeSet::new(),
+            revealed: BTreeMap::new(),
             revision: None,
             snapshot: None,
             compare: false,
             scroll: ScrollHandle::new(),
-            _subscription: subscription,
         }
     }
     fn value(
         &self,
-        id: impl Into<String>,
+        key: String,
         value: &str,
         secret: bool,
+        attribute: Option<taypeer_core::AttributeId>,
+        revision: Option<RevisionId>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let id = id.into();
-        let reveal = self.revealed.contains(&id);
-        let text = if value.is_empty() {
+        let revealed = self.revealed.get(&key);
+        let shown = revealed.is_some();
+        let text = if secret {
+            revealed
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "••••••••••••".into())
+        } else if value.is_empty() {
             tr("absent").to_string()
-        } else if secret && !reveal {
-            "••••••••••••".into()
         } else {
             value.to_owned()
         };
-        let copy = value.to_owned();
-        let copy_id = SharedString::from(format!("copy-{id}"));
+        let ordinary = value.to_owned();
+        let reveal_key = key.clone();
+        let copy_key = key.clone();
+        let copy_attribute = attribute.clone();
+        let copy_revision = revision.clone();
         h_flex()
             .gap_2()
             .min_w_0()
@@ -71,36 +86,118 @@ impl Inspector {
             .when(secret, |el| {
                 el.child(
                     icon_button(
-                        SharedString::from(format!("reveal-{id}")),
-                        if reveal { "eye-off" } else { "eye" },
-                        if reveal { "hide" } else { "show" },
+                        SharedString::from(format!("show-{key}")),
+                        if shown { "eye-off" } else { "eye" },
+                        if shown { "hide" } else { "show" },
                     )
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        if !this.revealed.remove(&id) {
-                            this.revealed.insert(id.clone());
+                        if this.revealed.remove(&reveal_key).is_none() {
+                            this.reveal(
+                                reveal_key.clone(),
+                                attribute.clone(),
+                                revision.clone(),
+                                false,
+                                cx,
+                            );
                         }
                         cx.notify();
                     })),
                 )
             })
             .child(
-                icon_button(copy_id, "copy", "ui.copy")
-                    .disabled(value.is_empty())
-                    .on_click(move |_, _, cx| {
-                        cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()))
-                    }),
+                icon_button(SharedString::from(format!("copy-{key}")), "copy", "ui.copy")
+                    .disabled(!secret && value.is_empty())
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if secret {
+                            this.reveal(
+                                copy_key.clone(),
+                                copy_attribute.clone(),
+                                copy_revision.clone(),
+                                true,
+                                cx,
+                            );
+                        } else if this
+                            .store
+                            .read(cx)
+                            .connection()
+                            .is_some_and(|c| c.control.is_open())
+                        {
+                            super::clipboard::copy(ordinary.clone(), false, cx);
+                        }
+                    })),
             )
             .into_any_element()
     }
-    fn overview(&self, content: &EntryContent, cx: &mut Context<Self>) -> AnyElement {
+    fn reveal(
+        &mut self,
+        key: String,
+        attribute: Option<taypeer_core::AttributeId>,
+        revision: Option<RevisionId>,
+        copy: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((db, entry)) = self.identity.clone() else {
+            return;
+        };
+        let Some(connection) = self.store.read(cx).connection().cloned() else {
+            return;
+        };
+        let command = if let Some(revision) = revision {
+            Command::RevealRevision {
+                entry,
+                revision,
+                attribute,
+            }
+        } else if let Some(attribute) = attribute {
+            Command::RevealAttribute { entry, attribute }
+        } else {
+            Command::RevealPassword(entry)
+        };
+        let ticket = connection.command::<Zeroizing<String>>(command);
+        let target = cx.entity().downgrade();
+        let identity = self.identity.clone();
+        let control = connection.control.clone();
+        self.store.update(cx, |store, _| {
+            store.watch(ticket, move |store, result, _, cx| {
+                if !control.is_open() {
+                    return;
+                }
+                match result {
+                    Ok(value) => {
+                        let _ = target.update(cx, |this, cx| {
+                            if this.identity == identity
+                                && this.identity.as_ref().is_some_and(|(id, _)| id == &db)
+                            {
+                                if copy {
+                                    super::clipboard::copy(value.to_string(), true, cx);
+                                } else {
+                                    this.revealed.insert(key, value);
+                                }
+                                cx.notify();
+                            }
+                        });
+                    }
+                    Err(error) => store.set_notice(super::workspace::error_key(&error), cx),
+                }
+            })
+        });
+    }
+    fn overview(
+        &self,
+        content: &EntryContent,
+        revision: Option<RevisionId>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         v_flex()
             .children(EntryField::ALL.map(|field| {
                 row(
                     field.key(),
                     self.value(
-                        format!("field-{field:?}"),
+                        format!("{revision:?}-{field:?}"),
                         field.value(content),
-                        field == EntryField::Password,
+                        field == EntryField::Password && content.has_password,
+                        None,
+                        revision.clone(),
                         cx,
                     ),
                     cx,
@@ -108,77 +205,65 @@ impl Inspector {
             }))
             .into_any_element()
     }
-    fn advanced(&self, content: &EntryContent, prefix: &str, cx: &mut Context<Self>) -> AnyElement {
+    fn advanced(
+        &self,
+        content: &EntryContent,
+        revision: Option<RevisionId>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let mut result = v_flex().child(section("attributes"));
-        for (index, attribute) in content.attributes.iter().enumerate() {
-            result = result.child(
-                h_flex()
-                    .min_h(rems(2.75))
-                    .px_6()
-                    .gap_4()
-                    .border_b_1()
-                    .border_color(cx.theme().border)
-                    .child(
-                        div()
-                            .w(rems(9.))
-                            .truncate()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(attribute.key.clone()),
-                    )
-                    .child(div().flex_1().min_w_0().child(self.value(
-                        format!("{prefix}-attribute-{index}"),
-                        &attribute.value,
-                        attribute.protected,
-                        cx,
-                    ))),
-            );
+        for attribute in &content.attributes {
+            result = result.child(row(
+                &attribute.key,
+                self.value(
+                    format!("{revision:?}-{:?}", attribute.id),
+                    &attribute.value,
+                    attribute.protected,
+                    attribute.id.clone(),
+                    revision.clone(),
+                    cx,
+                ),
+                cx,
+            ));
         }
         result = result.child(section("ui.attachments"));
-        for (index, attachment) in content.attachments.iter().enumerate() {
+        for attachment in &content.attachments {
+            let id = attachment.id.clone();
+            let revision = revision.clone();
             result = result.child(
                 h_flex()
                     .min_h(rems(2.75))
                     .px_6()
                     .gap_3()
                     .child(icon("file"))
-                    .child(div().flex_1().truncate().child(attachment.name.clone()))
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(format!("{} KiB", attachment.bytes / 1024)),
-                    )
+                    .child(div().flex_1().child(attachment.name.clone()))
                     .child(
                         icon_button(
-                            SharedString::from(format!("{prefix}-download-{index}")),
+                            SharedString::from(format!("export-{}", attachment.id.as_str())),
                             "download",
                             "ui.download",
                         )
-                        .tooltip(tr("ui.demo_attachments"))
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.store.update(cx, |store, cx| {
-                                store.set_notice("ui.demo_download", cx);
-                                cx.notify();
-                            })
-                        })),
+                        .on_click(cx.listener(
+                            move |this, _, window, cx| {
+                                super::forms::export_attachment(
+                                    this.store.clone(),
+                                    id.clone(),
+                                    revision.clone(),
+                                    window,
+                                    cx,
+                                )
+                            },
+                        )),
                     ),
             );
         }
-        result
-            .when(
-                content.attributes.is_empty() && content.attachments.is_empty(),
-                |el| el.child(empty("ui.no_additional", cx)),
-            )
-            .into_any_element()
+        result.into_any_element()
     }
     fn appearance(&self, content: &EntryContent, cx: &mut Context<Self>) -> AnyElement {
         v_flex()
             .child(row(
                 "ui.icon",
-                h_flex()
-                    .gap_3()
-                    .child(icon(&content.icon))
-                    .child(content.icon.clone()),
+                super::images::stored_icon(&content.icon, content.icon_blob.as_ref(), cx),
                 cx,
             ))
             .child(row(
@@ -212,29 +297,8 @@ impl Inspector {
                             .map(|c| rgb(c).into())
                             .unwrap_or(cx.theme().foreground),
                     )
-                    .child(
-                        h_flex()
-                            .gap_3()
-                            .child(icon(&content.icon))
-                            .child(content.title.clone()),
-                    ),
+                    .child(content.title.clone()),
             )
-            .into_any_element()
-    }
-    fn properties(&self, entry: &Entry, cx: &mut Context<Self>) -> AnyElement {
-        v_flex()
-            .child(row("ui.created", stamp(entry.created), cx))
-            .child(row(
-                "ui.modified",
-                stamp(self.snapshot.unwrap_or(entry.modified)),
-                cx,
-            ))
-            .child(row("ui.accessed", tr("absent"), cx))
-            .child(row(
-                "ui.id",
-                self.value("entry-id", &format!("UI-{:08}", entry.id.0), false, cx),
-                cx,
-            ))
             .into_any_element()
     }
     fn history(&self, entry: &Entry, cx: &mut Context<Self>) -> AnyElement {
@@ -242,42 +306,37 @@ impl Inspector {
             h_flex()
                 .px_6()
                 .py_3()
-                .justify_between()
-                .child(tr("history"))
+                .child(div().flex_1().child(tr("history")))
                 .child(
-                    icon_button("history-menu", "ellipsis", "ui.history_actions").dropdown_menu({
-                        let store = self.store.clone();
-                        move |menu, _, _| {
-                            let store = store.clone();
-                            menu.item(PopupMenuItem::new(tr("ui.clear_history")).on_click(
-                                move |_, window, cx| {
-                                    store.update(cx, |store, cx| {
-                                        store.navigate(Destination::ClearHistory, window, cx)
-                                    })
-                                },
-                            ))
-                        }
-                    }),
+                    icon_button("clear-history", "trash-2", "ui.clear_history")
+                        .disabled(!self.store.read(cx).writable(cx))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.store.update(cx, |s, cx| {
+                                s.navigate(Destination::ClearHistory, window, cx)
+                            })
+                        })),
                 ),
         );
-        for revision in entry.revisions.iter().rev() {
-            let seq = revision.sequence;
-            let selected = self.revision == Some(seq);
+        for version in entry.revisions.iter().rev() {
+            let id = version.sequence.clone();
             result = result.child(
-                Button::new(("revision", seq))
+                Button::new(SharedString::from(format!("version-{}", id.as_str())))
                     .ghost()
                     .justify_start()
                     .h(rems(2.75))
-                    .selected(selected)
-                    .label(format!("{}    {}", stamp(seq), tr("revision")))
+                    .selected(self.revision.as_ref() == Some(&id))
+                    .label(format!("{}  {}", stamp(version.saved_at), version.title))
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        this.revision = Some(seq);
+                        this.revision = Some(id.clone());
                         this.compare = false;
+                        this.revealed.clear();
+                        this.store
+                            .update(cx, |s, cx| s.load_revision(id.clone(), cx));
                         cx.notify();
                     })),
             );
         }
-        let selected = self.revision;
+        let selected = self.revision.clone();
         result = result.child(
             h_flex()
                 .px_6()
@@ -288,10 +347,10 @@ impl Inspector {
                         .label(tr("ui.view_revision"))
                         .disabled(selected.is_none())
                         .on_click(cx.listener(|this, _, _, cx| {
-                            this.snapshot = this.revision;
+                            this.snapshot = this.revision.clone();
                             this.revealed.clear();
                             this.store
-                                .update(cx, |store, cx| store.select_tab(EntryTab::Overview, cx));
+                                .update(cx, |s, cx| s.select_tab(EntryTab::Overview, cx));
                         })),
                 )
                 .child(
@@ -307,74 +366,34 @@ impl Inspector {
                 .child(
                     Button::new("restore-version")
                         .label(tr("ui.restore_revision"))
-                        .disabled(selected.is_none())
+                        .disabled(selected.is_none() || !self.store.read(cx).writable(cx))
                         .on_click(cx.listener(move |this, _, window, cx| {
-                            if let Some(seq) = selected {
-                                this.store.update(cx, |store, cx| {
-                                    store.navigate(Destination::RestoreRevision(seq), window, cx)
+                            if let Some(id) = selected.clone() {
+                                this.store.update(cx, |s, cx| {
+                                    s.navigate(Destination::RestoreRevision(id), window, cx)
                                 });
                             }
                         })),
                 ),
         );
         if self.compare
-            && let Some(revision) = entry
+            && let Some(version) = entry
                 .revisions
                 .iter()
-                .find(|r| Some(r.sequence) == selected)
+                .find(|r| Some(&r.sequence) == self.revision.as_ref())
         {
-            result = result.child(section("ui.comparison"));
-            for field in EntryField::ALL {
-                let old = field.value(&revision.content);
-                let current = field.value(&entry.content);
-                if old != current {
-                    result = result
-                        .child(section(field.key()))
-                        .child(row(
-                            "ui.previous",
-                            self.value(
-                                format!("old-{field:?}"),
-                                old,
-                                field == EntryField::Password,
-                                cx,
-                            ),
-                            cx,
-                        ))
-                        .child(row(
-                            "ui.current",
-                            self.value(
-                                format!("current-{field:?}"),
-                                current,
-                                field == EntryField::Password,
-                                cx,
-                            ),
-                            cx,
-                        ));
-                }
-            }
-            let old = &revision.content;
-            let current = &entry.content;
-            if old.icon != current.icon
-                || old.foreground != current.foreground
-                || old.background != current.background
-            {
+            if let Some(old) = &version.content {
                 result = result
-                    .child(section("ui.appearance"))
                     .child(section("ui.previous"))
+                    .child(self.overview(old, Some(version.sequence.clone()), cx))
+                    .child(self.advanced(old, Some(version.sequence.clone()), cx))
                     .child(self.appearance(old, cx))
                     .child(section("ui.current"))
-                    .child(self.appearance(current, cx));
-            }
-            if old.attributes != current.attributes || old.attachments != current.attachments {
-                result = result
-                    .child(section("ui.advanced"))
-                    .child(section("ui.previous"))
-                    .child(self.advanced(old, "old", cx))
-                    .child(section("ui.current"))
-                    .child(self.advanced(current, "current", cx));
-            }
-            if revision.content == entry.content {
-                result = result.child(empty("ui.no_changes", cx));
+                    .child(self.overview(&entry.content, None, cx))
+                    .child(self.advanced(&entry.content, None, cx))
+                    .child(self.appearance(&entry.content, cx));
+            } else {
+                result = result.child(empty("ui.loading", cx));
             }
         }
         result
@@ -387,9 +406,13 @@ impl Inspector {
 impl Render for Inspector {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let store = self.store.read(cx);
-        let identity = store.state().database.zip(store.state().selected);
+        let identity = store
+            .state()
+            .database
+            .clone()
+            .zip(store.state().selected.clone());
         if self.identity != identity {
-            self.identity = identity;
+            self.identity = identity.clone();
             self.revealed.clear();
             self.snapshot = None;
             self.revision = None;
@@ -407,35 +430,34 @@ impl Render for Inspector {
                     cx.new(|cx| EditorView::new(self.store.clone(), editor.clone(), window, cx)),
                 ));
                 self.snapshot = None;
+                self.revealed.clear();
             }
         } else {
             self.fields = None;
         }
         let store = self.store.read(cx);
         let entry = identity
+            .as_ref()
             .and_then(|(db, id)| store.catalog().read(cx).entry(db, id))
             .cloned();
-        if let Some(entry) = &entry
-            && self
-                .revision
-                .is_some_and(|seq| !entry.revisions.iter().any(|r| r.sequence == seq))
-        {
+        let tab = store.state().tab;
+        let writable = store.writable(cx);
+        let busy = store.busy();
+        if self.revision.as_ref().is_some_and(|id| {
+            entry
+                .as_ref()
+                .is_none_or(|e| !e.revisions.iter().any(|r| &r.sequence == id))
+        }) {
             self.revision = None;
             self.snapshot = None;
+            self.revealed.clear();
         }
-        let snapshot = entry.as_ref().and_then(|entry| {
-            entry
-                .revisions
-                .iter()
-                .find(|r| Some(r.sequence) == self.snapshot)
-        });
+        let editing = editor.is_some();
         let title = entry
             .as_ref()
-            .map(|entry| entry.content.title.clone())
+            .map(|e| e.content.title.clone())
             .unwrap_or_else(|| tr("new_title").to_string());
-        let tab = store.state().tab;
-        let editing = editor.is_some() && snapshot.is_none();
-        let content = if editing
+        let body = if editing
             && matches!(
                 tab,
                 EntryTab::Overview | EntryTab::Advanced | EntryTab::Appearance
@@ -447,16 +469,32 @@ impl Render for Inspector {
                 .clone()
                 .into_any_element()
         } else if let Some(entry) = &entry {
-            let content = snapshot.map(|s| &s.content).unwrap_or(&entry.content);
+            let shown = match &self.snapshot {
+                Some(id) => entry
+                    .revisions
+                    .iter()
+                    .find(|r| &r.sequence == id)
+                    .and_then(|r| r.content.as_ref()),
+                None => Some(&entry.content),
+            };
             match tab {
-                EntryTab::Overview => self.overview(content, cx),
-                EntryTab::Advanced => self.advanced(content, "read", cx),
-                EntryTab::Appearance => self.appearance(content, cx),
-                EntryTab::Properties => self.properties(entry, cx),
                 EntryTab::History => self.history(entry, cx),
+                EntryTab::Properties => v_flex()
+                    .child(row("ui.created", stamp(entry.created), cx))
+                    .child(row("ui.modified", stamp(entry.modified), cx))
+                    .child(row("ui.id", entry.id.as_str().to_owned(), cx))
+                    .into_any_element(),
+                _ => match shown {
+                    None => empty("ui.loading", cx),
+                    Some(content) => match tab {
+                        EntryTab::Overview => self.overview(content, self.snapshot.clone(), cx),
+                        EntryTab::Advanced => self.advanced(content, self.snapshot.clone(), cx),
+                        _ => self.appearance(content, cx),
+                    },
+                },
             }
         } else {
-            empty("ui.after_save", cx)
+            empty("ui.loading", cx)
         };
         v_flex()
             .size_full()
@@ -465,7 +503,6 @@ impl Render for Inspector {
             .child(
                 h_flex()
                     .h(rems(2.75))
-                    .flex_shrink_0()
                     .px_6()
                     .gap_2()
                     .border_b_1()
@@ -474,69 +511,60 @@ impl Render for Inspector {
                         div()
                             .flex_1()
                             .truncate()
-                            .text_base()
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(title),
                     )
                     .when(editing, |el| {
                         el.child(
-                            icon_button("cancel-edit", "x", "cancel").on_click(cx.listener(
-                                |this, _, window, cx| {
-                                    this.store.update(cx, |store, cx| {
-                                        store.navigate(Destination::CancelEdit, window, cx)
+                            icon_button("cancel-edit", "x", "cancel")
+                                .disabled(busy)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.store.update(cx, |s, cx| {
+                                        s.navigate(Destination::CancelEdit, window, cx)
                                     })
-                                },
-                            )),
+                                })),
                         )
                         .child(
-                            icon_button("save-entry", "check", "save").on_click(cx.listener(
-                                |this, _, _, cx| {
-                                    this.store.update(cx, |store, cx| {
-                                        store.save(cx);
-                                    })
-                                },
-                            )),
+                            icon_button("save-entry", "check", "save")
+                                .disabled(busy)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.store.update(cx, |s, cx| s.save(cx))
+                                })),
                         )
                     })
                     .when(!editing && self.snapshot.is_none(), |el| {
                         el.child(
-                            icon_button("edit-entry", "pencil", "edit").on_click(cx.listener(
-                                |this, _, _, cx| {
-                                    this.store.update(cx, |store, cx| store.begin_edit(cx))
-                                },
-                            )),
+                            icon_button("edit-entry", "pencil", "edit")
+                                .disabled(!writable || entry.as_ref().is_some_and(|e| e.conflicted))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.store.update(cx, |s, cx| s.begin_edit(cx))
+                                })),
                         )
                     }),
             )
-            .when_some(self.snapshot, |el, seq| {
+            .when(self.snapshot.is_some(), |el| {
                 el.child(
-                    h_flex()
-                        .px_4()
-                        .py_2()
-                        .gap_2()
-                        .child(tr("revision"))
-                        .child(stamp(seq))
-                        .child(
-                            Button::new("current-entry")
-                                .ghost()
-                                .label(tr("back"))
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.snapshot = None;
-                                    this.revealed.clear();
-                                    cx.notify();
-                                })),
-                        ),
+                    Button::new("current-entry")
+                        .ghost()
+                        .label(tr("back"))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.snapshot = None;
+                            this.revealed.clear();
+                            cx.notify();
+                        })),
                 )
+            })
+            .when(entry.as_ref().is_some_and(|e| e.conflicted), |el| {
+                el.child(empty("ui.conflict", cx))
             })
             .child(
                 h_flex()
                     .h(rems(2.375))
-                    .flex_shrink_0()
                     .border_b_1()
                     .border_color(cx.theme().border)
                     .children(EntryTab::ALL.map(|tab| {
                         let selected = self.store.read(cx).state().tab == tab;
-                        Button::new(SharedString::from(format!("tab-{tab:?}")))
+                        Button::new(tab.key())
                             .ghost()
                             .compact()
                             .rounded_none()
@@ -550,7 +578,7 @@ impl Render for Inspector {
                                 el.border_b_2().border_color(cx.theme().foreground)
                             })
                             .on_click(cx.listener(move |this, _, _, cx| {
-                                this.store.update(cx, |store, cx| store.select_tab(tab, cx))
+                                this.store.update(cx, |s, cx| s.select_tab(tab, cx))
                             }))
                     })),
             )
@@ -561,7 +589,7 @@ impl Render for Inspector {
                     .min_h_0()
                     .overflow_y_scroll()
                     .track_scroll(&self.scroll)
-                    .child(content),
+                    .child(body),
             )
     }
 }

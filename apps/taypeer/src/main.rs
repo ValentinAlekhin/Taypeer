@@ -1,6 +1,8 @@
 //! Taypeer UI prototype and portable headless service smoke.
 
+mod backend;
 mod launch;
+mod local_settings;
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "macos")]
@@ -19,6 +21,15 @@ mod ui_state;
 rust_i18n::i18n!("locales", fallback = "en");
 
 fn main() {
+    #[cfg(target_os = "macos")]
+    if std::env::args().skip(1).eq(["__platform-helper"]) {
+        println!("{}", env!("TAYPEER_PLATFORM_HELPER"));
+        return;
+    }
+    if std::env::args().skip(1).eq(["__worker"]) {
+        let result = taypeer_runtime::run_worker(std::io::stdin(), std::io::stdout());
+        std::process::exit(if result.is_ok() { 0 } else { 1 });
+    }
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mode = match launch::LaunchMode::parse(&args) {
         Ok(mode) => mode,

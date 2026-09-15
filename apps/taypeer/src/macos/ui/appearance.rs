@@ -1,4 +1,4 @@
-//! The only persistent store in the synthetic UI.
+//! Persistent device appearance and GPUI Kit theme adaptation.
 
 use crate::preferences::{Language, Preferences, ThemePreference};
 use gpui_kit::{component::*, *};

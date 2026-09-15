@@ -1,4 +1,4 @@
-//! Deterministic generator presentation; deliberately does not generate secrets.
+//! Explicit offline generation through the shared cryptographic generator.
 
 use super::style::*;
 use crate::ui_state::EditorStore;
@@ -20,7 +20,7 @@ struct GeneratorView {
     phrase: bool,
     sets: [bool; 4],
     revealed: bool,
-    variant: usize,
+    generated: Option<taypeer_services::generator::GeneratedSecret>,
     _subscriptions: Vec<Subscription>,
 }
 impl GeneratorView {
@@ -28,71 +28,76 @@ impl GeneratorView {
         let length = input("30", false, window, cx);
         let exclusions = input("", false, window, cx);
         let subscriptions = vec![
-            cx.subscribe(&length, |_, _, _: &InputEvent, cx| cx.notify()),
-            cx.subscribe(&exclusions, |_, _, _: &InputEvent, cx| cx.notify()),
+            cx.subscribe(&length, |this, _, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.generate(cx);
+                }
+            }),
+            cx.subscribe(&exclusions, |this, _, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.generate(cx);
+                }
+            }),
         ];
-        Self {
+        let mut result = Self {
             editor,
             length,
             exclusions,
             phrase: false,
             sets: [true; 4],
             revealed: true,
-            variant: 0,
+            generated: None,
             _subscriptions: subscriptions,
-        }
+        };
+        result.generate(cx);
+        result
     }
-    fn sample(&self, cx: &App) -> Option<String> {
-        let length = self.length.read(cx).value().parse::<usize>().ok()?;
-        if self.phrase {
-            if !(3..=20).contains(&length) {
-                return None;
-            }
-            let words = [
-                "public", "sample", "river", "copper", "window", "garden", "paper", "demo",
-            ];
-            return Some(
-                (0..length)
-                    .map(|i| words[(i + self.variant) % words.len()])
-                    .collect::<Vec<_>>()
-                    .join("-"),
-            );
-        }
-        if !(1..=256).contains(&length) {
-            return None;
-        }
-        let exclusions = self.exclusions.read(cx).value();
-        let chars: Vec<_> = ["PUBLICDEMO", "publicdemo", "0123456789", "!@#$%"]
-            .iter()
-            .zip(self.sets)
-            .filter(|(_, enabled)| *enabled)
-            .flat_map(|(chars, _)| chars.chars())
-            .filter(|c| !exclusions.contains(*c))
-            .collect();
-        if chars.is_empty() {
-            return None;
-        }
-        Some(
-            (0..length)
-                .map(|i| chars[(i + self.variant) % chars.len()])
-                .collect(),
-        )
+    fn generate(&mut self, cx: &mut Context<Self>) {
+        use taypeer_services::generator::{self, PasswordOptions};
+        self.generated = if self.phrase {
+            self.length
+                .read(cx)
+                .value()
+                .parse()
+                .ok()
+                .and_then(|count| generator::passphrase(count, "-").ok())
+        } else {
+            self.length
+                .read(cx)
+                .value()
+                .parse()
+                .ok()
+                .and_then(|length| {
+                    generator::password(&PasswordOptions {
+                        length,
+                        uppercase: self.sets[0],
+                        lowercase: self.sets[1],
+                        digits: self.sets[2],
+                        punctuation: self.sets[3],
+                        exclude: self.exclusions.read(cx).value().to_string(),
+                        ..Default::default()
+                    })
+                    .ok()
+                })
+        };
+        cx.notify();
     }
 }
 impl Render for GeneratorView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let sample = self.sample(cx);
-        let copy = sample.clone();
-        let valid = sample.is_some();
+        let valid = self.generated.is_some();
         v_flex()
+            .capture_key_down(|_, _, cx| crate::macos::platform::activity(cx))
+            .capture_any_mouse_down(|_, _, cx| crate::macos::platform::activity(cx))
             .gap_4()
             .text_sm()
             .child(
                 h_flex()
                     .gap_2()
                     .child(div().flex_1().font_family("Menlo").child(if self.revealed {
-                        sample
-                            .clone()
+                        self.generated
+                            .as_ref()
+                            .map(|s| s.expose().to_owned())
                             .unwrap_or_else(|| tr("ui.generator_invalid").to_string())
                     } else {
                         "••••••••••••••••".into()
@@ -112,25 +117,30 @@ impl Render for GeneratorView {
                         icon_button("generator-refresh", "dice-5", "ui.generate")
                             .disabled(!valid)
                             .on_click(cx.listener(|this, _, _, cx| {
-                                this.variant += 1;
-                                cx.notify();
+                                this.generate(cx);
                             })),
                     )
                     .child(
                         icon_button("generator-copy", "copy", "ui.copy")
                             .disabled(!valid)
-                            .on_click(move |_, _, cx| {
-                                if let Some(copy) = &copy {
-                                    cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()));
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                if this.editor.read(cx).connection().control.is_open()
+                                    && let Some(value) = &this.generated
+                                {
+                                    super::clipboard::copy(value.expose().to_owned(), true, cx);
                                 }
-                            }),
+                            })),
                     ),
             )
             .child(
                 div()
                     .text_xs()
                     .text_color(cx.theme().muted_foreground)
-                    .child(tr("ui.generator_sample")),
+                    .child(format!(
+                        "{}: {:.1}",
+                        tr("ui.entropy_bits"),
+                        self.generated.as_ref().map_or(0., |s| s.entropy_bits())
+                    )),
             )
             .child(
                 h_flex()
@@ -174,7 +184,7 @@ impl Render for GeneratorView {
                                 .checked(self.sets[index])
                                 .on_click(cx.listener(move |this, checked, _, cx| {
                                     this.sets[index] = *checked;
-                                    cx.notify();
+                                    this.generate(cx);
                                 }))
                         }),
                 )
@@ -199,9 +209,13 @@ impl Render for GeneratorView {
                             .disabled(!valid)
                             .label(tr("ui.use_value"))
                             .on_click(cx.listener(move |this, _, window, cx| {
-                                if let Some(sample) = &sample {
+                                if this.editor.read(cx).connection().control.is_open()
+                                    && let Some(sample) = &this.generated
+                                {
                                     this.editor.update(cx, |editor, cx| {
-                                        editor.edit(|content| content.password = sample.clone());
+                                        editor.edit(|content| {
+                                            content.password = sample.expose().to_owned()
+                                        });
                                         cx.notify();
                                     });
                                     window.close_dialog(cx);

@@ -201,20 +201,29 @@ impl EntryFields {
                 return Err(ValidationError::EmptyAttachmentName);
             }
         }
-        let mut names = BTreeSet::new();
         for (id, attr) in &self.attributes {
             if id != &attr.id {
                 return Err(ValidationError::AttributeIdentityMismatch);
             }
-            if attr.name.is_empty() {
-                return Err(ValidationError::EmptyAttributeName);
-            }
-            if !names.insert(&attr.name) {
-                return Err(ValidationError::DuplicateAttributeName);
-            }
         }
-        Ok(())
+        validate_attribute_names(self.attributes.values().map(|a| a.name.as_str()))
     }
+}
+
+/// Validate an attribute form independently of other unfinished entry fields.
+pub fn validate_attribute_names<'a>(
+    names: impl IntoIterator<Item = &'a str>,
+) -> Result<(), ValidationError> {
+    let mut unique = BTreeSet::new();
+    for name in names {
+        if name.is_empty() {
+            return Err(ValidationError::EmptyAttributeName);
+        }
+        if !unique.insert(name) {
+            return Err(ValidationError::DuplicateAttributeName);
+        }
+    }
+    Ok(())
 }
 
 /// An addressed entry field, independent of an adapter's object IDs.

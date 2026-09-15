@@ -23,6 +23,8 @@ mod operations;
 pub use lifecycle::{InspectionTarget, InspectionView, TreeView};
 mod managed;
 mod patch;
+mod presentation;
+pub use presentation::*;
 mod persistence;
 pub use managed::{ApplyReport, CollectionReport, PendingPacket, PendingReason, ReceivedSource};
 pub use operations::{ConflictFieldView, ConflictVariantView, ConflictView, new_operation_id};

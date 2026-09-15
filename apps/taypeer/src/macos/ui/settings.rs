@@ -1,20 +1,17 @@
-//! Device appearance and editable synthetic settings, with separate lifetimes.
+//! Device preferences and authenticated shared database settings.
 
 use super::{appearance::PreferencesStore, forms, style::*, workspace::WorkspaceStore};
 use crate::preferences::{FONT_SIZES, Language, ThemePreference};
-use crate::ui_state::{DatabaseId, FormError};
+use crate::ui_state::FormError;
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
     component::{
         button::*,
-        input::InputState,
         menu::{DropdownMenu, PopupMenuItem},
-        switch::Switch,
         *,
     },
     *,
 };
-use std::collections::BTreeMap;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SettingsTab {
@@ -24,13 +21,7 @@ enum SettingsTab {
 pub(super) struct SettingsView {
     store: Entity<WorkspaceStore>,
     preferences: Entity<PreferencesStore>,
-    device_name: Entity<InputState>,
     tab: SettingsTab,
-    auto_lock: usize,
-    clipboard: usize,
-    biometric: bool,
-    relay: bool,
-    protection: BTreeMap<DatabaseId, String>,
     scroll: ScrollHandle,
     _subscriptions: Vec<Subscription>,
 }
@@ -38,10 +29,9 @@ impl SettingsView {
     pub fn new(
         store: Entity<WorkspaceStore>,
         preferences: Entity<PreferencesStore>,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let device_name = input("MacBook Pro", false, window, cx);
         let subscriptions = vec![
             cx.observe(&store, |_, _, cx| cx.notify()),
             cx.observe(&preferences, |_, _, cx| cx.notify()),
@@ -49,13 +39,7 @@ impl SettingsView {
         Self {
             store,
             preferences,
-            device_name,
             tab: SettingsTab::Device,
-            auto_lock: 2,
-            clipboard: 1,
-            biometric: false,
-            relay: true,
-            protection: BTreeMap::new(),
             scroll: ScrollHandle::new(),
             _subscriptions: subscriptions,
         }
@@ -74,7 +58,31 @@ impl SettingsView {
             .max_w(rems(58.))
             .child(row(
                 "ui.device_name",
-                field(&self.device_name, "ui.device_name"),
+                Button::new("device-name")
+                    .ghost()
+                    .label(self.store.read(cx).local().device_name.clone())
+                    .disabled(self.store.read(cx).settings_busy())
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        let store = this.store.clone();
+                        let initial = store.read(cx).local().device_name.clone();
+                        forms::text_form(
+                            "ui.device_name",
+                            vec![("name", initial, false)],
+                            Box::new(move |values, _, cx| {
+                                crate::ui_state::require_name(&values[0])?;
+                                let mut candidate = store.read(cx).local().clone();
+                                candidate.device_name = values[0].clone();
+                                let store = store.clone();
+                                Ok(Some(Box::new(move |done, window, cx| {
+                                    store.update(cx, |store, cx| {
+                                        store.save_local_form(candidate, done, window, cx)
+                                    })
+                                })))
+                            }),
+                            window,
+                            cx,
+                        );
+                    })),
                 cx,
             ))
             .child(row(
@@ -146,17 +154,21 @@ impl SettingsView {
             .child(row(
                 "ui.auto_lock",
                 h_flex().gap_2().children(
-                    ["ui.never", "ui.minute", "ui.five_minutes"]
+                    ["ui.minute", "ui.five_minutes", "ui.fifteen_minutes"]
                         .into_iter()
                         .enumerate()
                         .map(|(index, label)| {
                             Button::new(("autolock", index))
                                 .ghost()
-                                .selected(self.auto_lock == index)
+                                .selected(
+                                    self.store.read(cx).idle_seconds() == [60, 300, 900][index],
+                                )
+                                .disabled(self.store.read(cx).settings_busy())
                                 .label(tr(label))
                                 .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.auto_lock = index;
-                                    cx.notify();
+                                    this.store.update(cx, |store, cx| {
+                                        store.set_idle([60, 300, 900][index], cx)
+                                    });
                                 }))
                         }),
                 ),
@@ -171,36 +183,62 @@ impl SettingsView {
                         .map(|(index, label)| {
                             Button::new(("clipboard", index))
                                 .ghost()
-                                .selected(self.clipboard == index)
+                                .selected(
+                                    self.store.read(cx).local().clipboard_seconds
+                                        == [None, Some(30), Some(60)][index],
+                                )
+                                .disabled(self.store.read(cx).settings_busy())
                                 .label(tr(label))
                                 .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.clipboard = index;
-                                    cx.notify();
+                                    let mut local = this.store.read(cx).local().clone();
+                                    local.clipboard_seconds = [None, Some(30), Some(60)][index];
+                                    this.store
+                                        .update(cx, |store, cx| store.save_local(local, cx));
                                 }))
                         }),
                 ),
                 cx,
             ))
+            .child(row(
+                "ui.custom_intervals",
+                h_flex()
+                    .gap_2()
+                    .child(
+                        Button::new("custom-idle")
+                            .label(format!(
+                                "{}: {} s",
+                                tr("ui.auto_lock"),
+                                self.store.read(cx).idle_seconds()
+                            ))
+                            .disabled(self.store.read(cx).settings_busy())
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.interval(false, window, cx)),
+                            ),
+                    )
+                    .child(
+                        Button::new("custom-clipboard")
+                            .label(tr("ui.clipboard_timeout"))
+                            .disabled(self.store.read(cx).settings_busy())
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.interval(true, window, cx)),
+                            ),
+                    ),
+                cx,
+            ))
             .child(section("ui.touch_id"))
             .child(row(
                 "ui.biometric",
-                Switch::new("biometric")
-                    .checked(self.biometric)
-                    .on_click(cx.listener(|this, checked, _, cx| {
-                        this.biometric = *checked;
-                        cx.notify();
-                    })),
+                Button::new("biometric")
+                    .disabled(true)
+                    .label(tr("ui.touch_id_unavailable")),
                 cx,
             ))
             .child(section("ui.connection"))
             .child(row(
                 "ui.relay",
-                Switch::new("relay")
-                    .checked(self.relay)
-                    .on_click(cx.listener(|this, checked, _, cx| {
-                        this.relay = *checked;
-                        cx.notify();
-                    })),
+                Button::new("relay")
+                    .disabled(true)
+                    .label(tr("ui.network_unavailable")),
                 cx,
             ))
             .child(
@@ -208,32 +246,95 @@ impl SettingsView {
                     .px_6()
                     .text_xs()
                     .text_color(cx.theme().muted_foreground)
-                    .child(tr("ui.settings_sample")),
+                    .child(tr("ui.local_settings_hint")),
             )
             .when_some(self.preferences.read(cx).error(), |el, error| {
                 el.child(div().p_4().text_color(cx.theme().danger).child(tr(error)))
             })
             .into_any_element()
     }
+    fn interval(&self, clipboard: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let initial = if clipboard {
+            self.store.read(cx).local().clipboard_seconds.unwrap_or(30)
+        } else {
+            self.store.read(cx).idle_seconds()
+        };
+        let store = self.store.clone();
+        forms::text_form(
+            if clipboard {
+                "ui.clipboard_timeout"
+            } else {
+                "ui.auto_lock"
+            },
+            vec![("ui.seconds", initial.to_string(), false)],
+            Box::new(move |values, _, _| {
+                let seconds = values[0]
+                    .parse::<u32>()
+                    .ok()
+                    .filter(|n| *n > 0)
+                    .ok_or(FormError::InvalidNumber)?;
+                let store = store.clone();
+                Ok(Some(Box::new(move |done, window, cx| {
+                    store.update(cx, |store, cx| {
+                        if clipboard {
+                            let mut local = store.local().clone();
+                            local.clipboard_seconds = Some(seconds);
+                            store.save_local_form(local, done, window, cx);
+                        } else {
+                            store.set_idle_form(seconds, done, window, cx);
+                        }
+                    })
+                })))
+            }),
+            window,
+            cx,
+        );
+    }
     fn database(&self, cx: &mut Context<Self>) -> AnyElement {
         let state = self.store.read(cx);
         if !state.state().is_unlocked() {
             return empty("ui.settings_locked", cx);
         }
-        let Some(id) = state.state().database else {
+        let Some(id) = state.state().database.as_ref() else {
             return empty("ui.settings_locked", cx);
         };
         let Some(database) = state.catalog().read(cx).database(id) else {
             return empty("ui.settings_locked", cx);
         };
+        let id = id.clone();
+        let policy = database.policy;
         v_flex()
             .gap_3()
             .p_6()
             .max_w(rems(58.))
             .child(row("name", database.name.clone(), cx))
-            .child(row("ui.description", database.description.clone(), cx))
-            .child(row("ui.managing_device", "MacBook Pro", cx))
-            .child(row("ui.storage", tr("ui.in_memory"), cx))
+            .child(row(
+                "ui.description",
+                database.description.clone().unwrap_or_default(),
+                cx,
+            ))
+            .when(database.metadata_conflict, |el| {
+                el.child(
+                    div()
+                        .px_6()
+                        .text_color(cx.theme().danger)
+                        .child(tr("ui.metadata_conflict")),
+                )
+            })
+            .child(row(
+                "ui.storage",
+                database.path.to_string_lossy().into_owned(),
+                cx,
+            ))
+            .child(row(
+                "ui.managing_device",
+                tr(if database.managing {
+                    "ui.this_device"
+                } else {
+                    "ui.another_device"
+                }),
+                cx,
+            ))
             .child(
                 h_flex()
                     .px_6()
@@ -241,60 +342,115 @@ impl SettingsView {
                     .child(
                         Button::new("database-info")
                             .label(tr("ui.database_info"))
+                            .disabled(!database.writable || database.metadata_conflict)
                             .on_click(cx.listener(move |this, _, window, cx| {
-                                forms::database(this.store.clone(), Some(id), window, cx)
+                                forms::database(this.store.clone(), Some(id.clone()), window, cx)
                             })),
                     )
                     .child(
                         Button::new("protection")
                             .label(tr("ui.protection"))
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                let initial = this
-                                    .protection
-                                    .get(&id)
-                                    .cloned()
-                                    .unwrap_or_else(|| "1.0".into());
-                                let settings = cx.entity().downgrade();
-                                forms::text_form(
-                                    "ui.protection",
-                                    vec![("ui.kdf_seconds", initial, false)],
-                                    Box::new(move |values, _, cx| {
-                                        let value = values[0]
-                                            .parse::<f64>()
-                                            .map_err(|_| FormError::InvalidNumber)?;
-                                        if !value.is_finite() || value <= 0. {
-                                            return Err(FormError::InvalidNumber);
-                                        }
-                                        // Closing the settings view cancels this presentation-only change.
-                                        let _ = settings.update(cx, |settings, cx| {
-                                            settings.protection.insert(id, values[0].clone());
-                                            cx.notify();
-                                        });
-                                        Ok(())
-                                    }),
-                                    window,
-                                    cx,
-                                )
-                            })),
+                            .disabled(!database.managing)
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.protection(window, cx)),
+                            ),
                     ),
             )
             .child(row(
                 "ui.kdf_seconds",
-                self.protection
-                    .get(&id)
-                    .cloned()
-                    .unwrap_or_else(|| "1.0".into()),
+                format!("{:.3}", f64::from(policy.kdf_target_ms()) / 1000.),
                 cx,
             ))
-            .child(row("ui.attachment_limit", "100 MiB", cx))
-            .child(
-                div()
-                    .px_6()
-                    .text_xs()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(tr("ui.settings_sample")),
-            )
+            .child(row(
+                "ui.attachment_limit",
+                format!("{} MiB", policy.attachment_bytes() / (1024 * 1024)),
+                cx,
+            ))
+            .child(row(
+                "ui.total_attachment_limit",
+                format!("{} MiB", policy.total_attachment_bytes() / (1024 * 1024)),
+                cx,
+            ))
             .into_any_element()
+    }
+    fn protection(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let state = self.store.read(cx);
+        let Some(connection) = state.connection().cloned() else {
+            return;
+        };
+        let Some(database) = state.catalog().read(cx).database(&connection.database) else {
+            return;
+        };
+        let policy = database.policy;
+        let Ok(operation) = taypeer_services::new_operation_id()
+            .map(|id| taypeer_trust::Digest::of(id.as_str().as_bytes()))
+        else {
+            return;
+        };
+        let store = self.store.clone();
+        forms::text_form(
+            "ui.protection",
+            vec![
+                (
+                    "ui.kdf_seconds",
+                    format!("{:.3}", f64::from(policy.kdf_target_ms()) / 1000.),
+                    false,
+                ),
+                (
+                    "ui.attachment_limit",
+                    (policy.attachment_bytes() / (1024 * 1024)).to_string(),
+                    false,
+                ),
+                (
+                    "ui.total_attachment_limit",
+                    (policy.total_attachment_bytes() / (1024 * 1024)).to_string(),
+                    false,
+                ),
+                ("password", String::new(), true),
+            ],
+            Box::new(move |values, _, _| {
+                let seconds: f64 = values[0].parse().map_err(|_| FormError::InvalidNumber)?;
+                if !seconds.is_finite() || !(0.5..=5.).contains(&seconds) {
+                    return Err(FormError::InvalidNumber);
+                }
+                let bytes = |value: &str| {
+                    value
+                        .parse::<u64>()
+                        .ok()
+                        .and_then(|n| n.checked_mul(1024 * 1024))
+                        .ok_or(FormError::InvalidNumber)
+                };
+                let updated = taypeer_core::DatabasePolicy::new(
+                    bytes(&values[1])?,
+                    bytes(&values[2])?,
+                    (seconds * 1000.).round() as u32,
+                )
+                .map_err(|_| FormError::InvalidNumber)?;
+                let password = (policy.kdf_target_ms() != updated.kdf_target_ms())
+                    .then(|| zeroize::Zeroizing::new(values[3].as_bytes().to_vec()));
+                let ticket = connection.command::<serde_json::Value>(
+                    taypeer_runtime::Command::SetDatabasePolicy {
+                        operation,
+                        policy: updated,
+                        password,
+                    },
+                );
+                let store = store.clone();
+                Ok(Some(Box::new(move |done, _, cx| {
+                    store.update(cx, |store, _| {
+                        store.watch(ticket, move |store, result, window, cx| {
+                            let result = result.map(|_| ()).map_err(FormError::Runtime);
+                            if result.is_ok() {
+                                store.refresh(cx);
+                            }
+                            done(result, window, cx);
+                        })
+                    });
+                })))
+            }),
+            window,
+            cx,
+        );
     }
 }
 impl Render for SettingsView {

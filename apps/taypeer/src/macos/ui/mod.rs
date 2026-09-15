@@ -1,13 +1,15 @@
-//! Component-based UI prototype. Only appearance preferences cross a disk boundary.
+//! GPUI Kit screens backed by independent presentation stores and the Rust runtime.
 
 use gpui_kit::prelude::FluentBuilder;
 mod appearance;
+mod clipboard;
 mod editor;
 mod entries;
 mod forms;
 mod generator;
 mod header;
 mod icons;
+mod images;
 mod inspector;
 mod session;
 mod settings;
@@ -67,8 +69,25 @@ impl AppView {
         let preferences = cx.new(|_| PreferencesStore::load());
         rust_i18n::set_locale(preferences.read(cx).values().language.code());
         preferences.update(cx, |prefs, cx| prefs.apply(window, cx));
-        let catalog = cx.new(|_| CatalogStore::samples());
+        cx.set_global(images::Images::default());
+        let catalog = cx.new(|_| CatalogStore::default());
         let store = cx.new(|cx| WorkspaceStore::new(catalog, cx));
+        store.update(cx, |_, cx| {
+            cx.spawn_in(window, async move |store, cx| {
+                loop {
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_millis(50))
+                        .await;
+                    if store
+                        .update_in(cx, |store, window, cx| store.poll(window, cx))
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            })
+            .detach();
+        });
         let header = cx.new(|cx| header::Header::new(store.clone(), cx));
         let sidebar = cx.new(|cx| sidebar::Sidebar::new(store.clone(), window, cx));
         let entries = cx.new(|cx| entries::Entries::new(store.clone(), window, cx));
@@ -85,6 +104,7 @@ impl AppView {
                 this.unlocked = unlocked;
                 cx.notify();
             }),
+            cx.observe_keystrokes(|this, _, _, cx| this.store.read(cx).activity()),
             cx.observe(&preferences, |_, _, cx| cx.notify()),
             cx.observe_window_appearance(window, |this, window, cx| {
                 this.preferences
@@ -221,7 +241,8 @@ impl AppView {
             .read(cx)
             .state()
             .database
-            .is_some_and(|db| self.store.read(cx).state().suspended.contains_key(&db));
+            .as_ref()
+            .is_some_and(|db| self.store.read(cx).state().suspended.contains_key(db));
         v_flex()
             .size_full()
             .when(suspended, |el| {
@@ -257,7 +278,13 @@ impl Render for AppView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let body = self.body(window, cx);
         let store = self.store.read(cx);
-        let active = store.state().database.is_some();
+        let active = store.state().is_unlocked();
+        let file_bytes = store
+            .state()
+            .database
+            .as_ref()
+            .and_then(|db| store.catalog().read(cx).database(db))
+            .map_or(0, |db| db.file_bytes);
         let notice = store.notice().or(self.preferences.read(cx).error());
         v_flex()
             .size_full()
@@ -266,6 +293,8 @@ impl Render for AppView {
             .text_sm()
             .track_focus(&self.focus)
             .key_context("Taypeer")
+            .capture_key_down(cx.listener(|this, _, _, cx| this.store.read(cx).activity()))
+            .capture_any_mouse_down(cx.listener(|this, _, _, cx| this.store.read(cx).activity()))
             .on_action(cx.listener(|this, _: &FocusSearch, window, cx| {
                 if window.has_active_dialog(cx) {
                     return;
@@ -322,13 +351,15 @@ impl Render for AppView {
                 if window.has_active_dialog(cx) {
                     return;
                 }
-                forms::choose_sample(this.store.clone(), window, cx)
+                forms::choose_file(this.store.clone(), window, cx)
             }))
             .on_action(cx.listener(|this, _: &CreateDatabase, window, cx| {
                 if window.has_active_dialog(cx) {
                     return;
                 }
-                forms::database(this.store.clone(), None, window, cx)
+                this.store.update(cx, |store, cx| {
+                    store.navigate(Destination::CreateDatabase, window, cx)
+                })
             }))
             .on_action(cx.listener(|this, _: &CloseWindow, window, cx| {
                 if window.has_active_dialog(cx) {
@@ -350,7 +381,8 @@ impl Render for AppView {
                     .text_xs()
                     .text_color(cx.theme().muted_foreground)
                     .when(active, |el| {
-                        el.child(style::icon("database")).child(tr("ui.in_memory"))
+                        el.child(style::icon("database"))
+                            .child(format!("{file_bytes} B"))
                     })
                     .when_some(notice, |el, notice| el.child(tr(notice)))
                     .child(div().flex_1())

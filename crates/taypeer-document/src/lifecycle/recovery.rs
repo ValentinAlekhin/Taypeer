@@ -151,7 +151,7 @@ impl Document {
     /// This explicit API does not expose content already covered by a purge.
     pub fn preview_source(&self, id: &str) -> Result<SourcePreview, Error> {
         let source = self.late_source(id)?;
-        let basis = self.at_heads(&[source.change])?;
+        let basis = self.at_heads(std::slice::from_ref(&source.change))?;
         match source.address.object {
             ObjectId::Group(_) => Ok(SourcePreview::Group(groups::read_group(
                 &basis.doc,
@@ -181,6 +181,13 @@ impl Document {
             return Err(Error::InvalidContext);
         }
         let preview = self.preview_source(&source.id)?;
+        let description = if matches!(source.address.object, ObjectId::Group(_)) {
+            let basis = self.at_heads(std::slice::from_ref(&source.change))?;
+            let object = objects::generation_object(&basis.doc, &source.address)?;
+            crate::metadata::optional_text(&basis.doc, &object, "description")?
+        } else {
+            None
+        };
         let destination = self.destination(request.destination.clone())?;
         if matches!(source.address.object, ObjectId::Entry(_)) && destination.is_none() {
             return Err(Error::InvalidContext);
@@ -270,6 +277,7 @@ impl Document {
                     }
                 };
                 tx.put(&node, "icon", encode(icon)?)?;
+                tx.put(&node, "description", encode(&description)?)?;
                 tx.put(&node, "created_at", created)?;
                 objects::record_event(&mut tx, &target, None)?;
             }

@@ -68,8 +68,8 @@ pub(super) fn section(title: &str) -> AnyElement {
         .child(tr(title))
         .into_any_element()
 }
-pub(super) fn stamp(sequence: u64) -> String {
-    format!("2026-09-15 10:{:02}", sequence % 60)
+pub(super) fn stamp(time: i64) -> String {
+    crate::ui_state::format_date(time)
 }
 
 /// Kit's plain Dialog requires an explicit footer; actions retain its focus trap.

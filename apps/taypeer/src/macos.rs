@@ -3,6 +3,7 @@
 mod actions;
 mod assets;
 mod common;
+mod platform;
 mod ui;
 
 use assets::ProductAssets;
@@ -14,6 +15,9 @@ pub fn run() {
         .with_assets(ProductAssets)
         .run(|cx| {
             gpui_kit::init(cx);
+            if let Ok(platform) = platform::Platform::start() {
+                cx.set_global(platform);
+            }
             actions::bind(cx);
             ui::bind(cx);
             let options = WindowOptions {
@@ -23,7 +27,7 @@ pub fn run() {
             };
             cx.spawn(async move |cx| {
                 if let Err(error) = cx.open_window(options, |window, cx| {
-                    window.set_window_title("Taypeer · UI demo");
+                    window.set_window_title("Taypeer");
                     let view = cx.new(|cx| ui::AppView::new(window, cx));
                     cx.activate(true);
                     cx.new(|cx| Root::new(view, window, cx))

@@ -19,6 +19,8 @@ pub(crate) struct Boot {
     pub path: PathBuf,
     pub password: String,
     pub create_name: Option<String>,
+    #[serde(default)]
+    pub create_form: Option<taypeer_services::CreateDatabase>,
     pub profile: PathBuf,
     pub spool: PathBuf,
     pub invitation: Option<taypeer_trust::Invitation>,
@@ -34,6 +36,46 @@ impl Drop for Boot {
 /// No command implicitly reveals a protected value.
 #[derive(Serialize, Deserialize)]
 pub enum Command {
+    /// Read authenticated descriptive metadata.
+    DatabaseInfo,
+    /// Confirm descriptive fields in a single durable transaction.
+    SetDatabaseInfo {
+        /// Exact name.
+        name: String,
+        /// Exact optional description.
+        description: Option<String>,
+    },
+    /// Read detailed group forms.
+    GroupInfo,
+    /// Confirm the complete group form once.
+    SaveGroup {
+        /// Complete form.
+        form: taypeer_services::GroupForm,
+        /// Stable retry identity.
+        operation: OperationId,
+    },
+    /// Read the masked active editor including restored input.
+    EditorView,
+    /// Address one attribute without revealing unchanged secret values.
+    PatchAttribute {
+        /// Addressed fields.
+        patch: taypeer_services::AttributePatch,
+        /// Remove the exact identity.
+        remove: bool,
+    },
+    /// Preserve unfinished expiration input in the service draft.
+    DraftExpiry(Option<String>),
+    /// Explicitly reveal an active editor secret.
+    RevealEditor(Option<AttributeId>),
+    /// Explicitly reveal a historical password or attribute.
+    RevealRevision {
+        /// Target entry.
+        entry: EntryId,
+        /// Saved version.
+        revision: RevisionId,
+        /// Attribute, or password when absent.
+        attribute: Option<AttributeId>,
+    },
     /// Read the unlocked session's authenticated format compatibility.
     Compatibility,
     /// Create a separate trust set without modifying the readable original.
@@ -112,6 +154,8 @@ pub enum Command {
     },
     /// Read binary-only metadata from an explicit scope.
     BinaryView(taypeer_services::BinaryTarget),
+    /// Read a validated inline icon from an already accessible local binary scope.
+    IconPreview(taypeer_services::BinaryTarget),
     /// Stage or confirm a retryable binary command.
     EditBinary {
         /// Explicit source and target; binary bytes never enter JSON IPC.
@@ -359,6 +403,21 @@ impl Command {
     /// Erase owned form input after dispatch; retained user copies remain caller-owned.
     pub fn erase_input(&mut self) {
         match self {
+            Self::SetDatabaseInfo { name, description } => {
+                name.zeroize();
+                description.zeroize();
+            }
+            Self::SaveGroup { form, .. } => {
+                form.name.zeroize();
+                form.description.zeroize();
+            }
+            Self::DraftExpiry(value) => value.zeroize(),
+            Self::PatchAttribute { patch, .. } => {
+                patch.name.zeroize();
+                if let taypeer_services::FieldUpdate::Set(value) = &mut patch.value {
+                    value.zeroize();
+                }
+            }
             Self::CreateEntry { patch, .. }
             | Self::UpdateEntry { patch, .. }
             | Self::PatchDraft(patch) => patch.erase(),

@@ -45,6 +45,15 @@ pub struct EntrySummary {
     pub url: Option<String>,
     /// Whether the row requires conflict resolution before editing.
     pub has_conflicts: bool,
+    /// Ordinary notes for an explicitly enabled table column.
+    #[serde(default)]
+    pub notes: Option<String>,
+    /// Last content modification in UTC milliseconds.
+    #[serde(default)]
+    pub modified_at: i64,
+    /// Masked row appearance; unknown/conflicted values use the default.
+    #[serde(default)]
+    pub appearance: taypeer_core::Appearance,
 }
 
 /// A search row with the database and group needed to navigate to its source.
@@ -214,6 +223,9 @@ redacted_debug!(
 pub struct SecretValue(zeroize::Zeroizing<String>);
 
 impl SecretValue {
+    pub(crate) fn new(value: String) -> Self {
+        Self(zeroize::Zeroizing::new(value))
+    }
     /// Borrow the revealed text for a current, explicitly requested UI presentation.
     pub fn expose(&self) -> &str {
         &self.0
@@ -264,6 +276,9 @@ pub(super) fn entry_summary(entry: EntrySnapshot) -> EntrySummary {
         username: fields.username,
         url: fields.url,
         has_conflicts,
+        notes: fields.notes,
+        modified_at: entry.modified_at,
+        appearance: fields.appearance,
     }
 }
 

@@ -19,7 +19,10 @@ use serde_json::Value;
 use session::{DraftDisposition, LockOutcome, LockReason, SessionController};
 use std::{
     path::Path,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 use taypeer_core::DatabaseId;
 use taypeer_sync::CoordinatorEvent;
@@ -32,6 +35,7 @@ pub struct Worker {
     watch: tokio::task::JoinHandle<()>,
     apply_task: tokio::task::JoinHandle<()>,
     application: Arc<Mutex<Option<Result<Value, RuntimeError>>>>,
+    application_revision: Arc<AtomicU64>,
     _sessions: SessionController,
 }
 impl Worker {
@@ -46,6 +50,7 @@ impl Worker {
             path: profile.directory().to_owned(),
             password: String::new(),
             create_name: None,
+            create_form: None,
             profile: profile.directory().to_owned(),
             spool: spool.path().to_owned(),
             invitation: Some(invitation),
@@ -70,7 +75,7 @@ impl Worker {
         executable: &Path,
         path: &Path,
         password: String,
-        create_name: Option<String>,
+        create_form: Option<taypeer_services::CreateDatabase>,
         context: Arc<HostContext>,
         runtime: &tokio::runtime::Handle,
         sessions: &SessionController,
@@ -83,7 +88,8 @@ impl Worker {
         let mut boot = Boot {
             path: path.to_owned(),
             password,
-            create_name,
+            create_name: None,
+            create_form,
             profile: context.profile.directory().to_owned(),
             spool: directory.clone(),
             invitation: None,
@@ -110,6 +116,8 @@ impl Worker {
         let weak = Arc::downgrade(&client);
         let watched_database = database.clone();
         let application = Arc::new(Mutex::new(None));
+        let application_revision = Arc::new(AtomicU64::new(0));
+        let revision = Arc::clone(&application_revision);
         let updates = Arc::clone(&application);
         let (apply_send, mut apply_receive) = tokio::sync::mpsc::channel(1);
         let apply_client = Arc::downgrade(&client);
@@ -119,6 +127,7 @@ impl Worker {
                     break;
                 };
                 let updates = Arc::clone(&updates);
+                let revision = Arc::clone(&revision);
                 let _ = tokio::task::spawn_blocking(move || {
                     let mut result = client.request(&Command::ApplyReceived, false);
                     if client.control.check(false).is_ok()
@@ -128,6 +137,7 @@ impl Worker {
                             erase_view(value);
                         }
                         *status = Some(result);
+                        revision.fetch_add(1, Ordering::Release);
                     } else if let Ok(value) = &mut result {
                         erase_view(value);
                     }
@@ -176,8 +186,13 @@ impl Worker {
             watch,
             apply_task,
             application,
+            application_revision,
             _sessions: sessions.clone(),
         })
+    }
+    /// Independent control handle; does not wait for command I/O or own plaintext.
+    pub fn control(&self) -> WorkerControl {
+        WorkerControl(Arc::clone(&self.client.control))
     }
     /// Logical identity authenticated during opening.
     pub fn database_id(&self) -> &DatabaseId {
@@ -200,6 +215,11 @@ impl Worker {
             return None;
         }
         result
+    }
+    /// Nonsecret change counter for background application, including identical reports.
+    /// A view must still check its session before accepting a subsequent query result.
+    pub fn application_revision(&self) -> u64 {
+        self.application_revision.load(Ordering::Acquire)
     }
     /// Nonsecret generation, phase and shutdown outcome.
     pub fn session_status(&self) -> session::SessionStatus {
@@ -254,5 +274,29 @@ impl Drop for Worker {
         {
             erase_view(value);
         }
+    }
+}
+
+/// Nonsecret control of one process generation, independent of its command queue.
+#[derive(Clone)]
+pub struct WorkerControl(Arc<session::ProcessControl>);
+impl WorkerControl {
+    /// Wait off the UI thread for the supervisor's bounded process shutdown.
+    pub fn wait_closed(&self) -> Result<LockOutcome, RuntimeError> {
+        self.0.wait_closed()
+    }
+
+    /// Immediately revoke this generation, even during a running command.
+    pub fn invalidate(&self, reason: LockReason) {
+        self.0.invalidate(reason);
+    }
+    /// Observe the current phase and durable draft outcome.
+    pub fn status(&self) -> session::SessionStatus {
+        self.0.activity.expire();
+        self.0.status()
+    }
+    /// Check that this generation still accepts access.
+    pub fn is_open(&self) -> bool {
+        self.0.check(false).is_ok()
     }
 }

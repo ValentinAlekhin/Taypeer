@@ -8,18 +8,23 @@ model {
     }
     workspace = component 'Состояние окна' {
       #partial
-      description 'Навигация, открытые демобазы, поиск, выбор и отложенные переходы. Координирует команды независимых владельцев состояния.'
+      description 'Навигация, открытые файлы БД, поиск, выбор и отложенные переходы. Координирует команды независимых владельцев состояния.'
       metadata { source 'apps/taypeer/src/macos/ui/workspace.rs'; contract 'docs/macos-ui.md' }
     }
     editor = component 'Черновик UI' {
       #partial
-      description 'Один черновик вкладок Обзор, Дополнительно и Вид; отмена, подтверждение и временное восстановление после демоблокировки.'
+      description 'Ввод трёх вкладок и состояние доставки правок. Подтверждённый черновик принадлежит сервису; открытые копии удаляются при блокировке.'
       metadata { source 'apps/taypeer/src/ui_state/draft.rs'; contract 'docs/macos-ui.md' }
     }
-    catalog = store 'Демонстрационные данные UI' {
+    catalog = store 'Загруженные представления UI' {
       #partial
-      description 'Искусственные БД, группы, записи и версии только в памяти. Не вызывает Rust-сервис, криптографию или сеть.'
+      description 'Каталог путей, маскированные строки и выбранные детали. Не содержит полный документ и секреты закрытых сессий.'
       metadata { source 'apps/taypeer/src/ui_state/catalog.rs'; contract 'docs/macos-ui.md' }
+    }
+    runtime = component 'Адаптер Rust-команд' {
+      #partial
+      description 'Фоновые команды отдельных процессов БД. Типизированные результаты, поколения сессий и независимое закрытие доступа.'
+      metadata { source 'apps/taypeer/src/backend.rs'; contract 'docs/macos-ui.md'; evidence 'crates/taypeer-runtime/src/worker/tests/presentation.rs' }
     }
     preferences = component 'Настройки оформления UI' {
       #partial
@@ -29,8 +34,11 @@ model {
   }
   taypeer.mac.ui -> taypeer.mac.workspace 'События навигации и представления'
   taypeer.mac.ui -> taypeer.mac.editor 'Ввод и отображение черновика'
-  taypeer.mac.workspace -> taypeer.mac.catalog 'Запросы и подтверждённые демоправки'
-  taypeer.mac.workspace -> taypeer.mac.editor 'Открыть, подтвердить, отменить или приостановить'
+  taypeer.mac.workspace -> taypeer.mac.catalog 'Обновить представления актуального поколения'
+  taypeer.mac.workspace -> taypeer.mac.editor 'Ввод, подтверждение и отмена'
+  taypeer.mac.workspace -> taypeer.mac.runtime 'Типизированные команды и ответы'
+  taypeer.mac.runtime -> taypeer.secretWorker 'Приватный IPC; отдельный процесс для БД'
+  taypeer.mac.runtime -> taypeer.sessionGuard 'Активность, наблюдение и блокировка'
   taypeer.mac.ui -> taypeer.mac.preferences 'Настройки и подписка на оформление'
   taypeer.mac.preferences -> taypeer.theme 'Семантические палитры'
   taypeer.mac.preferences -> taypeer.local 'Только несекретное оформление'
@@ -38,19 +46,21 @@ model {
 views 'macOS UI' {
   view macosUi {
     title 'Компоненты и состояние macOS UI'
-    description 'Единственный macOS UI на искусственных данных. Интеграция с рабочими БД отложена.'
-    include taypeer.mac.*, taypeer.theme, taypeer.local
+    description 'Подключение компонентов к общему runtime; UI не владеет открытым документом.'
+    include taypeer.mac.*, taypeer.secretWorker, taypeer.sessionGuard, taypeer.theme, taypeer.local
     autoLayout LeftRight
   }
   dynamic view uiEdit {
-    title 'Правки в демонстрационном UI'
+    title 'Подтверждение правок macOS UI'
     taypeer.mac.ui -> taypeer.mac.workspace 'Открыть запись'
-    taypeer.mac.workspace -> taypeer.mac.catalog 'Прочитать демонстрационную запись'
+    taypeer.mac.workspace -> taypeer.mac.runtime 'Начать сервисный черновик'
     taypeer.mac.workspace -> taypeer.mac.editor 'Создать общий черновик вкладок'
     taypeer.mac.ui -> taypeer.mac.editor 'Изменить поля'
     taypeer.mac.ui -> taypeer.mac.workspace 'Подтвердить'
-    taypeer.mac.workspace -> taypeer.mac.editor 'Проверить форму и получить черновик'
-    taypeer.mac.workspace -> taypeer.mac.catalog 'Обновить запись и историю в памяти'
+    taypeer.mac.workspace -> taypeer.mac.editor 'Дождаться доставки ввода и заморозить редактор'
+    taypeer.mac.workspace -> taypeer.mac.runtime 'Доставить ввод и подтвердить надёжное сохранение'
+    taypeer.mac.runtime -> taypeer.secretWorker 'Команды текущего поколения'
+    taypeer.mac.workspace -> taypeer.mac.catalog 'Обновить после подтверждения'
     taypeer.mac.ui <- taypeer.mac.workspace 'Показать актуальное состояние'
   }
 }

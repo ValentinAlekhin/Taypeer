@@ -438,6 +438,10 @@ impl Document {
                 now,
             )?;
             tx.put(&target, "icon", encode(&original.icons[0])?)?;
+            let original_object = objects::generation_object(&self.doc, address)?;
+            let description =
+                crate::metadata::optional_text(&self.doc, &original_object, "description")?;
+            tx.put(&target, "description", encode(&description)?)?;
             objects::record_event(&mut tx, target_address, None)?;
         }
         for address in &selected {

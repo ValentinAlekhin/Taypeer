@@ -392,6 +392,9 @@ fn purge_rejects_new_unreviewed_conflicts_without_mutation() {
 fn recovered_parent_never_adopts_late_children_of_its_old_generation() {
     let (mut doc, group, destination, _) = fixture();
     let mut offline = doc.fork();
+    offline
+        .set_group_description(&group, Some("PUBLIC recovered description".into()), 4)
+        .unwrap();
     let child = offline
         .create_group("PUBLIC late child".into(), Some(group.clone()), 4)
         .unwrap()
@@ -433,6 +436,10 @@ fn recovered_parent_never_adopts_late_children_of_its_old_generation() {
         30,
     )
     .unwrap();
+    assert_eq!(
+        doc.group_description(&group).unwrap().as_deref(),
+        Some("PUBLIC recovered description")
+    );
     let child_state = doc
         .tree()
         .unwrap()

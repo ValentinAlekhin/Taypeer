@@ -8890,12 +8890,19 @@ dependencies = [
 name = "taypeer"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "gpui-kit",
  "rust-i18n 3.1.5",
  "serde",
  "serde_json",
+ "taypeer-core",
+ "taypeer-runtime",
  "taypeer-services",
+ "taypeer-storage",
+ "taypeer-trust",
+ "tempfile",
  "toml 0.9.12+spec-1.1.0",
+ "zeroize",
 ]
 
 [[package]]

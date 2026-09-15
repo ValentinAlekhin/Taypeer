@@ -38,6 +38,15 @@ impl EditorView {
                 )
             })
             .collect();
+        if content.has_password
+            && let Some((_, password)) = fields
+                .iter()
+                .find(|(field, _)| *field == EntryField::Password)
+        {
+            password.update(cx, |input, cx| {
+                input.set_placeholder("••••••••••", window, cx)
+            });
+        }
         let notes = cx.new(|cx| {
             let mut state = TextareaState::new(window, cx);
             state.set_value(content.notes.clone(), window, cx);
@@ -89,13 +98,19 @@ impl EditorView {
         let mut result = v_flex();
         for (entry_field, input) in &self.fields {
             let mut control = h_flex().gap_1().child(
-                div().flex_1().min_w_0().child(
-                    field(input, entry_field.key())
-                        .appearance(false)
-                        .when(*entry_field == EntryField::Password, |input| {
-                            input.mask_toggle()
-                        }),
-                ),
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .child(super::clipboard::secret_field(
+                        field(input, entry_field.key())
+                            .disabled(!self.editor.read(cx).editable())
+                            .appearance(false)
+                            .when(*entry_field == EntryField::Password, |input| {
+                                input.mask_toggle()
+                            }),
+                        input,
+                        *entry_field == EntryField::Password,
+                    )),
             );
             if *entry_field == EntryField::Password {
                 control =
@@ -105,12 +120,54 @@ impl EditorView {
                         }),
                     ));
             }
+            if *entry_field == EntryField::Password {
+                control = control
+                    .child(
+                        icon_button("load-password", "eye", "ui.reveal_current")
+                            .disabled(self.editor.read(cx).busy())
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.editor.update(cx, |editor, cx| {
+                                    editor.reveal(None);
+                                    cx.notify();
+                                });
+                            })),
+                    )
+                    .child(
+                        icon_button("clear-password", "x", "ui.clear_value").on_click(cx.listener(
+                            |this, _, _, cx| {
+                                this.editor.update(cx, |editor, cx| {
+                                    editor.clear_field(EntryField::Password);
+                                    cx.notify();
+                                });
+                            },
+                        )),
+                    );
+            }
             if *entry_field == EntryField::Url {
                 control = control.child(icon_button("favicon", "download", "ui.favicon").on_click(
                     cx.listener(|this, _, window, cx| {
-                        forms::image_sample(this.editor.clone(), window, cx)
+                        this.editor.update(cx, |editor, cx| {
+                            editor.binary(taypeer_services::BinaryEdit::Icon(
+                                taypeer_services::IconInput::Favicon(None),
+                            ));
+                            cx.notify();
+                        });
+                        let _ = window;
                     }),
                 ));
+            }
+            if !matches!(entry_field, EntryField::Password | EntryField::Title) {
+                let field = *entry_field;
+                control = control.child(
+                    icon_button(("clear-field", field as usize), "x", "ui.clear_value")
+                        .disabled(!self.editor.read(cx).editable())
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.editor.update(cx, |editor, cx| {
+                                editor.clear_field(field);
+                                cx.notify();
+                            });
+                        })),
+                );
             }
             result = result.child(row(entry_field.key(), control, cx));
         }
@@ -118,6 +175,7 @@ impl EditorView {
             .child(row(
                 "notes",
                 Textarea::new(&self.notes)
+                    .disabled(!self.editor.read(cx).editable())
                     .aria_label(tr("notes"))
                     .appearance(false)
                     .bordered(false)
@@ -134,16 +192,20 @@ impl EditorView {
                 .pr_3()
                 .child(section("attributes"))
                 .child(
-                    icon_button("add-attribute", "plus", "add_attribute").on_click(cx.listener(
-                        |this, _, window, cx| {
+                    icon_button("add-attribute", "plus", "add_attribute")
+                        .disabled(self.editor.read(cx).busy() || !self.editor.read(cx).editable())
+                        .on_click(cx.listener(|this, _, window, cx| {
                             forms::attribute(this.editor.clone(), None, window, cx)
-                        },
-                    )),
+                        })),
                 ),
         );
         for (index, attribute) in content.attributes.iter().enumerate() {
             let value = if attribute.protected {
-                "••••••••••••".into()
+                if attribute.value.is_empty() {
+                    "••••••••••••".into()
+                } else {
+                    attribute.value.clone()
+                }
             } else {
                 attribute.value.clone()
             };
@@ -157,9 +219,25 @@ impl EditorView {
                     .border_color(cx.theme().border)
                     .child(div().w(rems(9.)).truncate().child(attribute.key.clone()))
                     .child(div().flex_1().min_w_0().truncate().child(value))
+                    .when(attribute.protected, |row| {
+                        let id = attribute.id.clone();
+                        row.child(
+                            icon_button(("reveal-attribute", index), "eye", "ui.reveal_current")
+                                .disabled(self.editor.read(cx).busy())
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.editor.update(cx, |editor, cx| {
+                                        editor.reveal(id.clone());
+                                        cx.notify();
+                                    });
+                                })),
+                        )
+                    })
                     .child(
                         Checkbox::new(("protect", index))
                             .checked(attribute.protected)
+                            .disabled(
+                                self.editor.read(cx).busy() || !self.editor.read(cx).editable(),
+                            )
                             .accessibility_label(tr("protected"))
                             .tooltip(tr("protected"))
                             .on_click(move |checked, _, cx| {
@@ -180,16 +258,18 @@ impl EditorView {
                             })),
                     )
                     .child(
-                        icon_button(("remove-attribute", index), "x", "remove").on_click(
-                            cx.listener(move |this, _, _, cx| {
+                        icon_button(("remove-attribute", index), "x", "remove")
+                            .disabled(
+                                self.editor.read(cx).busy() || !self.editor.read(cx).editable(),
+                            )
+                            .on_click(cx.listener(move |this, _, _, cx| {
                                 this.editor.update(cx, |editor, cx| {
                                     editor.edit(|content| {
                                         content.attributes.remove(index);
                                     });
                                     cx.notify();
                                 })
-                            }),
-                        ),
+                            })),
                     ),
             );
         }
@@ -222,11 +302,10 @@ impl EditorView {
                             .truncate()
                             .child(attachment.name.clone()),
                     )
-                    .child(
-                        div()
-                            .text_xs()
-                            .child(format!("{} KiB", attachment.bytes / 1024)),
-                    )
+                    .child(div().text_xs().child(attachment.bytes.map_or_else(
+                        || tr("ui.attachment_unavailable").to_string(),
+                        |bytes| format!("{} KiB", bytes / 1024),
+                    )))
                     .child(
                         icon_button(
                             ("rename-attachment", index),
@@ -259,7 +338,7 @@ impl EditorView {
                     .p_6()
                     .text_xs()
                     .text_color(cx.theme().muted_foreground)
-                    .child(tr("ui.demo_attachments")),
+                    .child(tr("ui.attachments_hint")),
             )
             .into_any_element()
     }
@@ -270,7 +349,11 @@ impl EditorView {
                 "ui.icon",
                 h_flex()
                     .gap_3()
-                    .child(icon(&content.icon))
+                    .child(super::images::stored_icon(
+                        &content.icon,
+                        content.icon_blob.as_ref(),
+                        cx,
+                    ))
                     .child(
                         Button::new("choose-icon")
                             .label(tr("ui.choose_icon"))
@@ -292,11 +375,19 @@ impl EditorView {
                             })),
                     )
                     .child(
+                        Button::new("image-file")
+                            .ghost()
+                            .label(tr("ui.image_file"))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                forms::image_file(this.editor.clone(), window, cx)
+                            })),
+                    )
+                    .child(
                         Button::new("image-url")
                             .ghost()
                             .label(tr("ui.image_url"))
                             .on_click(cx.listener(|this, _, window, cx| {
-                                forms::image_sample(this.editor.clone(), window, cx)
+                                forms::image_url(this.editor.clone(), window, cx)
                             })),
                     ),
                 cx,
@@ -348,7 +439,11 @@ impl EditorView {
                     .child(
                         h_flex()
                             .gap_3()
-                            .child(icon(&content.icon))
+                            .child(super::images::stored_icon(
+                                &content.icon,
+                                content.icon_blob.as_ref(),
+                                cx,
+                            ))
                             .child(content.title.clone()),
                     ),
             )

@@ -167,3 +167,30 @@ pub struct FaviconResult {
     /// Categorized acquisition or persistence error, without response contents.
     pub error: Option<ServiceError>,
 }
+
+/// Validated local image bytes for a bounded inline preview; never fetched from the network.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct IconPreview {
+    /// Opaque stored identity.
+    pub blob: BlobId,
+    /// Validated image encoding.
+    pub encoding: IconEncoding,
+    /// At most the product icon limit; erases this allocation on drop.
+    pub bytes: zeroize::Zeroizing<Vec<u8>>,
+}
+/// Image encodings accepted by the shared icon validator.
+#[derive(Clone, Copy, Serialize, Deserialize)]
+pub enum IconEncoding {
+    /// PNG raster.
+    Png,
+    /// JPEG raster.
+    Jpeg,
+    /// WebP raster.
+    Webp,
+    /// GIF raster.
+    Gif,
+    /// ICO raster.
+    Ico,
+    /// SVG without external resources.
+    Svg,
+}
