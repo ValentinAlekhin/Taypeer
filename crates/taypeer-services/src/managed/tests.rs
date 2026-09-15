@@ -9,6 +9,120 @@ const PASSWORD: &[u8] = b"PUBLIC managed fixture password";
 const NEW_PASSWORD: &[u8] = b"PUBLIC independently rotated fixture password";
 
 #[test]
+fn receipt_revocation_and_kdf_changes_never_manage_backup_paths() {
+    let directory = tempfile::tempdir().unwrap();
+    let a = Profile::new(28);
+    let b = Profile::new(29);
+    let path = directory.path().join("a.taypeer");
+    let (mut service, session) = create(&a, path.clone());
+    service
+        .create_group(&session, "PUBLIC local group".into(), None)
+        .unwrap();
+    admit(&mut service, &session, &a, &b);
+    let peer_path = directory.path().join("b.taypeer");
+    copy_to(&a, &session.database, &peer_path);
+    let (mut peer, peer_session) = b.open(peer_path, PASSWORD);
+    peer.create_group(&peer_session, "PUBLIC incoming group".into(), None)
+        .unwrap();
+    deliver(&b, &a, &session.database);
+    service.apply_received(&session).unwrap();
+    assert_eq!(service.groups(&session).unwrap().value.len(), 2);
+    assert!(std::fs::read_dir(directory.path()).unwrap().all(|entry| {
+        let name = entry.unwrap().file_name();
+        let name = name.to_string_lossy();
+        !name.contains(".backups") && !name.contains(".before-")
+    }));
+
+    // Existing copies, even beyond the former ten-file limit, are user-owned files.
+    let backups = directory.path().join("a.taypeer.backups");
+    std::fs::create_dir(&backups).unwrap();
+    for index in 0..12 {
+        std::fs::write(
+            backups.join(format!("{index:020}.taypeer")),
+            b"PUBLIC old copy",
+        )
+        .unwrap();
+    }
+    let revoke = Digest::of(b"PUBLIC revoke without a backup");
+    let previous = directory
+        .path()
+        .join(format!("a.taypeer.before-{revoke}.taypeer"));
+    std::fs::write(&previous, b"PUBLIC unrelated old before file").unwrap();
+    service
+        .rotate_password(&session, revoke, NEW_PASSWORD, Some(b.identity().device))
+        .unwrap();
+    let rotated = a
+        .coordinator
+        .snapshot(&session.database)
+        .unwrap()
+        .fingerprint();
+    service
+        .rotate_password(&session, revoke, NEW_PASSWORD, Some(b.identity().device))
+        .unwrap();
+    assert_eq!(
+        a.coordinator
+            .snapshot(&session.database)
+            .unwrap()
+            .fingerprint(),
+        rotated
+    );
+    assert_eq!(
+        std::fs::read(&previous).unwrap(),
+        b"PUBLIC unrelated old before file"
+    );
+    assert_eq!(std::fs::read_dir(&backups).unwrap().count(), 12);
+    for entry in std::fs::read_dir(&backups).unwrap() {
+        assert_eq!(
+            std::fs::read(entry.unwrap().path()).unwrap(),
+            b"PUBLIC old copy"
+        );
+    }
+
+    std::fs::rename(&backups, directory.path().join("PUBLIC untouched copies")).unwrap();
+    std::fs::write(&backups, b"PUBLIC unrelated file").unwrap();
+    let kdf = Digest::of(b"PUBLIC KDF without a backup");
+    let policy = DatabasePolicy::new(1024 * 1024, 2 * 1024 * 1024, 600).unwrap();
+    service
+        .set_database_policy(&session, kdf, policy, Some(NEW_PASSWORD))
+        .unwrap();
+    let changed = a
+        .coordinator
+        .snapshot(&session.database)
+        .unwrap()
+        .fingerprint();
+    service
+        .set_database_policy(&session, kdf, policy, None)
+        .unwrap();
+    assert_eq!(
+        a.coordinator
+            .snapshot(&session.database)
+            .unwrap()
+            .fingerprint(),
+        changed
+    );
+    assert!(
+        !directory
+            .path()
+            .join(format!("a.taypeer.before-{kdf}.taypeer"))
+            .exists()
+    );
+    assert_eq!(std::fs::read(&backups).unwrap(), b"PUBLIC unrelated file");
+    let usage = service.storage_usage(&session).unwrap().value;
+    assert_eq!(usage.file_bytes, std::fs::metadata(&path).unwrap().len());
+    assert!(
+        serde_json::to_value(usage)
+            .unwrap()
+            .get("backup_bytes")
+            .is_none()
+    );
+    service.lock(&session).unwrap();
+    drop(service);
+    a.coordinator.unregister(&session.database).unwrap();
+    let (service, session) = a.open(path, NEW_PASSWORD);
+    assert_eq!(service.groups(&session).unwrap().value.len(), 2);
+}
+
+#[test]
 fn recovery_of_an_incomplete_inventory_preserves_the_collection_hold() {
     let directory = tempfile::tempdir().unwrap();
     let a = Profile::new(26);

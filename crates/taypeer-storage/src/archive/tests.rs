@@ -88,12 +88,16 @@ impl Fixture {
 struct Marker {
     value: Mutex<Option<Anchor>>,
     fail_final: AtomicBool,
+    fail_prepared: AtomicBool,
 }
 impl AnchorStore for Marker {
     fn load(&self) -> Result<Option<Anchor>, Error> {
         Ok(self.value.lock().unwrap().clone())
     }
     fn save(&self, anchor: &Anchor) -> Result<(), Error> {
+        if anchor.prepared.is_some() && self.fail_prepared.swap(false, Ordering::SeqCst) {
+            return Err(Error::Io);
+        }
         if anchor.prepared.is_none() && self.fail_final.swap(false, Ordering::SeqCst) {
             return Err(Error::Io);
         }
@@ -153,12 +157,7 @@ fn locked_writer_receives_ciphertext_and_reopens_with_a_complete_signed_inventor
         reopened.snapshot().metadata().manifest.body.objects.len(),
         3
     );
-    assert_eq!(
-        fs::read_dir(crate::file::sibling(&path, ".backups"))
-            .unwrap()
-            .count(),
-        1
-    );
+    assert!(!crate::file::sibling(&path, ".backups").exists());
 }
 
 #[test]
@@ -178,6 +177,13 @@ fn interrupted_final_marker_reconciles_but_old_file_rollback_is_rejected() {
     let metadata = candidate
         .metadata(&f.chain, &f.transport, next, ArchiveJournal::default())
         .unwrap();
+    marker.fail_prepared.store(true, Ordering::SeqCst);
+    assert_eq!(
+        store.commit(previous, &candidate, metadata.clone()),
+        Err(Error::Io)
+    );
+    assert_eq!(fs::read(&path).unwrap(), original);
+    assert_eq!(store.snapshot().fingerprint(), previous);
     marker.fail_final.store(true, Ordering::SeqCst);
     assert_eq!(
         store.commit(previous, &candidate, metadata),

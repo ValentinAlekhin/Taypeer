@@ -56,7 +56,7 @@
   "help_icon_favicon": "Download the favicon of --url or the current entry URL.",
   "help_group_favicons": "Download missing icons for group entries; --recursive includes descendants.",
   "help_appearance_set": "Set #RRGGBB[AA] colors or explicitly clear them to follow the theme.",
-  "help_storage_usage": "Show attachment quota, retained contents, drafts and backups separately.",
+  "help_storage_usage": "Show attachment quota, retained contents, drafts and working-file size.",
   "help_storage_gc": "Atomically omit unreachable contents while retaining history, conflicts and sources.",
   "attachment_limit": "The attachment limit is exceeded.",
   "icon_network_boundary": "A public site cannot redirect icon loading to an internal address.",

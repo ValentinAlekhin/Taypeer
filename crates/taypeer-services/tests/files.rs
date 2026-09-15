@@ -104,19 +104,17 @@ fn encrypted_file_survives_restart_with_identity_values_and_history() {
 }
 
 #[test]
-fn failed_backup_preserves_file_saved_state_and_retryable_draft() {
+fn unavailable_working_file_preserves_saved_state_and_retryable_draft() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("fixture.taypeer");
     let mut service = DatabaseService::new();
     let session = service
         .create_file(&path, "PUBLIC".into(), PASSWORD)
         .unwrap();
-    fs::write(
-        directory.path().join("fixture.taypeer.backups"),
-        b"PUBLIC obstacle",
-    )
-    .unwrap();
     let bytes = fs::read(&path).unwrap();
+    let displaced = directory.path().join("PUBLIC displaced working file");
+    fs::rename(&path, &displaced).unwrap();
+    fs::create_dir(&path).unwrap();
     assert_eq!(
         service
             .create_group(&session, "PUBLIC rejected".into(), None)
@@ -124,8 +122,9 @@ fn failed_backup_preserves_file_saved_state_and_retryable_draft() {
         ServiceError::Storage(StorageError::Io)
     );
     assert!(service.groups(&session).unwrap().value.is_empty());
-    assert_eq!(fs::read(&path).unwrap(), bytes);
-    fs::remove_file(directory.path().join("fixture.taypeer.backups")).unwrap();
+    assert_eq!(fs::read(&displaced).unwrap(), bytes);
+    fs::remove_dir(&path).unwrap();
+    fs::rename(&displaced, &path).unwrap();
     let group = service
         .create_group(&session, "PUBLIC group".into(), None)
         .unwrap()
@@ -141,17 +140,9 @@ fn failed_backup_preserves_file_saved_state_and_retryable_draft() {
             },
         )
         .unwrap();
-    fs::rename(
-        directory.path().join("fixture.taypeer.backups"),
-        directory.path().join("retained-backups"),
-    )
-    .unwrap();
-    fs::write(
-        directory.path().join("fixture.taypeer.backups"),
-        b"PUBLIC obstacle",
-    )
-    .unwrap();
     let bytes = fs::read(&path).unwrap();
+    fs::rename(&path, &displaced).unwrap();
+    fs::create_dir(&path).unwrap();
     assert!(service.save_draft(&session).is_err());
     assert!(
         service
@@ -164,8 +155,9 @@ fn failed_backup_preserves_file_saved_state_and_retryable_draft() {
         service.draft(&session).unwrap().value.unwrap().fields.title,
         "PUBLIC pending"
     );
-    assert_eq!(fs::read(&path).unwrap(), bytes);
-    fs::remove_file(directory.path().join("fixture.taypeer.backups")).unwrap();
+    assert_eq!(fs::read(&displaced).unwrap(), bytes);
+    fs::remove_dir(&path).unwrap();
+    fs::rename(&displaced, &path).unwrap();
     service.save_draft(&session).unwrap();
     assert_eq!(service.entries(&session, None, "").unwrap().value.len(), 1);
 }
@@ -258,7 +250,7 @@ fn lifecycle_confirmation_is_durable_masked_and_retryable_after_storage_failure(
     use taypeer_services::{InspectionTarget, LifecycleAction, ObjectId};
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("lifecycle.taypeer");
-    let backups = directory.path().join("lifecycle.taypeer.backups");
+    let displaced = directory.path().join("PUBLIC displaced working file");
     let mut service = DatabaseService::new();
     let session = service
         .create_file(&path, "PUBLIC lifecycle".into(), PASSWORD)
@@ -297,9 +289,9 @@ fn lifecycle_confirmation_is_durable_masked_and_retryable_after_storage_failure(
         ServiceError::EditorAlreadyOpen
     );
     service.cancel_draft(&session).unwrap();
-    fs::rename(&backups, directory.path().join("retained-backups")).unwrap();
-    fs::write(&backups, b"PUBLIC obstacle").unwrap();
     let before = fs::read(&path).unwrap();
+    fs::rename(&path, &displaced).unwrap();
+    fs::create_dir(&path).unwrap();
     let operation = OperationId::new("PUBLIC retry deletion");
     assert_eq!(
         service
@@ -307,10 +299,11 @@ fn lifecycle_confirmation_is_durable_masked_and_retryable_after_storage_failure(
             .unwrap_err(),
         ServiceError::Storage(StorageError::Io)
     );
-    assert_eq!(fs::read(&path).unwrap(), before);
+    assert_eq!(fs::read(&displaced).unwrap(), before);
     assert!(service.trash(&session).unwrap().value.is_empty());
     assert_eq!(service.entries(&session, None, "").unwrap().value.len(), 1);
-    fs::remove_file(&backups).unwrap();
+    fs::remove_dir(&path).unwrap();
+    fs::rename(&displaced, &path).unwrap();
     service
         .confirm_lifecycle(&session, &prepared, &operation)
         .unwrap();

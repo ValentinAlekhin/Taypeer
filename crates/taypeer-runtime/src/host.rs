@@ -424,14 +424,6 @@ impl Callbacks {
                     .map_err(cipher_ipc::storage)?;
                 Ok(IoValue::Done)
             }
-            IoRequest::Preserve(operation) => {
-                let registration = self.registration.as_ref().ok_or(RuntimeError::Protocol)?;
-                self.context
-                    .coordinator
-                    .preserve_before(&registration.database, operation)
-                    .map_err(sync_error)?;
-                Ok(IoValue::Done)
-            }
         }
     }
     fn snapshot(&mut self, known: Option<Digest>) -> Result<IoValue, RuntimeError> {

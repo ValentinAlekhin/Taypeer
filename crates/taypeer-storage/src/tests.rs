@@ -100,7 +100,7 @@ fn stream_input_length_failure_preserves_the_working_file() {
 }
 
 #[test]
-fn authentication_versions_exclusivity_and_backup_retention() {
+fn authentication_versions_exclusivity_and_repeated_atomic_saves() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("fixture.taypeer");
     let (mut file, key) = FileStore::create(&path, b"PUBLIC password", b"PUBLIC original").unwrap();
@@ -109,14 +109,9 @@ fn authentication_versions_exclusivity_and_backup_retention() {
         file.save(&key, format!("PUBLIC {index}").as_bytes())
             .unwrap();
     }
-    let backups: Vec<_> = fs::read_dir(directory.path().join("fixture.taypeer.backups"))
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
-        .collect();
-    assert_eq!(backups.len(), 10);
-    let mut backup = FileStore::open(&backups[0]).unwrap();
-    let (_, clear) = backup.unlock(b"PUBLIC password").unwrap();
-    assert!(clear.starts_with(b"PUBLIC "));
+    assert!(!directory.path().join("fixture.taypeer.backups").exists());
+    let (_, clear) = file.unlock(b"PUBLIC password").unwrap();
+    assert_eq!(clear.as_slice(), b"PUBLIC 11");
     let original = fs::read(&path).unwrap();
     let mut changed = original.clone();
     *changed.last_mut().unwrap() ^= 1;
@@ -165,4 +160,29 @@ fn empty_password_and_truncated_input_never_create_or_replace_a_database() {
         assert!(matches!(FileStore::open(&path), Err(Error::InvalidFile)));
         assert_eq!(fs::read(&path).unwrap(), bytes);
     }
+}
+
+#[test]
+fn automatic_saves_ignore_existing_backup_files_and_directories() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("PUBLIC.taypeer");
+    let (mut file, key) = FileStore::create(&path, b"PUBLIC password", b"PUBLIC original").unwrap();
+    let backups = directory.path().join("PUBLIC.taypeer.backups");
+    fs::create_dir(&backups).unwrap();
+    for index in 0..12 {
+        fs::write(
+            backups.join(format!("{index:020}.taypeer")),
+            b"PUBLIC old copy",
+        )
+        .unwrap();
+    }
+    file.save(&key, b"PUBLIC saved").unwrap();
+    assert_eq!(fs::read_dir(&backups).unwrap().count(), 12);
+    for entry in fs::read_dir(&backups).unwrap() {
+        assert_eq!(fs::read(entry.unwrap().path()).unwrap(), b"PUBLIC old copy");
+    }
+    fs::rename(&backups, directory.path().join("PUBLIC untouched copies")).unwrap();
+    fs::write(&backups, b"PUBLIC unrelated file").unwrap();
+    file.save(&key, b"PUBLIC saved again").unwrap();
+    assert_eq!(fs::read(&backups).unwrap(), b"PUBLIC unrelated file");
 }

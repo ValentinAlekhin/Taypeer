@@ -173,17 +173,6 @@ impl Coordinator {
         self.notify_control(database, &snapshot, &result)?;
         Ok(result)
     }
-    /// Preserve a separately named source before a manager rotation/recovery operation.
-    pub fn preserve_before(&self, database: &DatabaseId, operation: Digest) -> Result<(), Error> {
-        self.copies
-            .lock()
-            .map_err(|_| Error::State)?
-            .get(database)
-            .ok_or(Error::State)?
-            .store
-            .preserve_before(operation)?;
-        Ok(())
-    }
     fn notify_control(
         &self,
         database: &DatabaseId,

@@ -69,11 +69,6 @@ impl CipherPersistence for CoordinatorPersistence {
     fn discard_draft(&self) -> Result<(), taypeer_storage::Error> {
         taypeer_storage::discard_local_draft(&self.path, self.working_copy)
     }
-    fn preserve_before(&self, operation: Digest) -> Result<(), taypeer_storage::Error> {
-        self.coordinator
-            .preserve_before(&self.database, operation)
-            .map_err(storage)
-    }
     fn path(&self) -> &Path {
         &self.path
     }

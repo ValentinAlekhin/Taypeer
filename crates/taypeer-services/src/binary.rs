@@ -1,7 +1,7 @@
 //! Session-checked binary editing, explicit export and quota/retention reporting.
 
 use super::*;
-use std::{fs::File, io::Write, path::PathBuf};
+use std::{fs::File, io::Write};
 use taypeer_core::{
     AttachmentId, BlobId, Color, DatabasePolicy, EntryField, EntryFields, FieldValue, ICON_LIMIT,
     IconRef, IconSource, OperationId,
@@ -317,7 +317,7 @@ impl DatabaseService {
         Ok(stamped(session, ()))
     }
 
-    /// Report product quota separately from binary retention and physical backup storage.
+    /// Report product quota separately from binary retention and the physical working file.
     pub fn storage_usage(
         &self,
         session: &SessionToken,
@@ -331,7 +331,7 @@ impl DatabaseService {
         } else {
             refs.retained.clone()
         };
-        let (file_bytes, backup_bytes) = physical_usage(state.path())?;
+        let file_bytes = physical_usage(state.path())?;
         Ok(stamped(
             session,
             StorageUsage {
@@ -345,7 +345,6 @@ impl DatabaseService {
                     .map(|d| blobs.unique_bytes(&d.binary_references()))
                     .unwrap_or(0),
                 file_bytes,
-                backup_bytes,
                 missing: refs
                     .retained
                     .into_iter()
@@ -592,26 +591,11 @@ fn snapshot_view(snapshot: &taypeer_core::EntrySnapshot, blobs: &BlobStore) -> B
     result
 }
 
-fn physical_usage(path: Option<&Path>) -> Result<(u64, u64), ServiceError> {
-    let Some(path) = path else {
-        return Ok((0, 0));
-    };
-    let current = std::fs::metadata(path).map_err(StorageError::from)?.len();
-    let mut path = path.as_os_str().to_os_string();
-    path.push(".backups");
-    let directory = PathBuf::from(path);
-    let mut backups = 0_u64;
-    if directory.try_exists().map_err(StorageError::from)? {
-        for entry in std::fs::read_dir(directory).map_err(StorageError::from)? {
-            let entry = entry.map_err(StorageError::from)?;
-            if entry.path().extension().is_some_and(|e| e == "taypeer") {
-                backups = backups
-                    .checked_add(entry.metadata().map_err(StorageError::from)?.len())
-                    .ok_or(ServiceError::InvalidInput)?;
-            }
-        }
+fn physical_usage(path: Option<&Path>) -> Result<u64, ServiceError> {
+    match path {
+        Some(path) => Ok(std::fs::metadata(path).map_err(StorageError::from)?.len()),
+        None => Ok(0),
     }
-    Ok((current, backups))
 }
 
 #[cfg(test)]

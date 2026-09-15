@@ -136,7 +136,7 @@ pub struct BinaryView {
     pub background: Vec<Option<Color>>,
 }
 
-/// Separate product quota, retained contents, local draft and backup usage.
+/// Separate product quota, retained contents, local draft and working-file usage.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct StorageUsage {
     /// Unique accessible attachment bytes.
@@ -151,8 +151,6 @@ pub struct StorageUsage {
     pub draft_bytes: u64,
     /// Physical encrypted working-file size.
     pub file_bytes: u64,
-    /// Physical separate automatic backup size.
-    pub backup_bytes: u64,
     /// Missing contents referenced by retained sources.
     pub missing: Vec<BlobId>,
     /// Unknown pending references conservatively prevent deletion.

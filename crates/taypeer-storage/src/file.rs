@@ -142,22 +142,9 @@ pub(crate) fn persist(temp: NamedTempFile, path: &Path, create: bool) -> Result<
     } else {
         temp.persist(path).map_err(|_| Error::Io)?;
     }
-    File::open(parent(path)?)?
-        .sync_all()
+    File::open(parent(path)?)
+        .and_then(|directory| directory.sync_all())
         .map_err(|_| Error::CommitUncertain)
-}
-
-pub(crate) fn copy_durable(source: &Path, destination: &Path) -> Result<(), Error> {
-    let mut input = File::open(source)?;
-    let mut output = NamedTempFile::new_in(parent(destination)?)?;
-    let length = input.metadata()?.len();
-    if length > crypto::MAX_ENCODED_SIZE {
-        return Err(Error::TooLarge);
-    }
-    if std::io::copy(&mut (&mut input).take(length + 1), &mut output)? != length {
-        return Err(Error::Changed);
-    }
-    persist(output, destination, true)
 }
 
 impl FileStore {
@@ -331,7 +318,7 @@ impl FileStore {
         self.save_stream(key, clear, clear.len() as u64)
     }
 
-    /// Commit a stream with bounded memory and exactly ten previous automatic snapshots.
+    /// Commit a stream with bounded memory and an atomic working-file replacement.
     pub fn save_stream(
         &mut self,
         key: &ReadKey,
@@ -345,26 +332,6 @@ impl FileStore {
         let mut temp = NamedTempFile::new_in(parent(&self.path)?)?;
         let next = crypto::encrypt_stream(&self.header, key, clear, length, &mut temp)?;
         let next_fingerprint = fingerprint(temp.as_file_mut())?;
-        let directory = sibling(&self.path, ".backups");
-        fs::create_dir_all(&directory)?;
-        let mut backups = backup_files(&directory)?;
-        let already_backed_up = match backups.last() {
-            Some((_, path)) => fingerprint(&mut File::open(path)?)? == self.fingerprint,
-            None => false,
-        };
-        if !already_backed_up {
-            let generation = backups
-                .last()
-                .map_or(Some(0), |(n, _)| n.checked_add(1))
-                .ok_or(Error::Io)?;
-            let path = directory.join(format!("{generation:020}.taypeer"));
-            copy_durable(&self.path, &path)?;
-            if fingerprint(&mut File::open(&path)?)? != self.fingerprint {
-                return Err(Error::Changed);
-            }
-            backups.push((generation, path));
-        }
-        File::open(parent(&self.path)?)?.sync_all()?;
         self.check_unchanged()?;
         let result = persist(temp, &self.path, false);
         if result == Err(Error::CommitUncertain) {
@@ -373,18 +340,6 @@ impl FileStore {
         result?;
         self.header = next;
         self.fingerprint = next_fingerprint;
-        for (_, path) in backups.iter().take(backups.len().saturating_sub(10)) {
-            if fs::remove_file(path).is_err() {
-                self.uncertain = true;
-                return Err(Error::CommitUncertain);
-            }
-        }
-        File::open(&directory)
-            .and_then(|directory| directory.sync_all())
-            .map_err(|_| {
-                self.uncertain = true;
-                Error::CommitUncertain
-            })?;
         Ok(())
     }
 
@@ -420,21 +375,4 @@ impl FileStore {
             Err(_) => Err(Error::Io),
         }
     }
-}
-pub(crate) fn backup_files(directory: &Path) -> Result<Vec<(u64, PathBuf)>, Error> {
-    let mut files = Vec::new();
-    for entry in fs::read_dir(directory)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.extension().is_some_and(|ext| ext == "taypeer") {
-            let generation = path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .and_then(|s| s.parse().ok())
-                .ok_or(Error::Io)?;
-            files.push((generation, path));
-        }
-    }
-    files.sort_by_key(|(n, _)| *n);
-    Ok(files)
 }

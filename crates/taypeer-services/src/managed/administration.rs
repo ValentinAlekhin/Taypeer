@@ -210,7 +210,7 @@ impl DatabaseService {
         )
     }
     /// Rotate to an independent key and a different password, optionally revoking one device.
-    /// The old portable file is durably preserved first; historical keys remain encrypted under the new key.
+    /// Historical keys remain encrypted under the new key; no backup file is created.
     pub fn rotate_password(
         &mut self,
         session: &SessionToken,
@@ -251,7 +251,6 @@ impl DatabaseService {
         if checkpoint.unlock_key(password).is_ok() {
             return Err(ServiceError::InvalidInput);
         }
-        managed.port.preserve_before(operation)?;
         let (header, key) =
             taypeer_storage::create_epoch(password, metadata.policy.kdf_target_ms())?;
         metadata
@@ -307,7 +306,6 @@ impl DatabaseService {
                 .snapshot
                 .object(managed.snapshot.metadata().manifest.body.checkpoint)?;
             checkpoint.unlock_key(password)?;
-            managed.port.preserve_before(operation)?;
             let (header, key) = taypeer_storage::create_epoch(password, policy.kdf_target_ms())?;
             metadata
                 .keys

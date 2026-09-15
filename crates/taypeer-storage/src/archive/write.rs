@@ -1,6 +1,6 @@
 use super::*;
 use crate::{encrypted_object::copy_exact, file};
-use std::{fs, io::Write};
+use std::io::Write;
 use tempfile::NamedTempFile;
 
 impl ArchiveCandidate {
@@ -127,7 +127,6 @@ impl ArchiveStore {
         }
         self.check_unchanged()?;
         let (temp, snapshot) = candidate.prepare(metadata, file::parent(&self.path)?)?;
-        let backups = self.backup()?;
         if let Some(anchor) = &self.anchor {
             anchor.save(&Anchor {
                 accepted: Some(expected),
@@ -149,10 +148,6 @@ impl ArchiveStore {
                     prepared: None,
                 })?;
             }
-            for (_, path) in backups.iter().take(backups.len().saturating_sub(10)) {
-                fs::remove_file(path)?;
-            }
-            File::open(file::sibling(&self.path, ".backups"))?.sync_all()?;
             Ok::<_, Error>(())
         })();
         if finish.is_err() {
@@ -168,49 +163,5 @@ impl ArchiveStore {
             return Err(Error::Changed);
         }
         Ok(())
-    }
-    fn backup(&self) -> Result<Vec<(u64, PathBuf)>, Error> {
-        let directory = file::sibling(&self.path, ".backups");
-        fs::create_dir_all(&directory)?;
-        let mut backups = file::backup_files(&directory)?;
-        let already = match backups.last() {
-            Some((_, path)) => {
-                Digest::from_bytes(file::fingerprint(&mut File::open(path)?)?)
-                    == self.snapshot.fingerprint
-            }
-            None => false,
-        };
-        if !already {
-            let number = backups
-                .last()
-                .map_or(Some(0), |(n, _)| n.checked_add(1))
-                .ok_or(Error::TooLarge)?;
-            let destination = directory.join(format!("{number:020}.taypeer"));
-            file::copy_durable(&self.path, &destination)?;
-            if Digest::from_bytes(file::fingerprint(&mut File::open(&destination)?)?)
-                != self.snapshot.fingerprint
-            {
-                return Err(Error::Changed);
-            }
-            backups.push((number, destination));
-        }
-        File::open(file::parent(&self.path)?)?.sync_all()?;
-        Ok(backups)
-    }
-    /// Save a separate retained source before rotation or recovery. The operation ID
-    /// determines its stable path; a retry accepts only a byte-identical prior copy.
-    pub fn preserve_before(&self, operation: Digest) -> Result<PathBuf, Error> {
-        self.check_unchanged()?;
-        let destination = file::sibling(&self.path, &format!(".before-{operation}.taypeer"));
-        if destination.try_exists()? {
-            if Digest::from_bytes(file::fingerprint(&mut File::open(&destination)?)?)
-                != self.snapshot.fingerprint
-            {
-                return Err(Error::Changed);
-            }
-        } else {
-            file::copy_durable(&self.path, &destination)?;
-        }
-        Ok(destination)
     }
 }

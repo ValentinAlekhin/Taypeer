@@ -92,7 +92,7 @@ model {
       #partial
       style { border solid }
       technology 'Rust'
-      description 'Потоковые бинарные секции, зашифрованный staging, атомарная запись и снимки. Подписанная ciphertext-очередь сохраняется до ACK.'
+      description 'Потоковые бинарные секции, зашифрованный staging, атомарная запись без автоматических резервных копий. Подписанная ciphertext-очередь сохраняется до ACK.'
       metadata { source 'crates/taypeer-storage/src/file.rs'; contract 'docs/storage.md'; evidence 'spikes/encrypted-sync/REPORT.md' }
     }
     sync = component 'Зашифрованный обмен' {
@@ -168,12 +168,7 @@ model {
       description 'Только искусственные документы и черновики на время процесса. Тестовая разблокировка не является аутентификацией; подтверждение не означает надёжную запись.'
       metadata { source 'crates/taypeer-services/src/lib.rs'; contract 'docs/architecture.md' }
     }
-    backups = store 'Резервные снимки' {
-      #partial
-      style { border solid }
-      description 'Отдельные зашифрованные файлы; правила хранения задаёт спецификация.'
-      metadata { source 'crates/taypeer-storage/src/file.rs'; contract 'spec.md#резервные-копии' }
-    }
+
   }
 
   owner -> taypeer.mac 'Работает с БД'
@@ -218,7 +213,6 @@ model {
   taypeer.trust -> taypeer.local 'Приватные полномочия устройства'
   taypeer.trust -> taypeer.storage 'Подписанное состояние управления'
   taypeer.storage -> taypeer.vault 'Надёжная запись и чтение'
-  taypeer.storage -> taypeer.backups 'Снимки и исходные копии'
   taypeer.kdbx -> taypeer.core 'Представимые данные'
   taypeer.kdbx -> files 'Отдельный импорт или экспорт'
   taypeer.iconLoader -> websites 'Запрос по действию пользователя'

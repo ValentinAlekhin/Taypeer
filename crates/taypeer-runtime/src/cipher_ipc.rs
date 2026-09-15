@@ -32,7 +32,6 @@ pub(crate) enum IoRequest {
     SaveDraft(PathBuf),
     LoadDraft,
     DiscardDraft,
-    Preserve(Digest),
 }
 #[derive(Serialize, Deserialize)]
 pub(crate) enum IoValue {
@@ -280,12 +279,6 @@ impl CipherPersistence for RemotePersistence {
     }
     fn discard_draft(&self) -> Result<(), taypeer_storage::Error> {
         match self.io(IoRequest::DiscardDraft)? {
-            IoValue::Done => Ok(()),
-            _ => Err(taypeer_storage::Error::InvalidFile),
-        }
-    }
-    fn preserve_before(&self, operation: Digest) -> Result<(), taypeer_storage::Error> {
-        match self.io(IoRequest::Preserve(operation))? {
             IoValue::Done => Ok(()),
             _ => Err(taypeer_storage::Error::InvalidFile),
         }

@@ -292,7 +292,12 @@ fn binary_draft_is_independent_and_cleanup_releases_only_unreachable_working_con
     assert_eq!(usage.attachment_bytes, 0);
     assert_eq!(usage.retained_bytes, 0);
     assert!(usage.file_bytes + content.len() as u64 / 2 < before);
-    assert!(usage.backup_bytes > before);
+    assert!(
+        serde_json::to_value(&usage)
+            .unwrap()
+            .get("backup_bytes")
+            .is_none()
+    );
     assert!(
         service
             .export_binary(
