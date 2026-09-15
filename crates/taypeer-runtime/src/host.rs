@@ -22,6 +22,15 @@ pub struct RuntimeHost {
     pub(crate) runtime: tokio::runtime::Runtime,
     pub(crate) network: Option<crate::network::Network>,
 }
+
+/// Public format and transport-admission state; querying it never unlocks a database.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct RegisteredCompatibility {
+    /// Independently assessed format capabilities.
+    pub format: taypeer_core::CompatibilityReport,
+    /// Whether this profile's transport identity is admitted by the current control.
+    pub admitted: bool,
+}
 pub(crate) struct HostContext {
     pub profile: NativeProfile,
     pub coordinator: Arc<Coordinator>,
@@ -29,6 +38,17 @@ pub(crate) struct HostContext {
     pub copies: Mutex<BTreeMap<PathBuf, Registration>>,
 }
 impl RuntimeHost {
+    /// Verify a standalone file and inspect its public format requirements without
+    /// creating a native profile, acquiring credentials, or registering a writer.
+    pub fn inspect_compatibility(
+        path: &Path,
+    ) -> Result<(DatabaseId, taypeer_core::CompatibilityReport), RuntimeError> {
+        let snapshot = ArchiveSnapshot::open(path, None).map_err(cipher_ipc::storage)?;
+        Ok((
+            snapshot.chain().head().database.clone(),
+            snapshot.compatibility(&taypeer_core::ClientCapabilities::default()),
+        ))
+    }
     /// Shared native profile location used by desktop clients and the CLI.
     pub fn default_profile_path() -> Result<PathBuf, RuntimeError> {
         std::env::var_os("HOME")
@@ -190,6 +210,26 @@ impl RuntimeHost {
             copies.remove(&path);
         }
         Ok(())
+    }
+    /// Inspect registered public format/admission state without reading author credentials.
+    pub fn compatibility(
+        &self,
+        database: &DatabaseId,
+    ) -> Result<RegisteredCompatibility, RuntimeError> {
+        let snapshot = self
+            .context
+            .coordinator
+            .snapshot(database)
+            .map_err(sync_error)?;
+        Ok(RegisteredCompatibility {
+            format: snapshot.compatibility(&taypeer_core::ClientCapabilities::default()),
+            admitted: snapshot
+                .chain()
+                .head()
+                .members
+                .values()
+                .any(|member| member.identity.transport == self.context.transport.public()),
+        })
     }
     /// Shared ciphertext coordinator, safe to use while all plaintext workers are stopped.
     pub fn coordinator(&self) -> &Arc<Coordinator> {

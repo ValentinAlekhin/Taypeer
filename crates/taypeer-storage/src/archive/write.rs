@@ -35,7 +35,7 @@ impl ArchiveCandidate {
         }
         let mut temp = NamedTempFile::new_in(directory)?;
         temp.write_all(MAGIC)?;
-        temp.write_all(&[1, 0, 4, 0])?;
+        temp.write_all(&FORMAT)?;
         temp.write_all(&(bytes.len() as u64).to_le_bytes())?;
         temp.write_all(&bytes)?;
         for (id, descriptor) in &metadata.manifest.body.objects {

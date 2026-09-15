@@ -51,6 +51,8 @@ pub enum Error {
     DuplicateId,
     /// Known document structure is malformed or has an unexpected type.
     InvalidDocument,
+    /// The document requires a schema or read semantics unavailable in this build.
+    UnsupportedSchema,
     /// The operating system could not allocate a fresh author branch identity.
     Random,
 }
@@ -185,7 +187,12 @@ impl Document {
         let mut doc = Automerge::new();
         source::prepare_actor(&mut doc, writer)?;
         let mut tx = doc.transaction();
-        tx.put(ROOT, "schema", 4_u64)?;
+        tx.put(ROOT, "schema", u64::from(taypeer_core::CURRENT_SCHEMA))?;
+        tx.put(
+            ROOT,
+            "schema_descriptor",
+            codec::encode(&taypeer_core::SchemaDescriptor::current())?,
+        )?;
         tx.put(ROOT, "database_id", database_id.as_str())?;
         tx.put(ROOT, "name", name.as_str())?;
         tx.put(ROOT, "created_at", now)?;
@@ -221,8 +228,12 @@ impl Document {
     /// This parser is not a substitute for outer authentication or resource limits.
     pub fn load(bytes: &[u8]) -> Result<Self, Error> {
         let doc = Automerge::load(bytes)?;
-        if unique(&doc, &ROOT, "schema")?.to_u64() != Some(4) {
-            return Err(Error::InvalidDocument);
+        let schema = unique(&doc, &ROOT, "schema")?
+            .to_u64()
+            .filter(|value| *value > 0 && *value <= u64::from(u16::MAX))
+            .ok_or(Error::InvalidDocument)?;
+        if schema != u64::from(taypeer_core::CURRENT_SCHEMA) {
+            return Err(Error::UnsupportedSchema);
         }
         let database_id = DatabaseId::new(
             unique(&doc, &ROOT, "database_id")?
@@ -242,6 +253,19 @@ impl Document {
         };
         document.validate_structure()?;
         Ok(document)
+    }
+
+    /// Declared semantics, checked against signed management by the service.
+    pub fn schema_descriptor(&self) -> Result<taypeer_core::SchemaDescriptor, Error> {
+        let value =
+            unique(&self.doc, &ROOT, "schema_descriptor").map_err(|_| Error::InvalidDocument)?;
+        let descriptor: taypeer_core::SchemaDescriptor = codec::decode(&value)?;
+        if unique(&self.doc, &ROOT, "schema")?.to_u64()
+            != Some(u64::from(descriptor.schema_version()))
+        {
+            return Err(Error::InvalidDocument);
+        }
+        Ok(descriptor)
     }
 
     /// Logical identity, shared by forks of this database.

@@ -31,6 +31,16 @@ pub(crate) struct Host {
 }
 
 impl Host {
+    /// Inspect a standalone file without credentials, registration or a plaintext worker.
+    pub fn file_compatibility(path: &Path) -> Result<Value, CliError> {
+        let (database, format) = RuntimeHost::inspect_compatibility(path)?;
+        Ok(json!({
+            "database": database,
+            "locked": true,
+            "admitted": null,
+            "format": format
+        }))
+    }
     pub fn new(input: Input, profile: Option<PathBuf>) -> Result<Self, CliError> {
         let profile = match profile {
             Some(path) => path,
@@ -311,6 +321,12 @@ impl Host {
 
     fn database(&mut self, command: DatabaseCommand) -> Result<Value, CliError> {
         match command {
+            DatabaseCommand::Compatibility => {
+                let locked = self.selected()?.worker.is_none();
+                let id = taypeer_core::DatabaseId::new(self.selected.as_ref().ok_or(CliError::NoDatabase)?.clone());
+                let report = self.runtime.as_ref().ok_or(CliError::Io)?.compatibility(&id)?;
+                Ok(json!({"database": id, "locked": locked, "admitted": report.admitted, "format": report.format}))
+            }
             DatabaseCommand::Create { path, name } => self.open(&path, Some(name)),
             DatabaseCommand::Open { path } => self.open(&path, None),
             DatabaseCommand::List => Ok(Value::Array(self.databases.iter().map(|(id, db)| {

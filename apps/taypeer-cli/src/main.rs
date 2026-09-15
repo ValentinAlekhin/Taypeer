@@ -33,6 +33,13 @@ fn main() {
 }
 
 fn run(cli: Cli) -> Result<(), CliError> {
+    if matches!(
+        cli.command,
+        Action::Db(args::DatabaseCommand::Compatibility)
+    ) && let Some(path) = &cli.file
+    {
+        return print_result(Host::file_compatibility(path)?, cli.json, cli.lang);
+    }
     let mut host = Host::new(
         Input {
             password_stdin: cli.password_stdin,

@@ -8929,6 +8929,7 @@ version = "0.1.0"
 dependencies = [
  "fractional_index",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

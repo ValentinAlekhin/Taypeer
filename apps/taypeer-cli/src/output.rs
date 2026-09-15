@@ -34,6 +34,19 @@ impl CliError {
             Self::Runtime(RuntimeError::Service(taypeer_services::ServiceError::ReadOnly)) => {
                 "read_only"
             }
+            Self::Runtime(RuntimeError::Service(
+                taypeer_services::ServiceError::ReadCompatibility,
+            )) => "compatibility_read",
+            Self::Runtime(RuntimeError::Service(
+                taypeer_services::ServiceError::WriteCompatibility,
+            )) => "compatibility_write",
+            Self::Runtime(RuntimeError::Service(
+                taypeer_services::ServiceError::Storage(
+                    taypeer_services::StorageError::UnsupportedVersion
+                    | taypeer_services::StorageError::Trust(taypeer_trust::Error::UnsupportedVersion),
+                )
+                | taypeer_services::ServiceError::Trust(taypeer_trust::Error::UnsupportedVersion),
+            )) => "compatibility_encoding",
             Self::Runtime(RuntimeError::Service(taypeer_services::ServiceError::AwaitingData)) => {
                 "awaiting_data"
             }
@@ -161,6 +174,16 @@ pub(crate) fn print_error(error: &CliError, json: bool, language: Language) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn unsupported_signed_encoding_is_distinct_from_damaged_authority() {
+        let error = CliError::from(RuntimeError::Service(
+            taypeer_services::ServiceError::Storage(taypeer_services::StorageError::Trust(
+                taypeer_trust::Error::UnsupportedVersion,
+            )),
+        ));
+        assert_eq!(error.key(), "compatibility_encoding");
+    }
+
     #[test]
     fn catalogs_have_identical_keys_and_no_empty_messages() {
         let en: BTreeMap<String, String> =

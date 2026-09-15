@@ -89,6 +89,8 @@ pub(crate) enum Action {
 
 #[derive(Subcommand)]
 pub(crate) enum DatabaseCommand {
+    #[command(about = crate::output::help("help_compatibility"))]
+    Compatibility,
     /// Create a new encrypted file without replacing an existing file.
     Create {
         path: PathBuf,

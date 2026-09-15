@@ -98,6 +98,10 @@ pub enum ServiceError {
     AttachmentLimit,
     /// A copied or revoked profile has read/export access but no current author permission.
     ReadOnly,
+    /// This build cannot safely read the authenticated schema requirements.
+    ReadCompatibility,
+    /// This build may read the document but cannot safely change its schema semantics.
+    WriteCompatibility,
     /// A signature or authenticated device binding is not authorized.
     Unauthorized,
     /// Native author credential storage is unavailable or denied access.
@@ -129,6 +133,8 @@ impl fmt::Display for ServiceError {
             Self::InvalidDocument => "the document is invalid",
             Self::AttachmentLimit => "the attachment limit is exceeded",
             Self::ReadOnly => "the device has read-only access",
+            Self::ReadCompatibility => "update Taypeer to read this database",
+            Self::WriteCompatibility => "update Taypeer to change this database",
             Self::Unauthorized => "the device is not authorized",
             Self::Credentials => "native credential storage is unavailable",
             Self::AwaitingData => "required encrypted data has not arrived",
@@ -150,6 +156,7 @@ impl From<taypeer_document::Error> for ServiceError {
             taypeer_document::Error::InvalidContext => Self::InvalidContext,
             taypeer_document::Error::DuplicateId => Self::InvalidInput,
             taypeer_document::Error::InvalidDocument => Self::InvalidDocument,
+            taypeer_document::Error::UnsupportedSchema => Self::ReadCompatibility,
             taypeer_document::Error::Random => Self::Storage(taypeer_storage::Error::Random),
         }
     }
@@ -166,12 +173,15 @@ struct DatabaseState {
     unlocked: bool,
     // Retained only in process memory when locked; this is not an encrypted draft.
     draft: Option<DraftState>,
+    // The on-disk draft was deliberately not decoded by an incompatible writer.
+    draft_deferred: bool,
 }
 
 /// Serialized application scenarios over domain documents and optional encrypted file storage.
 pub struct DatabaseService {
     databases: BTreeMap<DatabaseId, DatabaseState>,
     clock: fn() -> i64,
+    capabilities: taypeer_core::ClientCapabilities,
 }
 
 /// Compatibility name for callers that explicitly create volatile demonstration databases.
@@ -194,6 +204,16 @@ impl DatabaseService {
         Self {
             databases: BTreeMap::new(),
             clock,
+            capabilities: taypeer_core::ClientCapabilities::default(),
+        }
+    }
+
+    /// Create a client with a restricted subset of this build's format capabilities.
+    /// Production clients use `new`; this cannot enable unimplemented semantics.
+    pub fn with_capabilities(capabilities: taypeer_core::ClientCapabilities) -> Self {
+        Self {
+            capabilities,
+            ..Self::new()
         }
     }
 
@@ -257,6 +277,7 @@ impl DatabaseService {
                 generation: 0,
                 unlocked: false,
                 draft: None,
+                draft_deferred: false,
             },
         );
         Ok(id)
@@ -276,11 +297,16 @@ impl DatabaseService {
             return Err(ServiceError::InvalidContext);
         }
         if state.file.is_some() {
-            return state.unlock_file(database, password.as_bytes());
+            return state.unlock_file(database, password.as_bytes(), &self.capabilities);
         }
         if password != DEMO_PASSWORD {
             return Err(ServiceError::IncorrectDemoPassword);
         }
+        managed::compatibility::require_read(
+            &self
+                .capabilities
+                .assess(&state.document().schema_descriptor()?),
+        )?;
         let generation = state
             .generation
             .checked_add(1)
@@ -764,6 +790,13 @@ impl DatabaseService {
             .get(&session.database)
             .ok_or(ServiceError::NotFound)?;
         check_session(state, session)?;
+        if state.managed.is_none() {
+            managed::compatibility::require_read(
+                &self
+                    .capabilities
+                    .assess(&state.document().schema_descriptor()?),
+            )?;
+        }
         Ok(state)
     }
 
@@ -775,6 +808,12 @@ impl DatabaseService {
         check_session(state, session)?;
         if let Some(managed) = &state.managed {
             managed.check_edit_permission()?;
+        } else {
+            managed::compatibility::require_write(
+                &self
+                    .capabilities
+                    .assess(&state.document().schema_descriptor()?),
+            )?;
         }
         Ok(state)
     }

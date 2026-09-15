@@ -1,6 +1,56 @@
 use super::*;
 use taypeer_core::FieldState;
 
+#[test]
+fn descriptor_requirements_are_checked_before_loading_document_contents() {
+    use taypeer_core::{FeatureId, SchemaDescriptor};
+    let original = Document::new("PUBLIC compatibility", 1_000).unwrap();
+    let schema = SchemaDescriptor::current();
+    let mut required = schema.required_write_features().clone();
+    required.insert(FeatureId::new("future.retention").unwrap());
+    let writer =
+        SchemaDescriptor::new(5, schema.required_read_features().clone(), required.clone())
+            .unwrap();
+    let mut readable = original.clone();
+    let mut tx = readable.doc.transaction();
+    tx.put(ROOT, "schema_descriptor", codec::encode(&writer).unwrap())
+        .unwrap();
+    tx.commit();
+    assert_eq!(
+        Document::load(&readable.export())
+            .unwrap()
+            .schema_descriptor()
+            .unwrap(),
+        writer
+    );
+    let reader =
+        SchemaDescriptor::new(5, required, schema.required_write_features().clone()).unwrap();
+    let mut tx = readable.doc.transaction();
+    tx.put(ROOT, "schema_descriptor", codec::encode(&reader).unwrap())
+        .unwrap();
+    tx.commit();
+    assert_eq!(
+        Document::load(&readable.export()).unwrap_err(),
+        Error::UnsupportedSchema
+    );
+    let mut future = original.clone();
+    let mut tx = future.doc.transaction();
+    tx.put(ROOT, "schema", 99_u64).unwrap();
+    tx.commit();
+    assert_eq!(
+        Document::load(&future.export()).unwrap_err(),
+        Error::UnsupportedSchema
+    );
+    let mut invalid = original;
+    let mut tx = invalid.doc.transaction();
+    tx.delete(ROOT, "schema_descriptor").unwrap();
+    tx.commit();
+    assert_eq!(
+        Document::load(&invalid.export()).unwrap_err(),
+        Error::InvalidDocument
+    );
+}
+
 fn setup() -> (Document, GroupId, EntryId) {
     let mut document = Document::new("PUBLIC test database", 1_000).unwrap();
     let group = document
@@ -508,6 +558,8 @@ fn unknown_properties_survive_addressed_updates_and_history_is_not_self_referent
     let mut draft = document.begin_edit_entry(&entry).unwrap();
     draft.fields_mut().username = Some("PUBLIC new login".into());
     document.save_entry(draft, 2_000).unwrap();
+    // Full serialization must retain extensions, not merely the live object handle.
+    let document = Document::load(&document.export()).unwrap();
     assert_eq!(
         document
             .doc

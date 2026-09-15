@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use taypeer_core::DatabasePolicy;
 use taypeer_storage::MAX_FILE_SIZE;
 
-const MAGIC: &[u8; 8] = b"TAYCLR4\0";
+const MAGIC: &[u8; 8] = b"TAYCLR5\0";
 const MAX_METADATA: usize = 16 * 1024 * 1024;
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -64,8 +64,10 @@ impl Checkpoint {
         chain: &ControlChain,
         control: Digest,
     ) -> Result<(), ServiceError> {
-        if self.version != 1
-            || self.commitment()? != chain.at(control)?.policy
+        if self.version != 1 {
+            return Err(ServiceError::ReadCompatibility);
+        }
+        if self.commitment()? != chain.at(control)?.policy
             || self.keys.len() > 100_000
             || self.proofs.len() > 100_000
             || self.blobs.len() > 100_000
@@ -74,6 +76,7 @@ impl Checkpoint {
             || self.administration.len() > 100_000
             || self.discarded.len() > 100_000
             || document.database_id() != &chain.head().database
+            || document.schema_descriptor()? != chain.at(control)?.schema
         {
             return Err(ServiceError::InvalidDocument);
         }
@@ -143,6 +146,10 @@ pub(super) fn read_checkpoint(
     key: &ReadKey,
     chain: &ControlChain,
 ) -> Result<(Checkpoint, Document), ServiceError> {
+    compatibility::require_read(
+        &taypeer_core::ClientCapabilities::default()
+            .assess(&chain.at(object.envelope().control)?.schema),
+    )?;
     let (clear, blobs) = object.unlock_bundle(key)?;
     if blobs.ids().next().is_some() {
         return Err(ServiceError::InvalidDocument);

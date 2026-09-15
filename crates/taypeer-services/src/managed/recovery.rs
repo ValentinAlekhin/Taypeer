@@ -181,6 +181,7 @@ impl DatabaseService {
     ) -> Result<Digest, ServiceError> {
         let state = self.checked(session)?;
         let managed = state.managed.as_ref().ok_or(ServiceError::InvalidContext)?;
+        managed.check_format_write()?;
         let source = managed.port.snapshot()?;
         let destination = ArchiveSnapshot::open(path, None)?;
         let chain = destination.chain();
@@ -220,6 +221,7 @@ impl DatabaseService {
             return Err(editor_open_error(state));
         }
         let managed = state.managed.as_ref().ok_or(ServiceError::InvalidContext)?;
+        managed.check_format_write()?;
         let snapshot = managed.port.snapshot()?;
         if snapshot.fingerprint() != managed.snapshot.fingerprint() {
             return Err(StorageError::Changed.into());
@@ -263,7 +265,7 @@ impl DatabaseService {
             identity,
             author,
             metadata.commitment()?,
-            4,
+            state.document().schema_descriptor()?,
         )?;
         let (header, key) =
             taypeer_storage::create_epoch(password, metadata.policy.kdf_target_ms())?;

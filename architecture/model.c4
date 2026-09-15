@@ -109,10 +109,16 @@ model {
       description 'Проверка подписанного управления, приглашения и переходы доверия.'
       metadata { source 'crates/taypeer-trust/src/lib.rs'; contract 'docs/p2p.md'; evidence 'docs/p2p-acceptance.md' }
     }
+    compatibility = component 'Совместимость формата' {
+      #partial
+      technology 'Rust; taypeer-core'
+      description 'Подписанный дескриптор схемы и независимые возможности чтения, записи и получения. Проверка без UI, сети и секретов; не выполняет миграции.'
+      metadata { source 'crates/taypeer-core/src/compatibility.rs'; contract 'docs/compatibility.md' }
+    }
     evolution = component 'Эволюция и восстановление' {
       #planned
       technology 'Rust'
-      description 'Совместимость, переходы схемы и обработка отложенных источников.'
+      description 'Будущие переходы схемы и обработка отложенных источников; восстановление снимков отложено.'
       metadata { contract 'docs/compatibility.md' }
     }
     kdbx = component 'Перенос KDBX' {
@@ -197,6 +203,10 @@ model {
   taypeer.sessions -> taypeer.storage 'Чтение и фиксация'
   taypeer.sessions -> taypeer.trust 'Управление БД'
   taypeer.sessions -> taypeer.evolution 'Миграция и восстановление'
+  taypeer.sessions -> taypeer.compatibility 'Проверка чтения и изменений'
+  taypeer.trust -> taypeer.compatibility 'Подписанный дескриптор схемы'
+  taypeer.storage -> taypeer.compatibility 'Совместимость переносимого файла'
+  taypeer.document -> taypeer.compatibility 'Требования модели данных'
   taypeer.sessions -> taypeer.kdbx 'Импорт и экспорт'
   taypeer.sessions -> taypeer.generator 'Создание секрета'
   taypeer.sessions -> taypeer.iconLoader 'Явная загрузка'

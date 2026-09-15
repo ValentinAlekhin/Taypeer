@@ -220,6 +220,7 @@ fn dispatch(
                 .value,
         )?,
         Command::Authority => value(&service.authority(session)?)?,
+        Command::Compatibility => value(&service.compatibility(session)?)?,
         Command::CreateInvitation => {
             let (invitation, secret) = service.create_invitation(session, unix_seconds()?)?;
             value(&(invitation, secret.expose()))?

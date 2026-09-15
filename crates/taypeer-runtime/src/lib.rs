@@ -7,7 +7,7 @@ mod worker;
 pub use network::{InvitationCode, JoinProgress, PeerProgress, PendingJoin};
 pub mod profile;
 
-pub use host::RuntimeHost;
+pub use host::{RegisteredCompatibility, RuntimeHost};
 pub use protocol::{Command, RuntimeError, erase_view};
 pub use worker::run_worker;
 

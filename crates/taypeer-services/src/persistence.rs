@@ -108,6 +108,7 @@ impl DatabaseState {
         &mut self,
         database: &DatabaseId,
         password: &[u8],
+        capabilities: &taypeer_core::ClientCapabilities,
     ) -> Result<SessionToken, ServiceError> {
         // Reauthentication must not replace the backing header beneath an active document/key.
         if self.unlocked {
@@ -120,6 +121,8 @@ impl DatabaseState {
         let file = self.file.as_mut().ok_or(ServiceError::InvalidContext)?;
         let (key, clear, mut blobs) = file.unlock_bundle(password)?;
         let document = Document::load(&clear)?;
+        let compatibility = capabilities.assess(&document.schema_descriptor()?);
+        managed::compatibility::require_read(&compatibility)?;
         if document
             .blob_references()?
             .required
@@ -131,11 +134,16 @@ impl DatabaseState {
         if document.database_id() != database {
             return Err(ServiceError::InvalidContext);
         }
-        let draft = load_draft(file, &key, &mut blobs)?;
+        let draft = if compatibility.write.is_supported() {
+            load_draft(file, &key, &mut blobs)?
+        } else {
+            None
+        };
         self.blobs = Some(blobs);
         self.document = Some(document);
         self.key = Some(key);
         self.draft = draft;
+        self.draft_deferred = !compatibility.write.is_supported();
         self.generation = generation;
         self.unlocked = true;
         Ok(SessionToken {
@@ -148,6 +156,9 @@ impl DatabaseState {
         if self.managed.is_some() {
             let result = (|| {
                 let managed = self.managed.as_ref().ok_or(ServiceError::InvalidContext)?;
+                if self.draft_deferred {
+                    return Ok(());
+                }
                 if let Some(draft) = &self.draft {
                     managed.save_draft(draft, self.blobs()?)?;
                 } else {
@@ -167,6 +178,9 @@ impl DatabaseState {
             return Ok(());
         };
         let result = (|| {
+            if self.draft_deferred {
+                return Ok(());
+            }
             if let Some(draft) = &self.draft {
                 self.persist_binary_draft(draft, self.blobs()?)?;
             } else {
@@ -193,6 +207,9 @@ impl DatabaseService {
         password: &[u8],
     ) -> Result<SessionToken, ServiceError> {
         let document = Document::new(name, (self.clock)())?;
+        managed::compatibility::require_write(
+            &self.capabilities.assess(&document.schema_descriptor()?),
+        )?;
         let clear = Zeroizing::new(document.export());
         let blobs = BlobStore::new()?;
         let reader = blobs.bundle(&clear)?;
@@ -210,6 +227,8 @@ impl DatabaseService {
         let mut file = FileStore::open(path)?;
         let (key, clear, mut blobs) = file.unlock_bundle(password)?;
         let document = Document::load(&clear)?;
+        let compatibility = self.capabilities.assess(&document.schema_descriptor()?);
+        managed::compatibility::require_read(&compatibility)?;
         if document
             .blob_references()?
             .required
@@ -218,7 +237,11 @@ impl DatabaseService {
         {
             return Err(StorageError::MissingBlob.into());
         }
-        let draft = load_draft(&file, &key, &mut blobs)?;
+        let draft = if compatibility.write.is_supported() {
+            load_draft(&file, &key, &mut blobs)?
+        } else {
+            None
+        };
         self.install_file(document, file, key, draft, blobs)
     }
     fn install_file(
@@ -230,6 +253,11 @@ impl DatabaseService {
         blobs: BlobStore,
     ) -> Result<SessionToken, ServiceError> {
         let id = document.database_id().clone();
+        let draft_deferred = !self
+            .capabilities
+            .assess(&document.schema_descriptor()?)
+            .write
+            .is_supported();
         if self.databases.contains_key(&id) {
             return Err(ServiceError::InvalidContext);
         }
@@ -251,6 +279,7 @@ impl DatabaseService {
                 generation: 1,
                 unlocked: true,
                 draft,
+                draft_deferred,
             },
         );
         Ok(SessionToken {

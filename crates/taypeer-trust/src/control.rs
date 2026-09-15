@@ -1,9 +1,9 @@
 use crate::{AuthorKey, DeviceId, Digest, Error, Identity, PublicKey, Signature, TrustSetId};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
-use taypeer_core::DatabaseId;
+use taypeer_core::{DatabaseId, SchemaDescriptor};
 
-const DOMAIN: &[u8] = b"taypeer/control/1";
+const DOMAIN: &[u8] = b"taypeer/control/2";
 const HANDOFF: &[u8] = b"taypeer/handoff-consent/1";
 const MAX_CONTROLS: usize = 100_000;
 const MAX_MEMBERS: usize = 1024;
@@ -41,7 +41,7 @@ pub struct Control {
     /// Commitment to the encrypted database policy.
     pub policy: Digest,
     /// Logical schema supported by this control state.
-    pub schema: u16,
+    pub schema: SchemaDescriptor,
     /// Durable retry identity of the transition, absent only in genesis.
     pub operation: Option<Digest>,
     /// Hash of the approved transition intent; passwords never appear here.
@@ -153,10 +153,10 @@ impl ControlChain {
         identity: Identity,
         key: &AuthorKey,
         policy: Digest,
-        schema: u16,
+        schema: SchemaDescriptor,
     ) -> Result<Self, Error> {
         identity.validate()?;
-        if identity.author != key.public() || schema != 4 {
+        if identity.author != key.public() {
             return Err(Error::Unauthorized);
         }
         let manager = identity.device;
@@ -168,7 +168,7 @@ impl ControlChain {
             },
         )]);
         let body = Control {
-            version: 1,
+            version: 2,
             database,
             trust_set: TrustSetId::random()?,
             sequence: 0,
@@ -344,9 +344,10 @@ impl ControlChain {
 }
 
 fn validate_body(c: &Control) -> Result<(), Error> {
-    if c.version != 1
-        || c.schema != 4
-        || c.members.is_empty()
+    if c.version != 2 {
+        return Err(Error::UnsupportedVersion);
+    }
+    if c.members.is_empty()
         || c.members.len() > MAX_MEMBERS
         || !c.members.contains_key(&c.manager)
         || c.database.as_str().is_empty()

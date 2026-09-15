@@ -106,8 +106,10 @@ impl SignedManifest {
     }
 }
 fn validate(body: &Manifest, chain: &ControlChain) -> Result<(), Error> {
-    if body.version != 1
-        || body.database != chain.head().database
+    if body.version != 1 {
+        return Err(Error::UnsupportedVersion);
+    }
+    if body.database != chain.head().database
         || body.trust_set != chain.head().trust_set
         || body.objects.is_empty()
         || body.objects.len() > 100_000
@@ -218,8 +220,10 @@ impl ObjectEnvelope {
     /// Validate author admission at origin and stricter authority for a baseline.
     /// Current admission and dependency closure are separate apply-time checks.
     pub fn verify(&self, chain: &ControlChain) -> Result<(), Error> {
-        if self.version != 1
-            || self.database != chain.head().database
+        if self.version != 1 {
+            return Err(Error::UnsupportedVersion);
+        }
+        if self.database != chain.head().database
             || self.trust_set != chain.head().trust_set
             || self.length == 0
             || self.length > 16 * 1024 * 1024 * 1024
@@ -324,7 +328,7 @@ impl SourceProof {
             trust_set: chain.head().trust_set,
             control: chain.head_hash()?,
             author,
-            schema: chain.head().schema,
+            schema: chain.head().schema.schema_version(),
             change: Digest::of(bytes),
             blobs,
             signature: Signature::from_bytes([0; 64]),
@@ -335,10 +339,12 @@ impl SourceProof {
     /// Authenticate the source at its original control. The caller must additionally
     /// check continuous admission and all dependencies before automatic application.
     pub fn verify(&self, chain: &ControlChain, bytes: &[u8]) -> Result<(), Error> {
-        if self.version != 1
-            || self.database != chain.head().database
+        if self.version != 1 {
+            return Err(Error::UnsupportedVersion);
+        }
+        if self.database != chain.head().database
             || self.trust_set != chain.head().trust_set
-            || self.schema != 4
+            || self.schema != chain.at(self.control)?.schema.schema_version()
             || Digest::of(bytes) != self.change
         {
             return Err(Error::Invalid);

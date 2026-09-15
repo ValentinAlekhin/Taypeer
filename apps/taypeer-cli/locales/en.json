@@ -101,5 +101,9 @@
   "sync_reveal": "Explicitly reveal a password in the selected source",
   "sync_discard": "Discard an original change across all packet copies",
   "sync_extract": "Extract a source entry as a new current-author change",
-  "sync_collect": "Release redundant ciphertext after checking all retention roots"
+  "sync_collect": "Release redundant ciphertext after checking all retention roots",
+  "help_compatibility": "Show format read/write/receipt capabilities separately from lock and admission.",
+  "compatibility_read": "Update Taypeer to read this database. Its ciphertext remains stored.",
+  "compatibility_write": "Read-only format support. Update Taypeer before changing this database.",
+  "compatibility_encoding": "This file or signed control encoding is not supported. The source was not rewritten."
 }

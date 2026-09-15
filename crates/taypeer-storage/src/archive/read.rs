@@ -21,7 +21,7 @@ impl ArchiveSnapshot {
         if &prefix[..8] != MAGIC {
             return Err(Error::InvalidFile);
         }
-        if prefix[8..12] != [1, 0, 4, 0] {
+        if prefix[8..12] != FORMAT {
             return Err(Error::UnsupportedVersion);
         }
         let meta_length =

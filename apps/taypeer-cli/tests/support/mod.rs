@@ -1,4 +1,4 @@
-//! Independent dev4 fixture encoding for CLI lifecycle tests. Every payload is PUBLIC.
+//! Independent dev5 fixture encoding for CLI lifecycle tests. Every payload is PUBLIC.
 //! This encoder is test-only; product code never signs arbitrary imported documents.
 use std::path::{Path, PathBuf};
 use taypeer_core::{DatabasePolicy, EntryId, GroupId};
@@ -40,7 +40,7 @@ pub fn persist(path: &Path, document: &Document, password: &[u8]) {
         identity,
         &author,
         commitment,
-        4,
+        taypeer_core::SchemaDescriptor::current(),
     )
     .unwrap();
     let proofs: std::collections::BTreeMap<_, _> = document
@@ -59,7 +59,7 @@ pub fn persist(path: &Path, document: &Document, password: &[u8]) {
         "keys": {"0": key.secret_bytes().as_ref()}, "proofs": proofs, "blobs": {},
         "processed": [], "discarded": [], "administration": {}});
     let json = Zeroizing::new(serde_json::to_vec(&metadata).unwrap());
-    let mut clear = Zeroizing::new(b"TAYCLR4\0".to_vec());
+    let mut clear = Zeroizing::new(b"TAYCLR5\0".to_vec());
     clear.extend_from_slice(&(json.len() as u64).to_le_bytes());
     clear.extend_from_slice(&json);
     clear.extend_from_slice(&document.export());

@@ -21,6 +21,9 @@ struct Fixture {
 }
 impl Fixture {
     fn new() -> Self {
+        Self::with_schema(taypeer_core::SchemaDescriptor::current())
+    }
+    fn with_schema(schema: taypeer_core::SchemaDescriptor) -> Self {
         let author = AuthorKey::from_seed(&[41; 32]);
         let transport = TransportKey::from_seed(&[42; 32]);
         let identity = Identity::new(author.public(), transport.public()).unwrap();
@@ -29,7 +32,7 @@ impl Fixture {
             identity,
             &author,
             Digest::of(b"PUBLIC policy"),
-            4,
+            schema,
         )
         .unwrap();
         let (header, key) = create_epoch(PASSWORD, 500).unwrap();
@@ -82,6 +85,40 @@ impl Fixture {
             )
             .unwrap();
         (candidate, metadata)
+    }
+}
+
+#[test]
+fn unknown_document_schema_remains_verifiable_ciphertext_and_old_archive_is_not_rewritten() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("PUBLIC future.taypeer");
+    let f = Fixture::with_schema(
+        taypeer_core::SchemaDescriptor::new(99, BTreeSet::new(), BTreeSet::new()).unwrap(),
+    );
+    let (candidate, metadata) = f.initial();
+    drop(ArchiveStore::create(&path, &candidate, metadata, None).unwrap());
+    let before = fs::read(&path).unwrap();
+    let snapshot = ArchiveSnapshot::open(&path, None).unwrap();
+    let report = snapshot.compatibility(&taypeer_core::ClientCapabilities::default());
+    assert!(!report.read.is_supported());
+    assert!(!report.write.is_supported());
+    assert!(report.receive.is_supported());
+    let copy = directory.path().join("PUBLIC exact copy.taypeer");
+    snapshot
+        .candidate()
+        .export(snapshot.metadata().clone(), &copy)
+        .unwrap();
+    assert_eq!(fs::read(copy).unwrap(), before);
+    drop(snapshot);
+    for version in [0, 3, 4, 6] {
+        let mut old = before.clone();
+        old[10] = version;
+        fs::write(&path, &old).unwrap();
+        assert!(matches!(
+            ArchiveSnapshot::open(&path, None),
+            Err(Error::UnsupportedVersion)
+        ));
+        assert_eq!(fs::read(&path).unwrap(), old);
     }
 }
 #[derive(Default)]

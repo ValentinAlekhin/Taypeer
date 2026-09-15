@@ -8,6 +8,8 @@ use taypeer_trust::{JoinProof, TransportKey};
 const PASSWORD: &[u8] = b"PUBLIC managed fixture password";
 const NEW_PASSWORD: &[u8] = b"PUBLIC independently rotated fixture password";
 
+mod compatibility;
+
 #[test]
 fn receipt_revocation_and_kdf_changes_never_manage_backup_paths() {
     let directory = tempfile::tempdir().unwrap();
@@ -1056,6 +1058,14 @@ fn durable_edits_copied_read_only_and_credentials_only_after_authentication() {
     let b = Profile::new(2);
     let (mut reader, read_session) = b.open(copied.clone(), PASSWORD);
     assert!(!reader.can_write(&read_session).unwrap());
+    assert!(
+        reader
+            .compatibility(&read_session)
+            .unwrap()
+            .value
+            .write
+            .is_supported()
+    );
     assert_eq!(
         reader.entries(&read_session, None, "").unwrap().value.len(),
         1

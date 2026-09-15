@@ -13,6 +13,7 @@ mod administration;
 mod apply;
 mod codec;
 mod collection;
+pub(crate) mod compatibility;
 pub use collection::CollectionReport;
 mod pending;
 mod recovery;
@@ -35,6 +36,7 @@ pub(super) struct ManagedState {
     baseline: Digest,
     accepted: Digest,
     open: Option<Unlocked>,
+    capabilities: taypeer_core::ClientCapabilities,
 }
 struct Unlocked {
     author: Option<AuthorKey>,
@@ -53,6 +55,7 @@ impl ManagedState {
     }
     pub fn check_edit_permission(&self) -> Result<(), ServiceError> {
         let open = self.open.as_ref().ok_or(ServiceError::Locked)?;
+        self.check_format_write()?;
         let author = open.author.as_ref().ok_or(ServiceError::ReadOnly)?;
         let current = self.port.snapshot()?;
         if !current.metadata().journal.forks.is_empty() {
@@ -71,6 +74,7 @@ impl ManagedState {
     pub fn check_session(&self) -> Result<(), ServiceError> {
         let open = self.open.as_ref().ok_or(ServiceError::Locked)?;
         let latest = self.port.snapshot()?;
+        compatibility::require_read(&self.capabilities.assess(&latest.chain().head().schema))?;
         if latest.chain().head().epoch != self.snapshot.chain().at(open.control)?.epoch {
             return Err(ServiceError::ExpiredSession);
         }
@@ -93,6 +97,7 @@ impl ManagedState {
     }
     fn writer(&self) -> Result<&AuthorKey, ServiceError> {
         let open = self.open.as_ref().ok_or(ServiceError::Locked)?;
+        self.check_format_write()?;
         let key = open.author.as_ref().ok_or(ServiceError::ReadOnly)?;
         if !self.snapshot.metadata().journal.forks.is_empty() {
             return Err(taypeer_trust::Error::Fork.into());
@@ -370,7 +375,7 @@ impl DatabaseService {
             identity,
             author,
             metadata.commitment()?,
-            4,
+            taypeer_core::SchemaDescriptor::current(),
         )?;
         for source in document.changes_since(&[])? {
             metadata.proofs.insert(
@@ -413,6 +418,8 @@ impl DatabaseService {
         author: impl FnOnce() -> Result<Option<AuthorKey>, ServiceError>,
     ) -> Result<SessionToken, ServiceError> {
         let snapshot = port.snapshot()?;
+        let compatibility = self.capabilities.assess(&snapshot.chain().head().schema);
+        compatibility::require_read(&compatibility)?;
         let database = snapshot.chain().head().database.clone();
         let generation = match self.databases.get(&database) {
             None => 1,
@@ -479,7 +486,10 @@ impl DatabaseService {
             metadata.discarded.clear();
             metadata.discarded_sources.clear();
         }
-        if let Some(author) = author.as_ref().filter(|_| admitted) {
+        if let Some(author) = author
+            .as_ref()
+            .filter(|_| admitted && compatibility.write.is_supported())
+        {
             document.set_writer(*author.device_id().as_bytes());
         } else {
             document.clear_writer();
@@ -494,6 +504,7 @@ impl DatabaseService {
             baseline,
             accepted: selected.descriptor().digest,
             snapshot,
+            capabilities: self.capabilities.clone(),
             open: Some(Unlocked {
                 author,
                 header: selected.password_header()?,
@@ -503,7 +514,12 @@ impl DatabaseService {
         };
         let mut blobs = BlobStore::new()?;
         managed.load_required_blobs(&document, &mut blobs)?;
-        let draft = managed.load_draft(&mut blobs)?;
+        // An unsupported writer must not decode/rewrite a possibly newer local draft.
+        let draft = if compatibility.write.is_supported() {
+            managed.load_draft(&mut blobs)?
+        } else {
+            None
+        };
         let label = managed
             .port
             .path()
@@ -523,6 +539,7 @@ impl DatabaseService {
                 generation,
                 unlocked: true,
                 draft,
+                draft_deferred: !compatibility.write.is_supported(),
             },
         );
         Ok(SessionToken {
@@ -540,7 +557,8 @@ impl DatabaseService {
     /// Whether this session may author new changes under the latest local authority.
     pub fn can_write(&self, session: &SessionToken) -> Result<bool, ServiceError> {
         let state = self.checked(session)?;
-        Ok(state.managed.as_ref().is_none_or(|m| m.writer().is_ok()))
+        Ok(self.compatibility(session)?.value.write.is_supported()
+            && state.managed.as_ref().is_none_or(|m| m.writer().is_ok()))
     }
 }
 fn latest_baseline(snapshot: &ArchiveSnapshot) -> Result<EncryptedObject, ServiceError> {

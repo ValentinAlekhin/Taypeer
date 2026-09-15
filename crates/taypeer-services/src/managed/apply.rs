@@ -15,6 +15,8 @@ pub enum PendingReason {
     HistoricalKey,
     /// Decrypted data or its original signature failed validation.
     Invalid,
+    /// Valid ciphertext requires document semantics unavailable in this build.
+    Compatibility,
 }
 /// Safe status of one received ciphertext object, independent of its decrypted hashes.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -116,6 +118,17 @@ impl ManagedState {
                 continue;
             }
             let object = metadata.object(&self.snapshot, id)?;
+            if !self
+                .packet_compatibility(&object, &metadata)?
+                .write
+                .is_supported()
+            {
+                report.pending.push(PendingPacket {
+                    object: id,
+                    reason: PendingReason::Compatibility,
+                });
+                continue;
+            }
             match self.read_packet(&object, &metadata) {
                 Ok(packet) => {
                     for (source, proof) in &packet.sources {
@@ -128,6 +141,12 @@ impl ManagedState {
                     reason: PendingReason::HistoricalKey,
                 }),
                 Err(ServiceError::Storage(StorageError::Io)) => return Err(StorageError::Io.into()),
+                Err(ServiceError::ReadCompatibility | ServiceError::WriteCompatibility) => {
+                    report.pending.push(PendingPacket {
+                        object: id,
+                        reason: PendingReason::Compatibility,
+                    })
+                }
                 Err(_) => report.pending.push(PendingPacket {
                     object: id,
                     reason: PendingReason::Invalid,
@@ -203,6 +222,7 @@ impl ManagedState {
         object: &EncryptedObject,
         metadata: &Checkpoint,
     ) -> Result<Packet, ServiceError> {
+        compatibility::require_read(&self.packet_compatibility(object, metadata)?)?;
         let key = metadata.object_key(object, self.snapshot.chain())?;
         let sources = if object.envelope().kind == ObjectKind::Change {
             let (clear, blobs) = object.unlock_bundle(&key)?;

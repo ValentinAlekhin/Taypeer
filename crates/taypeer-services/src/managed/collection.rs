@@ -95,6 +95,13 @@ impl ManagedState {
         }
         for id in metadata.packet_ids(&self.snapshot) {
             let object = metadata.object(&self.snapshot, id)?;
+            if !self
+                .packet_compatibility(&object, &metadata)?
+                .write
+                .is_supported()
+            {
+                return held();
+            }
             let packet = match self.read_packet(&object, &metadata) {
                 Ok(packet) => packet,
                 Err(ServiceError::Storage(StorageError::Io)) => return Err(StorageError::Io.into()),

@@ -34,6 +34,8 @@ impl Drop for Boot {
 /// No command implicitly reveals a protected value.
 #[derive(Serialize, Deserialize)]
 pub enum Command {
+    /// Read the unlocked session's authenticated format compatibility.
+    Compatibility,
     /// Create a separate trust set without modifying the readable original.
     RecoverTrust {
         /// New destination; existing unrelated files are never replaced.

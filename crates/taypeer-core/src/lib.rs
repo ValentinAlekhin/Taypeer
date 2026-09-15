@@ -6,6 +6,11 @@ mod binary;
 pub use binary::*;
 mod policy;
 pub use policy::{DatabasePolicy, PolicyError};
+mod compatibility;
+pub use compatibility::{
+    CURRENT_SCHEMA, ClientCapabilities, CompatibilityAccess, CompatibilityReport,
+    DOCUMENT_FEATURES, DescriptorError, FeatureId, SchemaDescriptor,
+};
 mod order;
 pub use order::{OrderError, OrderKey};
 

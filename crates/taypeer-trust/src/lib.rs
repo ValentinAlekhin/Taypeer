@@ -26,6 +26,8 @@ use serde::{Deserialize, Serialize};
 pub enum Error {
     /// A public key, identifier, canonical body or object was malformed.
     Invalid,
+    /// The signed control encoding is not supported by this build.
+    UnsupportedVersion,
     /// A signature did not authenticate its claimed signer.
     Signature,
     /// A caller has no authority for this operation.

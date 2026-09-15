@@ -17,6 +17,8 @@ use taypeer_trust::{
 };
 
 const MAGIC: &[u8; 8] = b"TAYPEER\0";
+// Archive layout is independent of the signed logical schema it transports.
+const FORMAT: [u8; 4] = [1, 0, 5, 0];
 const PREFIX: usize = 20;
 const MAX_METADATA: u64 = 16 * 1024 * 1024;
 const MAX_ARCHIVE: u64 = 16 * 1024 * 1024 * 1024;
@@ -156,6 +158,14 @@ pub struct ArchiveSnapshot {
     length: u64,
 }
 impl ArchiveSnapshot {
+    /// Nonsecret compatibility after outer encoding, signatures and bounds were verified.
+    /// A supported receive mode still requires admission and a durable writer before ACK.
+    pub fn compatibility(
+        &self,
+        capabilities: &taypeer_core::ClientCapabilities,
+    ) -> taypeer_core::CompatibilityReport {
+        capabilities.assess(&self.chain.head().schema)
+    }
     /// Authenticated metadata; none of it is an unlocked document.
     pub fn metadata(&self) -> &ArchiveMetadata {
         &self.metadata

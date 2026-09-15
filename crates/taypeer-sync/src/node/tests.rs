@@ -17,6 +17,9 @@ struct PublicFixture {
     blob: Digest,
 }
 fn fixture() -> PublicFixture {
+    fixture_with_schema(taypeer_core::SchemaDescriptor::current())
+}
+fn fixture_with_schema(schema: taypeer_core::SchemaDescriptor) -> PublicFixture {
     let directory = tempfile::tempdir().unwrap();
     let mut authors = Vec::new();
     let mut keys = Vec::new();
@@ -34,7 +37,7 @@ fn fixture() -> PublicFixture {
         identities[0],
         &authors[0],
         Digest::of(b"PUBLIC policy"),
-        4,
+        schema,
     )
     .unwrap();
     for (i, identity) in identities.iter().enumerate().skip(1) {
@@ -143,8 +146,8 @@ async fn test_node(key: &TransportKey, backend: Arc<dyn Backend>, relay: Option<
     }
 }
 
-async fn forward(relay: Option<RelayUrl>) {
-    let f = fixture();
+async fn forward(relay: Option<RelayUrl>, schema: taypeer_core::SchemaDescriptor) {
+    let f = fixture_with_schema(schema.clone());
     let mut nodes = Vec::new();
     for index in 0..3 {
         nodes.push(test_node(&f.keys[index], f.coordinators[index].clone(), relay.clone()).await);
@@ -201,18 +204,43 @@ async fn forward(relay: Option<RelayUrl>) {
         taypeer_storage::ArchiveSnapshot::open(&f.directory.path().join("PUBLIC-2.taypeer"), None)
             .unwrap();
     assert!(copy.metadata().manifest.body.objects.contains_key(&f.blob));
+    let compatibility = copy.compatibility(&taypeer_core::ClientCapabilities::default());
+    assert_eq!(compatibility.schema, schema);
+    assert!(compatibility.receive.is_supported());
+    assert_eq!(
+        compatibility.read.is_supported(),
+        schema.schema_version() == 5
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn real_direct_transport_forwards_ciphertext_through_a_locked_coordinator() {
-    timeout(Duration::from_secs(60), forward(None))
-        .await
-        .unwrap();
+    timeout(
+        Duration::from_secs(60),
+        forward(None, taypeer_core::SchemaDescriptor::current()),
+    )
+    .await
+    .unwrap();
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn forced_loopback_relay_forwards_without_an_ip_transport() {
     let (_, url, _server) = iroh::test_utils::run_relay_server().await.unwrap();
-    timeout(Duration::from_secs(60), forward(Some(url)))
+    timeout(
+        Duration::from_secs(60),
+        forward(Some(url), taypeer_core::SchemaDescriptor::current()),
+    )
+    .await
+    .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn unknown_document_schema_can_be_received_and_forwarded_directly_and_over_relay() {
+    let schema = taypeer_core::SchemaDescriptor::new(99, BTreeSet::new(), BTreeSet::new()).unwrap();
+    timeout(Duration::from_secs(60), forward(None, schema.clone()))
+        .await
+        .unwrap();
+    let (_, url, _server) = iroh::test_utils::run_relay_server().await.unwrap();
+    timeout(Duration::from_secs(60), forward(Some(url), schema))
         .await
         .unwrap();
 }

@@ -17,7 +17,7 @@ fn genesis(author: &AuthorKey, identity: Identity) -> ControlChain {
         identity,
         author,
         operation(0),
-        4,
+        taypeer_core::SchemaDescriptor::current(),
     )
     .unwrap()
 }
@@ -240,6 +240,13 @@ fn transport_manifest_signature_never_substitutes_for_an_author_proof() {
     let mut changed = signed.clone();
     changed.body.objects.remove(&baseline);
     assert!(changed.verify(&chain).is_err());
+    let mut future = signed.clone();
+    future.body.version = 99;
+    assert_eq!(future.verify(&chain), Err(Error::UnsupportedVersion));
+    let mut future =
+        ObjectEnvelope::sign(&chain, &a, ObjectKind::Checkpoint, 40, baseline).unwrap();
+    future.version = 99;
+    assert_eq!(future.verify(&chain), Err(Error::UnsupportedVersion));
     let proof = SourceProof::sign(&chain, &a, b"PUBLIC bytes").unwrap();
     let mut forged = proof.clone();
     // Even a valid signature from the admitted network key is not an author signature.
@@ -276,4 +283,54 @@ fn identities_validate_encoding_and_separate_key_roles() {
     value["device"] = serde_json::json!(Digest::of(b"PUBLIC wrong identity").to_string());
     let decoded: Identity = serde_json::from_value(value).unwrap();
     assert!(decoded.validate().is_err());
+}
+
+#[test]
+fn schema_requirements_are_signed_and_cannot_change_during_administration() {
+    let (author, _, identity) = profile(25);
+    let chain = genesis(&author, identity);
+    let original = chain.head().schema.clone();
+    let mut writes = original.required_write_features().clone();
+    writes.insert(taypeer_core::FeatureId::new("future.retention").unwrap());
+    let changed =
+        taypeer_core::SchemaDescriptor::new(5, original.required_read_features().clone(), writes)
+            .unwrap();
+    let mut root = chain.records()[0].clone();
+    root.body.schema = changed.clone();
+    assert_eq!(
+        ControlChain::validate(vec![root.clone()], root.hash().unwrap()),
+        Err(Error::Signature)
+    );
+    let next = chain
+        .transition(
+            &author,
+            operation(60),
+            ControlTransition::Policy(operation(61)),
+        )
+        .unwrap();
+    let mut records = next.records().to_vec();
+    records[1].body.schema = changed;
+    records[1].signature = author.sign(b"taypeer/control/2", &records[1].body).unwrap();
+    assert_eq!(
+        ControlChain::validate(records, chain.root().unwrap()),
+        Err(Error::Invalid)
+    );
+    let mut encoded = serde_json::to_value(chain.records()).unwrap();
+    encoded[0]["body"]["schema"]["required_write_features"] = serde_json::json!([]);
+    assert!(serde_json::from_value::<Vec<SignedControl>>(encoded).is_err());
+    let mut root = chain.records()[0].clone();
+    root.body.version = 99;
+    assert_eq!(
+        ControlChain::validate(vec![root.clone()], root.hash().unwrap()),
+        Err(Error::UnsupportedVersion)
+    );
+    let mut source = SourceProof::sign(&chain, &author, b"PUBLIC source").unwrap();
+    source.version = 99;
+    assert_eq!(
+        source.verify(&chain, b"PUBLIC source"),
+        Err(Error::UnsupportedVersion)
+    );
+    source.version = 1;
+    source.schema = 99;
+    assert_eq!(source.verify(&chain, b"PUBLIC source"), Err(Error::Invalid));
 }
