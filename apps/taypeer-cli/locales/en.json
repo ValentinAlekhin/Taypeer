@@ -105,5 +105,11 @@
   "help_compatibility": "Show format read/write/receipt capabilities separately from lock and admission.",
   "compatibility_read": "Update Taypeer to read this database. Its ciphertext remains stored.",
   "compatibility_write": "Read-only format support. Update Taypeer before changing this database.",
-  "compatibility_encoding": "This file or signed control encoding is not supported. The source was not rewritten."
+  "compatibility_encoding": "This file or signed control encoding is not supported. The source was not rewritten.",
+  "help_settings": "Local device settings (no Keychain access)",
+  "help_auto_lock": "Read or set the shared inactivity interval",
+  "help_auto_lock_seconds": "Positive inactivity interval in seconds; default 300",
+  "session_closed": "The database session is locked. Unlock it to continue.",
+  "operation_interrupted": "The session was locked during the operation. A write may already have committed; the latest draft is not guaranteed to be saved.",
+  "shutdown_unconfirmed": "Access is closed, but process exit is not yet confirmed."
 }

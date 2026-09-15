@@ -194,8 +194,14 @@ impl Host {
                 let progress = runtime.resume_join(request)?;
                 if let JoinProgress::Received(database) = &progress {
                     let id = database.as_str().to_owned();
-                    self.databases
-                        .insert(id.clone(), Database { path, worker: None });
+                    self.databases.insert(
+                        id.clone(),
+                        Database {
+                            path,
+                            worker: None,
+                            closure: None,
+                        },
+                    );
                     self.selected = Some(id);
                 }
                 value(progress)

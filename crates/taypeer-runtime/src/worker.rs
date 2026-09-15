@@ -1,4 +1,7 @@
 //! Child-side dispatch. Only this process constructs a plaintext database service.
+mod input;
+#[cfg(test)]
+mod tests;
 
 use crate::{
     Command, RuntimeError,
@@ -18,6 +21,19 @@ pub fn run_worker(
     reader: impl Read + Send + 'static,
     writer: impl Write + Send + 'static,
 ) -> Result<(), RuntimeError> {
+    run_with_open(reader, writer, open_native)
+}
+
+fn run_with_open(
+    reader: impl Read + Send + 'static,
+    writer: impl Write + Send + 'static,
+    open: impl FnOnce(
+        &mut Boot,
+        &Arc<Mutex<Channel>>,
+        &mut DatabaseService,
+    ) -> Result<SessionToken, RuntimeError>,
+) -> Result<(), RuntimeError> {
+    let (reader, _lifetime) = input::Incoming::start(reader);
     let channel = Arc::new(Mutex::new(Channel::new(reader, writer)));
     let mut boot: Boot = channel
         .lock()
@@ -38,47 +54,16 @@ pub fn run_worker(
             .lock()
             .map_err(|_| RuntimeError::Transport)?
             .response(result)?;
+        // Keep the supervised opening generation alive until its host closes it.
+        let mut channel = channel.lock().map_err(|_| RuntimeError::Transport)?;
+        if !matches!(channel.read::<Command>()?, Command::Lock) {
+            return Err(RuntimeError::Protocol);
+        }
+        channel.response(Ok(Value::Null))?;
         return Ok(());
     }
     let mut service = DatabaseService::new();
-    let opened = (|| {
-        let profile = crate::profile::NativeProfile::load(&boot.profile)?;
-        let seed = match boot.create_name.take() {
-            Some(name) => {
-                let author = profile.author()?;
-                let identity =
-                    taypeer_trust::Identity::new(author.public(), profile.transport_public())
-                        .map_err(|_| RuntimeError::Protocol)?;
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map_err(|_| RuntimeError::Protocol)?
-                    .as_millis();
-                Some(DatabaseService::prepare_managed(
-                    name,
-                    boot.password.as_bytes(),
-                    &author,
-                    identity,
-                    now.try_into().map_err(|_| RuntimeError::Protocol)?,
-                    Default::default(),
-                )?)
-            }
-            None => None,
-        };
-        let port = RemotePersistence::attach(
-            Arc::clone(&channel),
-            boot.path.clone(),
-            boot.spool.clone(),
-            seed,
-        )?;
-        service
-            .open_managed(Box::new(port), boot.password.as_bytes(), || {
-                profile
-                    .author()
-                    .map(Some)
-                    .map_err(|_| taypeer_services::ServiceError::Credentials)
-            })
-            .map_err(RuntimeError::from)
-    })();
+    let opened = open(&mut boot, &channel, &mut service);
     boot.password.zeroize();
     let session = match opened {
         Ok(session) => session,
@@ -108,6 +93,49 @@ pub fn run_worker(
     // a draft failure, but the process must still stop holding the document.
     let closed = service.lock_all_checked().map_err(RuntimeError::from);
     outcome.and(closed)
+}
+
+fn open_native(
+    boot: &mut Boot,
+    channel: &Arc<Mutex<Channel>>,
+    service: &mut DatabaseService,
+) -> Result<SessionToken, RuntimeError> {
+    let profile = crate::profile::NativeProfile::load(&boot.profile)?;
+    let seed = match boot.create_name.take() {
+        Some(name) => {
+            let author = profile.author()?;
+            let identity =
+                taypeer_trust::Identity::new(author.public(), profile.transport_public())
+                    .map_err(|_| RuntimeError::Protocol)?;
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|_| RuntimeError::Protocol)?
+                .as_millis();
+            Some(DatabaseService::prepare_managed(
+                name,
+                boot.password.as_bytes(),
+                &author,
+                identity,
+                now.try_into().map_err(|_| RuntimeError::Protocol)?,
+                Default::default(),
+            )?)
+        }
+        None => None,
+    };
+    let port = RemotePersistence::attach(
+        Arc::clone(channel),
+        boot.path.clone(),
+        boot.spool.clone(),
+        seed,
+    )?;
+    service
+        .open_managed(Box::new(port), boot.password.as_bytes(), || {
+            profile
+                .author()
+                .map(Some)
+                .map_err(|_| taypeer_services::ServiceError::Credentials)
+        })
+        .map_err(RuntimeError::from)
 }
 
 fn serve(

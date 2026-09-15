@@ -12,7 +12,7 @@ use taypeer_services::{
 };
 use zeroize::{Zeroize, Zeroizing};
 
-const MAX_MESSAGE: usize = 16 * 1024 * 1024;
+pub(crate) const MAX_MESSAGE: usize = 16 * 1024 * 1024;
 
 #[derive(Serialize, Deserialize)]
 pub(crate) struct Boot {
@@ -412,6 +412,12 @@ pub enum RuntimeError {
     TooLarge,
     /// This worker has already been closed or invalidated.
     Closed,
+    /// Access was revoked independently of command completion.
+    SessionClosed(crate::session::LockReason),
+    /// An in-flight command was interrupted; a previously started write may have committed.
+    OperationInterrupted(crate::session::LockReason),
+    /// Access is closed but operating-system process exit has not yet been confirmed.
+    ShutdownUnconfirmed,
 }
 impl From<crate::profile::ProfileError> for RuntimeError {
     fn from(error: crate::profile::ProfileError) -> Self {

@@ -53,6 +53,12 @@ model {
       description 'Владеет открытым документом и ключами чтения. Блокировка инвалидирует сессию и завершает процесс даже при ошибке черновика.'
       metadata { source 'crates/taypeer-runtime/src/lib.rs'; contract 'docs/core-cli.md'; evidence 'apps/taypeer-cli/tests/files.rs' }
     }
+    sessionGuard = component 'Контроль времени жизни сессий' {
+      #partial
+      technology 'Rust; runtime'
+      description 'Общий монотонный таймер, инвалидирование ответов и завершение процессов независимо от команд. События ОС передаются через API; подключение UI отложено.'
+      metadata { source 'crates/taypeer-runtime/src/session/mod.rs'; contract 'docs/sessions.md'; evidence 'crates/taypeer-runtime/src/worker/tests.rs' }
+    }
     coordinator = component 'Координатор рабочей копии' {
       #partial
       style { border solid }
@@ -181,6 +187,11 @@ model {
   owner -> taypeer.android 'Работает с БД'
   owner -> taypeer.cli 'Команды и интерактивная сессия'
   taypeer.cli -> taypeer.secretWorker 'Ограниченные команды через приватные каналы'
+  taypeer.cli -> taypeer.sessionGuard 'Активность, политика и блокировка'
+  taypeer.sessionGuard -> taypeer.secretWorker 'Закрыть доступ; ограничить сохранение черновика и завершить процесс'
+  taypeer.sessionGuard -> taypeer.core 'Политика бездействия'
+  taypeer.sessionGuard -> taypeer.local 'Несекретная настройка таймера'
+  taypeer.coordinator -> taypeer.sessionGuard 'Инвалидировать сессию при изменении доверия'
   taypeer.cli -> taypeer.generator 'Явная генерация секрета'
   taypeer.cli -> taypeer.macPlatform 'Защищённое локальное состояние и события ОС'
   taypeer.cli -> taypeer.sync 'Запуск и остановка обмена'

@@ -33,6 +33,9 @@ fn main() {
 }
 
 fn run(cli: Cli) -> Result<(), CliError> {
+    if matches!(cli.command, Action::Settings(_)) && cli.file.is_some() {
+        return Err(CliError::Input);
+    }
     if matches!(
         cli.command,
         Action::Db(args::DatabaseCommand::Compatibility)
@@ -42,6 +45,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
     }
     let mut host = Host::new(
         Input {
+            activity: None,
             password_stdin: cli.password_stdin,
             language: cli.lang,
         },
@@ -54,6 +58,9 @@ fn run(cli: Cli) -> Result<(), CliError> {
         let result = session::run(&mut host, cli.json, cli.lang);
         return result.and(host.close_all());
     }
+    host.sessions.activity().touch();
+    let activity = host.sessions.activity();
+    let epoch = activity.epoch();
     let result = host.execute(cli.command);
     let closed = host.close_all();
     match result {
@@ -62,7 +69,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
                 taypeer_runtime::erase_view(&mut value);
                 return Err(error);
             }
-            print_result(value, cli.json, cli.lang)
+            output::print_checked_result(value, cli.json, cli.lang, &activity, epoch)
         }
         Err(error) => Err(error),
     }

@@ -124,9 +124,11 @@ views 'Локальный файл' {
     taypeer.sessions -> taypeer.storage 'Зафиксировать одним писателем'
     taypeer.secretWorker <- taypeer.sessions 'Подтверждённый результат'
     taypeer.cli <- taypeer.secretWorker 'Ограниченное представление'
-    taypeer.cli -> taypeer.secretWorker 'Заблокировать'
+    taypeer.cli -> taypeer.sessionGuard 'Активность, ручная блокировка или истечение таймера'
+    taypeer.sessionGuard -> taypeer.secretWorker 'Немедленно запретить команды и старые ответы'
     taypeer.secretWorker -> taypeer.sessions 'Закрыть доступ и сохранить черновик'
-    taypeer.cli <- taypeer.secretWorker 'Ошибка при наличии, затем завершение процесса'
+    taypeer.sessionGuard -> taypeer.secretWorker 'Завершить процесс; не ждать дольше двух секунд'
+    taypeer.cli <- taypeer.sessionGuard 'Причина блокировки и результат закрытия'
   }
   dynamic view lifecycle {
     title 'Подтверждение корзины и очистки'

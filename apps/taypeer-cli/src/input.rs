@@ -9,6 +9,7 @@ use zeroize::Zeroizing;
 const MAX_INPUT: u64 = 8 * 1024 * 1024;
 
 pub(crate) struct Input {
+    pub activity: Option<taypeer_runtime::session::ActivityHandle>,
     pub password_stdin: bool,
     pub language: Language,
 }
@@ -28,7 +29,7 @@ impl Input {
     }
 
     pub(crate) fn secret(&self, key: &str) -> Result<Zeroizing<String>, CliError> {
-        crate::secret_input::read(&message(self.language, key))
+        crate::secret_input::read(&message(self.language, key), self.activity.as_ref())
     }
 
     pub fn document<T: serde::de::DeserializeOwned>(&self, path: &Path) -> Result<T, CliError> {

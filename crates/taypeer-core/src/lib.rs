@@ -13,6 +13,8 @@ pub use compatibility::{
 };
 mod order;
 pub use order::{OrderError, OrderKey};
+mod session;
+pub use session::SessionPolicy;
 
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};

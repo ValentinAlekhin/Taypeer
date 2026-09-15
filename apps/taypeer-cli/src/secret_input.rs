@@ -28,7 +28,10 @@ impl Drop for RawInput {
     }
 }
 
-pub(crate) fn read(prompt: &str) -> Result<Zeroizing<String>, CliError> {
+pub(crate) fn read(
+    prompt: &str,
+    activity: Option<&taypeer_runtime::session::ActivityHandle>,
+) -> Result<Zeroizing<String>, CliError> {
     #[cfg(unix)]
     let terminal = "/dev/tty";
     #[cfg(windows)]
@@ -43,24 +46,35 @@ pub(crate) fn read(prompt: &str) -> Result<Zeroizing<String>, CliError> {
         .write_all(prompt.as_bytes())
         .map_err(|_| CliError::Input)?;
     output.flush().map_err(|_| CliError::Input)?;
-    let result = read_events();
+    let result = read_events(activity);
     let restored = raw.finish();
     writeln!(output).map_err(|_| CliError::Input)?;
     result.and_then(|secret| restored.map(|()| secret))
 }
 
-fn read_events() -> Result<Zeroizing<String>, CliError> {
+fn read_events(
+    activity: Option<&taypeer_runtime::session::ActivityHandle>,
+) -> Result<Zeroizing<String>, CliError> {
     let mut value = Zeroizing::new(String::new());
+    let epoch = activity.map(|a| a.epoch());
     loop {
+        check_epoch(activity, epoch)?;
+        if !event::poll(std::time::Duration::from_millis(50)).map_err(|_| CliError::Input)? {
+            continue;
+        }
         let key = match event::read().map_err(|_| CliError::Input)? {
             Event::Key(key) => key,
             Event::Paste(mut text) => {
+                if let Some(activity) = activity {
+                    activity.touch();
+                }
                 let result = if text.chars().any(char::is_control) {
                     Err(CliError::Input)
                 } else {
                     append(&mut value, &text)
                 };
                 text.zeroize();
+                check_epoch(activity, epoch)?;
                 result?;
                 continue;
             }
@@ -69,6 +83,10 @@ fn read_events() -> Result<Zeroizing<String>, CliError> {
         if key.kind == KeyEventKind::Release {
             continue;
         }
+        if let Some(activity) = activity {
+            activity.touch();
+        }
+        check_epoch(activity, epoch)?;
         match (key.code, key.modifiers) {
             (KeyCode::Enter, _) => return Ok(value),
             (KeyCode::Esc, _) | (KeyCode::Char('c' | 'd'), KeyModifiers::CONTROL) => {
@@ -114,5 +132,22 @@ fn append(value: &mut Zeroizing<String>, text: &str) -> Result<(), CliError> {
         *value = grown;
     }
     value.push_str(text);
+    Ok(())
+}
+
+fn check_epoch(
+    activity: Option<&taypeer_runtime::session::ActivityHandle>,
+    epoch: Option<u64>,
+) -> Result<(), CliError> {
+    if let Some(activity) = activity
+        && Some(activity.epoch()) != epoch
+    {
+        return Err(taypeer_runtime::RuntimeError::SessionClosed(
+            activity
+                .reason()
+                .unwrap_or(taypeer_runtime::session::LockReason::HostExited),
+        )
+        .into());
+    }
     Ok(())
 }

@@ -24,6 +24,9 @@ impl From<RuntimeError> for CliError {
 impl CliError {
     pub fn key(&self) -> &'static str {
         match self {
+            Self::Runtime(RuntimeError::SessionClosed(_)) => "session_closed",
+            Self::Runtime(RuntimeError::OperationInterrupted(_)) => "operation_interrupted",
+            Self::Runtime(RuntimeError::ShutdownUnconfirmed) => "shutdown_unconfirmed",
             Self::Runtime(RuntimeError::Profile(taypeer_runtime::profile::ProfileError::Busy)) => {
                 "profile_busy"
             }
@@ -140,6 +143,25 @@ pub(crate) fn print_result(
     result
 }
 
+pub(crate) fn print_checked_result(
+    mut value: Value,
+    json: bool,
+    language: Language,
+    activity: &taypeer_runtime::session::ActivityHandle,
+    epoch: u64,
+) -> Result<(), CliError> {
+    if activity.epoch() != epoch {
+        taypeer_runtime::erase_view(&mut value);
+        return Err(RuntimeError::OperationInterrupted(
+            activity
+                .reason()
+                .unwrap_or(taypeer_runtime::session::LockReason::HostExited),
+        )
+        .into());
+    }
+    print_result(value, json, language)
+}
+
 fn write_result(value: &Value, json: bool, language: Language) -> Result<(), CliError> {
     let text = if json {
         serde_json::to_string(value).map_err(|_| CliError::Io)?
@@ -174,6 +196,27 @@ pub(crate) fn print_error(error: &CliError, json: bool, language: Language) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn a_late_foreground_result_is_rejected_after_invalidation() {
+        use taypeer_runtime::session::{LockReason, SessionController, SessionPolicy};
+        let sessions = SessionController::new(SessionPolicy::default());
+        let input = sessions.activity();
+        let epoch = input.epoch();
+        sessions.lock_all(LockReason::SystemLocked);
+        let result = print_checked_result(
+            Value::String("PUBLIC late result".into()),
+            true,
+            Language::En,
+            &input,
+            epoch,
+        );
+        assert!(matches!(
+            result,
+            Err(CliError::Runtime(RuntimeError::OperationInterrupted(
+                LockReason::SystemLocked
+            )))
+        ));
+    }
     #[test]
     fn unsupported_signed_encoding_is_distinct_from_damaged_authority() {
         let error = CliError::from(RuntimeError::Service(

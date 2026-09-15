@@ -19,9 +19,11 @@ mod p2p;
 struct Database {
     path: PathBuf,
     worker: Option<Worker>,
+    closure: Option<taypeer_runtime::session::LockOutcome>,
 }
 
 pub(crate) struct Host {
+    pub sessions: taypeer_runtime::session::SessionController,
     executable: PathBuf,
     databases: BTreeMap<String, Database>,
     selected: Option<String>,
@@ -41,12 +43,17 @@ impl Host {
             "format": format
         }))
     }
-    pub fn new(input: Input, profile: Option<PathBuf>) -> Result<Self, CliError> {
+    pub fn new(mut input: Input, profile: Option<PathBuf>) -> Result<Self, CliError> {
         let profile = match profile {
             Some(path) => path,
             None => RuntimeHost::default_profile_path()?,
         };
+        let sessions = taypeer_runtime::session::SessionController::new(
+            taypeer_runtime::session::SessionSettings::load(&profile)?,
+        );
+        input.activity = Some(sessions.activity());
         Ok(Self {
+            sessions,
             executable: std::env::current_exe().map_err(|_| CliError::Io)?,
             databases: BTreeMap::new(),
             selected: None,
@@ -76,6 +83,7 @@ impl Host {
             Database {
                 path,
                 worker: Some(worker),
+                closure: None,
             },
         );
         self.selected = Some(id.clone());
@@ -94,13 +102,16 @@ impl Host {
             .is_some_and(|worker| !worker.is_open())
             && let Some(mut worker) = database.worker.take()
         {
-            worker.close()?;
+            database.closure = Some(worker.close_report()?);
         }
         Ok(database)
     }
     fn ensure_runtime(&mut self) -> Result<(), CliError> {
         if self.runtime.is_none() {
-            self.runtime = Some(RuntimeHost::new(&self.profile)?);
+            self.runtime = Some(RuntimeHost::with_sessions(
+                &self.profile,
+                self.sessions.clone(),
+            )?);
         }
         Ok(())
     }
@@ -119,7 +130,17 @@ impl Host {
     }
 
     pub fn execute(&mut self, action: Action) -> Result<Value, CliError> {
+        self.sessions.activity().touch();
         let command = match action {
+            Action::Settings(crate::args::SettingsCommand::AutoLock { seconds }) => {
+                if let Some(seconds) = seconds {
+                    let policy = taypeer_runtime::session::SessionPolicy::new(seconds)
+                        .ok_or(CliError::Input)?;
+                    taypeer_runtime::session::SessionSettings::save(&self.profile, policy)?;
+                    self.sessions.set_policy(policy);
+                }
+                return Ok(json!({"idle_seconds": self.sessions.policy().idle_seconds()}));
+            }
             Action::Sync(command) => return self.sync(command),
             Action::Invite(command) => return self.invite(command),
             Action::Device(command) => return self.device(command),
@@ -297,19 +318,7 @@ impl Host {
                 }
             },
             Action::Generate(command) => return generate(command),
-            Action::Search { query } => {
-                let mut results = Vec::new();
-                for (id, database) in &mut self.databases {
-                    if let Some(worker) = &mut database.worker {
-                        let entries = worker.request(&Command::Entries {
-                            group: None,
-                            query: query.clone(),
-                        })?;
-                        results.push(json!({"database": id, "entries": entries}));
-                    }
-                }
-                return Ok(Value::Array(results));
-            }
+            Action::Search { query } => return self.search(&query),
             Action::Session | Action::Worker => return Err(CliError::SessionOnly),
             Action::Exit => {
                 self.close_all()?;
@@ -317,6 +326,46 @@ impl Host {
             }
         };
         self.request(command)
+    }
+
+    fn search(&mut self, query: &str) -> Result<Value, CliError> {
+        let mut results = Value::Array(Vec::new());
+        let result = (|| {
+            for (id, database) in &mut self.databases {
+                if let Some(worker) = &mut database.worker
+                    && worker.is_open()
+                {
+                    let entries = worker.request(&Command::Entries {
+                        group: None,
+                        query: query.to_owned(),
+                    })?;
+                    results
+                        .as_array_mut()
+                        .expect("search owns an array")
+                        .push(json!({"database": id, "entries": entries}));
+                }
+            }
+            // An earlier database may be revoked while a later database is being searched.
+            for item in results.as_array().expect("search owns an array") {
+                let id = item["database"].as_str().expect("database IDs are strings");
+                if let Some(worker) = self.databases.get(id).and_then(|db| db.worker.as_ref())
+                    && !worker.is_open()
+                {
+                    return Err(taypeer_runtime::RuntimeError::OperationInterrupted(
+                        worker
+                            .session_status()
+                            .reason
+                            .unwrap_or(taypeer_runtime::session::LockReason::Transport),
+                    ));
+                }
+            }
+            Ok(())
+        })();
+        if let Err(error) = result {
+            taypeer_runtime::erase_view(&mut results);
+            return Err(error.into());
+        }
+        Ok(results)
     }
 
     fn database(&mut self, command: DatabaseCommand) -> Result<Value, CliError> {
@@ -330,7 +379,7 @@ impl Host {
             DatabaseCommand::Create { path, name } => self.open(&path, Some(name)),
             DatabaseCommand::Open { path } => self.open(&path, None),
             DatabaseCommand::List => Ok(Value::Array(self.databases.iter().map(|(id, db)| {
-                json!({"database": id, "file": db.path, "locked": db.worker.as_ref().is_none_or(|worker| !worker.is_open()), "selected": self.selected.as_ref() == Some(id)})
+                json!({"database": id, "file": db.path, "locked": db.worker.as_ref().is_none_or(|worker| !worker.is_open()), "selected": self.selected.as_ref() == Some(id), "session": db.worker.as_ref().map(Worker::session_status), "last_lock": db.closure})
             }).collect())),
             DatabaseCommand::Use { id } => {
                 if !self.databases.contains_key(&id) { return Err(CliError::UnknownDatabase); }
@@ -338,8 +387,11 @@ impl Host {
                 Ok(Value::Null)
             }
             DatabaseCommand::Lock => {
-                if let Some(mut worker) = self.selected()?.worker.take() { worker.close()?; }
-                Ok(Value::Null)
+                let database = self.selected()?;
+                if let Some(mut worker) = database.worker.take() {
+                    database.closure = Some(worker.close_report()?);
+                }
+                Ok(json!(database.closure))
             }
             DatabaseCommand::Unlock => {
                 if self.selected()?.worker.is_some() { return Err(CliError::AlreadyOpen); }
@@ -350,7 +402,9 @@ impl Host {
                     worker.close()?;
                     return Err(CliError::UnknownDatabase);
                 }
-                self.selected()?.worker = Some(worker);
+                let database = self.selected()?;
+                database.worker = Some(worker);
+                database.closure = None;
                 Ok(Value::Null)
             }
             DatabaseCommand::Close => {
@@ -365,16 +419,53 @@ impl Host {
     }
 
     pub fn lock_all(&mut self) -> Result<(), CliError> {
+        for database in self.databases.values() {
+            if let Some(worker) = &database.worker {
+                worker.invalidate(taypeer_runtime::session::LockReason::Manual);
+            }
+        }
         let mut result = Ok(());
         for database in self.databases.values_mut() {
             if let Some(mut worker) = database.worker.take() {
-                let closed = worker.close().map_err(CliError::from);
+                let closed = worker
+                    .close_report()
+                    .map_err(CliError::from)
+                    .and_then(|outcome| {
+                        database.closure = Some(outcome);
+                        if let Some(error) = outcome.error {
+                            return Err(error.into());
+                        }
+                        if outcome.draft == taypeer_runtime::session::DraftDisposition::Unconfirmed
+                        {
+                            return Err(taypeer_runtime::RuntimeError::OperationInterrupted(
+                                outcome.reason,
+                            )
+                            .into());
+                        }
+                        Ok(())
+                    });
                 if result.is_ok() {
                     result = closed;
                 }
             }
         }
         result
+    }
+
+    pub fn collect_closed(
+        &mut self,
+    ) -> Result<Vec<taypeer_runtime::session::SessionStatus>, CliError> {
+        let mut outcomes = Vec::new();
+        for database in self.databases.values_mut() {
+            if database.worker.as_ref().is_some_and(|worker| {
+                worker.session_status().phase == taypeer_runtime::session::SessionPhase::Closed
+            }) && let Some(mut worker) = database.worker.take()
+            {
+                database.closure = Some(worker.close_report()?);
+                outcomes.push(worker.session_status());
+            }
+        }
+        Ok(outcomes)
     }
 
     pub fn close_all(&mut self) -> Result<(), CliError> {

@@ -17,6 +17,7 @@ use tempfile::NamedTempFile;
 
 /// Platform/CLI host. Writers and native transport identity outlive individual unlocked workers.
 pub struct RuntimeHost {
+    pub(crate) sessions: crate::session::SessionController,
     _lease: ProfileLease,
     pub(crate) context: Arc<HostContext>,
     pub(crate) runtime: tokio::runtime::Runtime,
@@ -38,6 +39,11 @@ pub(crate) struct HostContext {
     pub copies: Mutex<BTreeMap<PathBuf, Registration>>,
 }
 impl RuntimeHost {
+    /// Shared supervisor for input activity and explicit platform lock events.
+    /// In-process `open_local` sessions are not supervised by this process API.
+    pub fn sessions(&self) -> &crate::session::SessionController {
+        &self.sessions
+    }
     /// Verify a standalone file and inspect its public format requirements without
     /// creating a native profile, acquiring credentials, or registering a writer.
     pub fn inspect_compatibility(
@@ -144,6 +150,14 @@ impl RuntimeHost {
     /// Start a native profile and its ciphertext coordinator. No networking or author access
     /// occurs until the caller explicitly starts exchange or opens/creates a database.
     pub fn new(profile: &Path) -> Result<Self, RuntimeError> {
+        let policy = crate::session::SessionSettings::load(profile)?;
+        Self::with_sessions(profile, crate::session::SessionController::new(policy))
+    }
+    /// Use the controller already owned by terminal input and local settings.
+    pub fn with_sessions(
+        profile: &Path,
+        sessions: crate::session::SessionController,
+    ) -> Result<Self, RuntimeError> {
         let lease = NativeProfile::acquire(profile)?;
         let profile = lease.profile().clone();
         let transport = Arc::new(profile.transport()?);
@@ -153,6 +167,7 @@ impl RuntimeHost {
             .build()
             .map_err(|_| RuntimeError::Transport)?;
         Ok(Self {
+            sessions,
             _lease: lease,
             network: None,
             context: Arc::new(HostContext {
@@ -186,8 +201,20 @@ impl RuntimeHost {
             name,
             Arc::clone(&self.context),
             self.runtime.handle(),
+            &self.sessions,
         );
-        if opened.is_err() && !existed {
+        // A cancelled open may still be finishing an admitted ciphertext callback.
+        // Retain that writer for retry/host shutdown; cleanup must not wait for it
+        // or race a subsequent open of this same path.
+        if opened.as_ref().is_err_and(|error| {
+            !matches!(
+                error,
+                RuntimeError::SessionClosed(_)
+                    | RuntimeError::OperationInterrupted(_)
+                    | RuntimeError::ShutdownUnconfirmed
+            )
+        }) && !existed
+        {
             self.context.unregister_path(&path)?;
         }
         opened

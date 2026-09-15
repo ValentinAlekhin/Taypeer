@@ -6,12 +6,8 @@ use crate::{
 use clap_repl::{ClapEditor, ReadCommandOutput};
 use std::{
     io::{IsTerminal, Write},
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-        mpsc,
-    },
-    time::{Duration, Instant},
+    sync::mpsc,
+    time::Duration,
 };
 
 pub(crate) fn run(host: &mut Host, json: bool, language: Language) -> Result<(), CliError> {
@@ -26,11 +22,8 @@ pub(crate) fn run(host: &mut Host, json: bool, language: Language) -> Result<(),
     .map_err(|_| CliError::Io)?;
     let (input_tx, input_rx) = mpsc::sync_channel(0);
     let (continue_tx, continue_rx) = mpsc::sync_channel(0);
-    let activity = Arc::new(Activity {
-        origin: Instant::now(),
-        last: AtomicU64::new(0),
-    });
-    let editor_activity = Arc::clone(&activity);
+    let activity = host.sessions.activity();
+    let editor_activity = activity.clone();
     // Reedline restores terminal mode before yielding a command. Waiting for the
     // acknowledgement keeps it from competing with a hidden password prompt.
     std::thread::spawn(move || {
@@ -60,11 +53,26 @@ pub(crate) fn run(host: &mut Host, json: bool, language: Language) -> Result<(),
         }
     });
     loop {
-        match input_rx.recv_timeout(activity.remaining()) {
+        for outcome in host.collect_closed()? {
+            print_result(
+                serde_json::json!({"event": "session_locked", "outcome": outcome}),
+                json,
+                language,
+            )?;
+        }
+        match input_rx.recv_timeout(Duration::from_millis(100)) {
             Ok(ReadCommandOutput::Command(command)) => {
                 let exit = matches!(command.action, Action::Exit);
+                activity.touch();
+                let epoch = activity.epoch();
                 match host.execute(command.action) {
-                    Ok(value) => print_result(value, json, language)?,
+                    Ok(value) => {
+                        if let Err(error) = crate::output::print_checked_result(
+                            value, json, language, &activity, epoch,
+                        ) {
+                            print_error(&error, json, language);
+                        }
+                    }
                     Err(error) => print_error(&error, json, language),
                 }
                 if exit {
@@ -78,59 +86,36 @@ pub(crate) fn run(host: &mut Host, json: bool, language: Language) -> Result<(),
             }
             Ok(ReadCommandOutput::ShlexError) => print_error(&CliError::Input, json, language),
             Ok(ReadCommandOutput::ReedlineError(_)) => return Err(CliError::Io),
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                if !activity.remaining().is_zero() {
-                    continue;
-                }
-                if let Err(error) = host.lock_all() {
-                    print_error(&error, json, language);
-                }
-                writeln!(
-                    std::io::stderr().lock(),
-                    "{}",
-                    message(language, "session_locked")
-                )
-                .map_err(|_| CliError::Io)?;
-                activity.touch();
-                continue;
-            }
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
             Err(mpsc::RecvTimeoutError::Disconnected) => return Err(CliError::Io),
         }
-        activity.touch();
         if continue_tx.send(()).is_err() {
             return Err(CliError::Io);
         }
     }
 }
 
-// The editor owns terminal input; the host owns workers. Only an activity timestamp
-// crosses threads, so a long unfinished command does not count as inactivity.
-struct Activity {
-    origin: Instant,
-    last: AtomicU64,
-}
-impl Activity {
-    fn touch(&self) {
-        self.last
-            .store(self.origin.elapsed().as_millis() as u64, Ordering::Relaxed);
-    }
-    fn remaining(&self) -> Duration {
-        let elapsed = (self.origin.elapsed().as_millis() as u64)
-            .saturating_sub(self.last.load(Ordering::Relaxed));
-        Duration::from_millis(300_000u64.saturating_sub(elapsed))
-    }
-}
 struct ActiveEditMode {
     inner: clap_repl::reedline::Emacs,
-    activity: Arc<Activity>,
+    activity: taypeer_runtime::session::ActivityHandle,
 }
 impl clap_repl::reedline::EditMode for ActiveEditMode {
     fn parse_event(
         &mut self,
         event: clap_repl::reedline::ReedlineRawEvent,
     ) -> clap_repl::reedline::ReedlineEvent {
-        self.activity.touch();
-        self.inner.parse_event(event)
+        let event: crossterm::event::Event = event.into();
+        if matches!(
+            event,
+            crossterm::event::Event::Key(_) | crossterm::event::Event::Paste(_)
+        ) {
+            self.activity.touch();
+        }
+        self.inner.parse_event(
+            event
+                .try_into()
+                .expect("ReedlineRawEvent already normalized this event"),
+        )
     }
     fn edit_mode(&self) -> clap_repl::reedline::PromptEditMode {
         self.inner.edit_mode()

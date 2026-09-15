@@ -2,77 +2,68 @@
 mod cipher_ipc;
 mod host;
 mod network;
-mod protocol;
-mod worker;
-pub use network::{InvitationCode, JoinProgress, PeerProgress, PendingJoin};
+mod process;
 pub mod profile;
-
+mod protocol;
+pub mod session;
+mod worker;
 pub use host::{RegisteredCompatibility, RuntimeHost};
+pub use network::{InvitationCode, JoinProgress, PeerProgress, PendingJoin};
 pub use protocol::{Command, RuntimeError, erase_view};
 pub use worker::run_worker;
 
-use cipher_ipc::{IoReply, WorkerMessage};
 use host::{Callbacks, HostContext};
-use protocol::{Boot, read_frame, write_frame};
+use process::{Client, EnrollmentCallbacks};
+use protocol::Boot;
 use serde_json::Value;
+use session::{DraftDisposition, LockOutcome, LockReason, SessionController};
 use std::{
-    io::BufReader,
     path::Path,
-    process::{Child, ChildStdin, ChildStdout, Command as ProcessCommand, Stdio},
     sync::{Arc, Mutex},
 };
 use taypeer_core::DatabaseId;
 use taypeer_sync::CoordinatorEvent;
 use zeroize::Zeroize;
 
-/// One child process and private pipes, with an authority listener that closes stale workers
-/// even while the CLI is waiting for user input. The host retains ciphertext storage separately.
+/// One supervised plaintext process. Access revocation never waits for command I/O.
 pub struct Worker {
-    process: Arc<Mutex<WorkerProcess>>,
+    client: Arc<Client>,
     database: DatabaseId,
     watch: tokio::task::JoinHandle<()>,
-}
-struct WorkerProcess {
-    child: Child,
-    input: ChildStdin,
-    output: BufReader<ChildStdout>,
-    callbacks: Callbacks,
-    _spool: tempfile::TempDir,
-    open: bool,
-    closure_error: Option<RuntimeError>,
-    application: Option<Result<Value, RuntimeError>>,
+    apply_task: tokio::task::JoinHandle<()>,
+    application: Arc<Mutex<Option<Result<Value, RuntimeError>>>>,
+    _sessions: SessionController,
 }
 impl Worker {
     pub(crate) fn enroll(
         executable: &Path,
         profile: &profile::NativeProfile,
         invitation: taypeer_trust::Invitation,
+        sessions: &SessionController,
     ) -> Result<taypeer_trust::JoinProof, RuntimeError> {
-        let mut child = ProcessCommand::new(executable)
-            .arg("__worker")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|_| RuntimeError::Transport)?;
-        let result = (|| {
-            let mut input = child.stdin.take().ok_or(RuntimeError::Transport)?;
-            let mut output = child.stdout.take().ok_or(RuntimeError::Transport)?;
-            let boot = Boot {
-                path: profile.directory().to_owned(),
-                password: String::new(),
-                create_name: None,
-                profile: profile.directory().to_owned(),
-                spool: profile.directory().to_owned(),
-                invitation: Some(invitation),
-            };
-            write_frame(&mut input, &boot)?;
-            let WorkerMessage::Response(response) = read_frame(&mut output)? else {
-                return Err(RuntimeError::Protocol);
-            };
-            serde_json::from_value(response.into_result()?).map_err(|_| RuntimeError::Protocol)
-        })();
-        terminate(&mut child);
+        let spool = tempfile::tempdir().map_err(|_| RuntimeError::Transport)?;
+        let boot = Boot {
+            path: profile.directory().to_owned(),
+            password: String::new(),
+            create_name: None,
+            profile: profile.directory().to_owned(),
+            spool: spool.path().to_owned(),
+            invitation: Some(invitation),
+        };
+        let client = Client::spawn(executable, sessions, Box::new(EnrollmentCallbacks), spool)?;
+        let result = client
+            .request(&boot, true)
+            .and_then(|value| serde_json::from_value(value).map_err(|_| RuntimeError::Protocol));
+        client.control.invalidate(LockReason::Manual);
+        let closed = client.control.wait_closed();
+        // A failed or unconfirmed process shutdown cannot confirm enrollment.
+        let outcome = closed?;
+        if let Some(error) = outcome.error {
+            return Err(error);
+        }
+        if outcome.draft != DraftDisposition::Preserved {
+            return Err(RuntimeError::OperationInterrupted(outcome.reason));
+        }
         result
     }
     pub(crate) fn open(
@@ -82,6 +73,7 @@ impl Worker {
         create_name: Option<String>,
         context: Arc<HostContext>,
         runtime: &tokio::runtime::Handle,
+        sessions: &SessionController,
     ) -> Result<Self, RuntimeError> {
         let spool = tempfile::tempdir().map_err(|_| RuntimeError::Transport)?;
         let directory = spool
@@ -97,47 +89,52 @@ impl Worker {
             invitation: None,
         };
         let mut events = context.coordinator.subscribe();
-        let mut child = ProcessCommand::new(executable)
-            .arg("__worker")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|_| RuntimeError::Transport)?;
-        let channels = match (child.stdin.take(), child.stdout.take()) {
-            (Some(input), Some(output)) => (input, BufReader::new(output)),
-            _ => {
-                terminate(&mut child);
-                return Err(RuntimeError::Transport);
-            }
-        };
-        let mut process = WorkerProcess {
-            child,
-            input: channels.0,
-            output: channels.1,
-            callbacks: Callbacks::new(context, path.to_owned(), directory),
-            _spool: spool,
-            open: true,
-            closure_error: None,
-            application: None,
-        };
-        let setup = (|| {
-            write_frame(&mut process.input, &boot)?;
-            boot.password.zeroize();
-            let value = process.response()?;
-            serde_json::from_value::<DatabaseId>(value).map_err(|_| RuntimeError::Protocol)
-        })();
+        let client = Client::spawn(
+            executable,
+            sessions,
+            Box::new(Callbacks::new(context, path.to_owned(), directory)),
+            spool,
+        )?;
+        let opened = client.request(&boot, true);
         boot.password.zeroize();
-        let database = match setup {
+        let database = match opened.and_then(|value| {
+            serde_json::from_value::<DatabaseId>(value).map_err(|_| RuntimeError::Protocol)
+        }) {
             Ok(id) => id,
             Err(error) => {
-                terminate(&mut process.child);
+                client.control.invalidate(LockReason::Transport);
                 return Err(error);
             }
         };
-        let process = Arc::new(Mutex::new(process));
-        let weak = Arc::downgrade(&process);
+        client.control.opened(database.clone())?;
+        let weak = Arc::downgrade(&client);
         let watched_database = database.clone();
+        let application = Arc::new(Mutex::new(None));
+        let updates = Arc::clone(&application);
+        let (apply_send, mut apply_receive) = tokio::sync::mpsc::channel(1);
+        let apply_client = Arc::downgrade(&client);
+        let apply_task = runtime.spawn(async move {
+            while apply_receive.recv().await.is_some() {
+                let Some(client) = apply_client.upgrade() else {
+                    break;
+                };
+                let updates = Arc::clone(&updates);
+                let _ = tokio::task::spawn_blocking(move || {
+                    let mut result = client.request(&Command::ApplyReceived, false);
+                    if client.control.check(false).is_ok()
+                        && let Ok(mut status) = updates.lock()
+                    {
+                        if let Some(Ok(value)) = status.as_mut() {
+                            erase_view(value);
+                        }
+                        *status = Some(result);
+                    } else if let Ok(value) = &mut result {
+                        erase_view(value);
+                    }
+                })
+                .await;
+            }
+        });
         let watch = runtime.spawn(async move {
             loop {
                 let (invalidate, apply) = match events.recv().await {
@@ -161,125 +158,101 @@ impl Worker {
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => (true, false),
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 };
+                let Some(client) = weak.upgrade() else {
+                    break;
+                };
                 if invalidate {
-                    if let Some(process) = weak.upgrade() {
-                        // Pipe and filesystem work belongs outside the async executor.
-                        let _ = tokio::task::spawn_blocking(move || {
-                            if let Ok(mut process) = process.lock() {
-                                let _ = process.close();
-                            }
-                        })
-                        .await;
-                    }
+                    client.control.invalidate(LockReason::Authority);
                     break;
                 }
-                if apply && let Some(process) = weak.upgrade() {
-                    let _ = tokio::task::spawn_blocking(move || {
-                        if let Ok(mut process) = process.lock()
-                            && process.open
-                        {
-                            let result = process.request(&Command::ApplyReceived);
-                            process.application = Some(result);
-                        }
-                    })
-                    .await;
+                if apply {
+                    let _ = apply_send.try_send(());
                 }
             }
         });
         Ok(Self {
-            process,
+            client,
             database,
             watch,
+            apply_task,
+            application,
+            _sessions: sessions.clone(),
         })
     }
-    /// Stable logical database identity authenticated by the opened document.
+    /// Logical identity authenticated during opening.
     pub fn database_id(&self) -> &DatabaseId {
         &self.database
     }
-    /// Whether the authority listener has kept this plaintext process current.
+    /// Check access without waiting for a running command.
     pub fn is_open(&self) -> bool {
-        self.process.lock().is_ok_and(|process| process.open)
+        self.client.control.check(false).is_ok()
     }
-    /// Most recent automatic application attempt, distinct from network receipt counts.
+    /// Latest background application result; never returned after invalidation.
     pub fn application_progress(&self) -> Option<Result<Value, RuntimeError>> {
-        self.process
-            .lock()
-            .ok()
-            .and_then(|process| process.application.clone())
+        if !self.is_open() {
+            return None;
+        }
+        let mut result = self.application.lock().ok().and_then(|value| value.clone());
+        if !self.is_open() {
+            if let Some(Ok(value)) = &mut result {
+                erase_view(value);
+            }
+            return None;
+        }
+        result
     }
-    /// Execute one limited service command. A broken IPC channel permanently closes the worker.
+    /// Nonsecret generation, phase and shutdown outcome.
+    pub fn session_status(&self) -> session::SessionStatus {
+        self.client.control.activity.expire();
+        self.client.control.status()
+    }
+    /// Execute a command. It may return interrupted before an already-started ciphertext write ends.
     pub fn request(&mut self, command: &Command) -> Result<Value, RuntimeError> {
-        self.process
-            .lock()
-            .map_err(|_| RuntimeError::Closed)?
-            .request(command)
+        if matches!(command, Command::Lock) {
+            self.close()?;
+            return Ok(Value::Null);
+        }
+        self.client.request(command, false)
     }
-    /// Save the interrupted editor, invalidate the session and reap the child, even on failure.
-    pub fn close(&mut self) -> Result<(), RuntimeError> {
+    /// Revoke access without waiting. All workers can start their shutdown at the same instant.
+    pub fn invalidate(&self, reason: LockReason) {
+        self.client.control.invalidate(reason);
+    }
+    /// Await a bounded shutdown and distinguish draft confirmation from forced termination.
+    pub fn close_report(&mut self) -> Result<LockOutcome, RuntimeError> {
         self.watch.abort();
-        self.process
-            .lock()
-            .map_err(|_| RuntimeError::Closed)?
-            .close()
-    }
-}
-impl WorkerProcess {
-    fn response(&mut self) -> Result<Value, RuntimeError> {
-        loop {
-            match read_frame::<WorkerMessage>(&mut self.output)? {
-                WorkerMessage::Response(response) => return response.into_result(),
-                WorkerMessage::Io(request) => {
-                    let result = self.callbacks.handle(*request);
-                    write_frame(&mut self.input, &IoReply { result })?;
-                }
+        self.apply_task.abort();
+        self.invalidate(LockReason::Manual);
+        let result = self.client.control.wait_closed();
+        if let Ok(mut application) = self.application.lock() {
+            if let Some(Ok(value)) = application.as_mut() {
+                erase_view(value);
             }
-        }
-    }
-    fn request(&mut self, command: &Command) -> Result<Value, RuntimeError> {
-        if !self.open {
-            return Err(RuntimeError::Closed);
-        }
-        let result = (|| {
-            write_frame(&mut self.input, command)?;
-            self.response()
-        })();
-        if matches!(
-            result,
-            Err(RuntimeError::Transport | RuntimeError::Protocol | RuntimeError::TooLarge)
-        ) {
-            self.open = false;
-            terminate(&mut self.child);
+            *application = None;
         }
         result
     }
-    fn close(&mut self) -> Result<(), RuntimeError> {
-        if !self.open {
-            return self.closure_error.take().map_or(Ok(()), Err);
+    /// Compatibility API: unconfirmed/failed draft preservation is an error, even though access is closed.
+    pub fn close(&mut self) -> Result<(), RuntimeError> {
+        let outcome = self.close_report()?;
+        if let Some(error) = outcome.error {
+            return Err(error);
         }
-        let result = self.request(&Command::Lock).map(|_| ());
-        self.open = false;
-        let ended = self.child.wait().map_err(|_| RuntimeError::Transport);
-        let result = result.and(ended.and_then(|status| {
-            if status.success() {
-                Ok(())
-            } else {
-                Err(RuntimeError::Transport)
-            }
-        }));
-        self.closure_error = result.as_ref().err().copied();
-        result
+        if outcome.draft != DraftDisposition::Preserved {
+            return Err(RuntimeError::OperationInterrupted(outcome.reason));
+        }
+        Ok(())
     }
-}
-fn terminate(child: &mut Child) {
-    // A broken peer cannot acknowledge a saved draft. Reap it without exposing OS diagnostics.
-    let _ = child.kill();
-    let _ = child.wait();
 }
 impl Drop for Worker {
     fn drop(&mut self) {
         self.watch.abort();
-        if let Ok(mut process) = self.process.lock() {
-            terminate(&mut process.child);
+        self.apply_task.abort();
+        self.invalidate(LockReason::HostExited);
+        if let Ok(mut value) = self.application.lock()
+            && let Some(Ok(value)) = value.as_mut()
+        {
+            erase_view(value);
         }
     }
 }

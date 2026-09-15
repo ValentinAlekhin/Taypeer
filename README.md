@@ -20,6 +20,8 @@
 Нужны Rust через rustup и pnpm **10.17.1**. `rust-toolchain.toml` выбирает
 проверенный в macOS-стенде Rust **1.97.1** с rustfmt и Clippy.
 pnpm устанавливает проектный Node.js **22.22.3** по lockfile.
+Для сценарных тестов дочерних процессов нужен Python 3; они используют только
+его стандартную библиотеку и публичные искусственные данные.
 
 ```sh
 pnpm install --frozen-lockfile

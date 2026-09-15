@@ -234,7 +234,12 @@ impl RuntimeHost {
         {
             return Err(storage(taypeer_storage::Error::AlreadyExists));
         }
-        let proof = Worker::enroll(executable, self.profile(), code.invitation.clone())?;
+        let proof = Worker::enroll(
+            executable,
+            self.profile(),
+            code.invitation.clone(),
+            &self.sessions,
+        )?;
         let pending = PendingJoin {
             invitation: code.invitation.clone(),
             proof: proof.clone(),
@@ -430,6 +435,8 @@ impl RuntimeHost {
 }
 impl Drop for RuntimeHost {
     fn drop(&mut self) {
+        self.sessions
+            .lock_all(crate::session::LockReason::HostExited);
         self.stop_network();
     }
 }

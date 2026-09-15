@@ -36,6 +36,8 @@ pub(crate) struct Cli {
 
 #[derive(Subcommand)]
 pub(crate) enum Action {
+    #[command(about = crate::output::help("help_settings"), subcommand)]
+    Settings(SettingsCommand),
     #[command(about = crate::output::help("help_sync"), subcommand)]
     Sync(crate::p2p_args::SyncCommand),
     #[command(about = crate::output::help("help_invite"), subcommand)]
@@ -85,6 +87,15 @@ pub(crate) enum Action {
     Exit,
     #[command(name = "__worker", hide = true)]
     Worker,
+}
+
+#[derive(Subcommand)]
+pub(crate) enum SettingsCommand {
+    #[command(about = crate::output::help("help_auto_lock"))]
+    AutoLock {
+        #[arg(long, value_parser = clap::value_parser!(u32).range(1..), help = crate::output::help("help_auto_lock_seconds"))]
+        seconds: Option<u32>,
+    },
 }
 
 #[derive(Subcommand)]
