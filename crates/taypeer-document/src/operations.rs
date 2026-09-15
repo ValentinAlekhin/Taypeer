@@ -25,6 +25,11 @@ pub struct Resolution {
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(super) enum Intent {
+    Extract {
+        source: EntryId,
+        change: String,
+        group: GroupId,
+    },
     Binary {
         request: serde_json::Value,
     },
@@ -125,6 +130,74 @@ impl Document {
             })
             .collect();
         super::binary::renew_attachment_ids(&mut fields);
+        let mut candidate = self.clone();
+        let mut draft = candidate.begin_create_entry(group)?;
+        draft.fields = fields;
+        let id = candidate.confirm_entry(
+            draft,
+            now,
+            Some(RevisionKind::Clone),
+            Some((operation, &intent)),
+        )?;
+        *self = candidate;
+        Ok(id)
+    }
+
+    /// Find a durable extraction receipt before trying to reopen an old source.
+    /// A different selection under the same operation is rejected.
+    pub fn extracted_entry(
+        &self,
+        source: &EntryId,
+        change: &str,
+        group: &GroupId,
+        operation: &OperationId,
+    ) -> Result<Option<EntryId>, Error> {
+        change
+            .parse::<ChangeHash>()
+            .map_err(|_| Error::InvalidContext)?;
+        self.receipt(
+            operation,
+            &Intent::Extract {
+                source: source.clone(),
+                change: change.to_owned(),
+                group: group.clone(),
+            },
+        )
+    }
+
+    /// Copy one exact source state with fresh identities and an author-visible
+    /// provenance receipt. The caller authenticates the isolated source document.
+    pub fn extract_entry(
+        &mut self,
+        source: &Document,
+        selection: (&EntryId, &str),
+        group: GroupId,
+        operation: &OperationId,
+        now: Timestamp,
+    ) -> Result<EntryId, Error> {
+        let (entry, change) = selection;
+        if source.database_id() != self.database_id() {
+            return Err(Error::InvalidContext);
+        }
+        if let Some(id) = self.extracted_entry(entry, change, &group, operation)? {
+            return Ok(id);
+        }
+        let selected = source.at_source(change)?;
+        let mut fields = selected.entry(entry)?.fields.ok_or(Error::Conflict)?;
+        fields.attributes = fields
+            .attributes
+            .into_values()
+            .map(|mut attribute| {
+                attribute.id = AttributeId::new(random_id());
+                (attribute.id.clone(), attribute)
+            })
+            .collect();
+        super::binary::renew_attachment_ids(&mut fields);
+        let intent = Intent::Extract {
+            source: entry.clone(),
+            change: change.to_owned(),
+            group: group.clone(),
+        };
         let mut candidate = self.clone();
         let mut draft = candidate.begin_create_entry(group)?;
         draft.fields = fields;

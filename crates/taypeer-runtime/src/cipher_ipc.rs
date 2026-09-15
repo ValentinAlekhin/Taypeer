@@ -26,6 +26,7 @@ pub(crate) enum WorkerMessage {
 pub(crate) enum IoRequest {
     Open,
     Create(Seed),
+    Recover { path: PathBuf, seed: Seed },
     Snapshot { known: Option<Digest> },
     Commit(Commit),
     SaveDraft(PathBuf),
@@ -206,7 +207,7 @@ fn read_snapshot(
     }
     Ok((snapshot, working_copy))
 }
-fn spool_objects(
+pub(crate) fn spool_objects(
     objects: Vec<EncryptedObject>,
     directory: &Path,
     spools: &mut Vec<NamedTempFile>,

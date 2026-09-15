@@ -130,6 +130,18 @@ impl Document {
         self.name = verified.name;
         Ok(())
     }
+    /// Isolated read-only state at one exact original change and its dependencies.
+    /// Unrelated later changes and concurrent heads are excluded.
+    pub fn at_source(&self, hash: &str) -> Result<Self, Error> {
+        let hash = hash
+            .parse::<ChangeHash>()
+            .map_err(|_| Error::InvalidContext)?;
+        if self.doc.get_change_by_hash(&hash).is_none() {
+            return Err(Error::NotFound);
+        }
+        let selected = self.doc.fork_at(&[hash])?;
+        Self::load(&Zeroizing::new(selected.save()))
+    }
     pub(crate) fn prepare_write(&mut self) -> Result<(), Error> {
         prepare_actor(&mut self.doc, self.writer)
     }

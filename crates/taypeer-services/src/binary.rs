@@ -373,6 +373,9 @@ impl DatabaseService {
             candidate.record_binary_operation(operation, &intent)?;
             state.commit_blobs(candidate, state.blobs()?.clone())?;
         }
+        if state.managed.is_some() {
+            self.collect_received(session)?;
+        }
         self.storage_usage(session)
     }
 }

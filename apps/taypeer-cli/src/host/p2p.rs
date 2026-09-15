@@ -102,6 +102,30 @@ impl Host {
                 Ok(json!({"ciphertext": received, "application": application}))
             }
             SyncCommand::Apply => self.request(Command::ApplyReceived),
+            SyncCommand::Collect => self.request(Command::CollectReceived),
+            SyncCommand::Sources => self.request(Command::ReceivedSources),
+            SyncCommand::Inspect { change } => self.request(Command::InspectReceived(change)),
+            SyncCommand::Reveal { change, entry } => self.request(Command::RevealReceived {
+                change,
+                entry: taypeer_core::EntryId::new(entry),
+            }),
+            SyncCommand::Discard { change, yes } => {
+                if !yes {
+                    return Err(CliError::Input);
+                }
+                self.request(Command::DiscardReceived(change))
+            }
+            SyncCommand::Extract {
+                change,
+                entry,
+                group,
+                operation,
+            } => self.request(Command::ExtractReceived {
+                change,
+                entry: taypeer_core::EntryId::new(entry),
+                group: taypeer_core::GroupId::new(group),
+                operation: taypeer_core::OperationId::new(operation),
+            }),
         }
     }
     pub(super) fn invite(&mut self, command: InviteCommand) -> Result<Value, CliError> {
@@ -180,6 +204,18 @@ impl Host {
     }
     pub(super) fn device(&mut self, command: DeviceCommand) -> Result<Value, CliError> {
         match command {
+            DeviceCommand::Recover {
+                path,
+                operation,
+                input,
+            } => {
+                let password = self.administrative_password(input)?;
+                self.request(Command::RecoverTrust {
+                    path,
+                    operation,
+                    password,
+                })
+            }
             DeviceCommand::List => self.request(Command::Authority),
             DeviceCommand::Policy => self.request(Command::DatabasePolicy),
             DeviceCommand::Password { operation, input } => {

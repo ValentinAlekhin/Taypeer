@@ -80,6 +80,7 @@
   "invite_resume": "Resume approval or durable ciphertext download",
   "invite_pending": "List resumable admission requests without bearer codes",
   "invitation_code": "Invitation JSON code: ",
+  "device_recover": "Create a separate trust set with a new password",
   "device_list": "Show the signed control chain and device admission",
   "device_password": "Rotate password and independent read key (--input is a JSON string file)",
   "device_revoke": "Revoke a device and rotate password/key in one commit",
@@ -94,5 +95,11 @@
   "authority_error": "Signed device authority rejected this operation",
   "stale_generation": "The file or authority changed; apply received data or reopen the database",
   "relay_only": "Use only the selected relay; disable direct IP connections",
-  "relay_ca": "Explicit trusted relay CA certificate in DER format"
+  "relay_ca": "Explicit trusted relay CA certificate in DER format",
+  "sync_sources": "List unaccepted original network changes",
+  "sync_inspect": "Inspect a source with protected values concealed",
+  "sync_reveal": "Explicitly reveal a password in the selected source",
+  "sync_discard": "Discard an original change across all packet copies",
+  "sync_extract": "Extract a source entry as a new current-author change",
+  "sync_collect": "Release redundant ciphertext after checking all retention roots"
 }

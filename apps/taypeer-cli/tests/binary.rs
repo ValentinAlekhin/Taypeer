@@ -36,6 +36,7 @@ fn ok(path: &Path, args: &[&str]) -> Value {
 }
 
 #[test]
+#[ignore = "native-keychain: explicitly opt in; may display macOS access dialogs"]
 fn binary_commands_and_receipts_survive_new_processes() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("PUBLIC.taypeer");
@@ -194,6 +195,7 @@ fn binary_commands_and_receipts_survive_new_processes() {
 }
 
 #[test]
+#[ignore = "native-keychain: explicitly opt in; may display macOS access dialogs"]
 fn favicon_retry_does_not_repeat_network_after_worker_restart() {
     use std::{
         io::Read,

@@ -24,6 +24,34 @@ pub(crate) enum SyncCommand {
     },
     #[command(about = crate::output::help("sync_apply"))]
     Apply,
+    #[command(about = crate::output::help("sync_sources"))]
+    Sources,
+    #[command(about = crate::output::help("sync_collect"))]
+    Collect,
+    #[command(about = crate::output::help("sync_inspect"))]
+    Inspect { change: String },
+    #[command(about = crate::output::help("sync_reveal"))]
+    Reveal {
+        change: String,
+        #[arg(long)]
+        entry: String,
+    },
+    #[command(about = crate::output::help("sync_discard"))]
+    Discard {
+        change: String,
+        #[arg(long, required = true)]
+        yes: bool,
+    },
+    #[command(about = crate::output::help("sync_extract"))]
+    Extract {
+        change: String,
+        #[arg(long)]
+        entry: String,
+        #[arg(long)]
+        group: String,
+        #[arg(long)]
+        operation: String,
+    },
 }
 #[derive(Subcommand)]
 pub(crate) enum InviteCommand {
@@ -50,6 +78,14 @@ pub(crate) enum InviteCommand {
 }
 #[derive(Subcommand)]
 pub(crate) enum DeviceCommand {
+    #[command(about = crate::output::help("device_recover"))]
+    Recover {
+        path: PathBuf,
+        #[arg(long)]
+        operation: Digest,
+        #[arg(long)]
+        input: Option<PathBuf>,
+    },
     #[command(about = crate::output::help("device_list"))]
     List,
     #[command(about = crate::output::help("device_password"))]

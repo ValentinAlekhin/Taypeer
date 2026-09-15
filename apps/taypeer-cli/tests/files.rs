@@ -39,6 +39,7 @@ fn ok(output: Output) -> Value {
 }
 
 #[test]
+#[ignore = "native-keychain: explicitly opt in; may display macOS access dialogs"]
 fn real_processes_preserve_files_history_and_addressed_updates() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("public.taypeer");
@@ -175,6 +176,7 @@ fn real_processes_preserve_files_history_and_addressed_updates() {
 }
 
 #[test]
+#[ignore = "native-keychain: explicitly opt in; may display macOS access dialogs"]
 fn interrupted_draft_survives_worker_exit_and_requires_explicit_restore() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("public.taypeer");

@@ -34,8 +34,43 @@ impl Drop for Boot {
 /// No command implicitly reveals a protected value.
 #[derive(Serialize, Deserialize)]
 pub enum Command {
+    /// Create a separate trust set without modifying the readable original.
+    RecoverTrust {
+        /// New destination; existing unrelated files are never replaced.
+        path: PathBuf,
+        /// Explicit retry identity.
+        operation: taypeer_trust::Digest,
+        /// New password, confined to the plaintext worker.
+        password: Zeroizing<Vec<u8>>,
+    },
     /// Validate original provenance/dependencies and durably apply independently eligible packets.
     ApplyReceived,
+    /// List original unaccepted sources without contents.
+    ReceivedSources,
+    /// Collect ciphertext after verifying all retention roots.
+    CollectReceived,
+    /// Inspect a selected causal state with protected fields masked.
+    InspectReceived(String),
+    /// Explicitly reveal a selected source password.
+    RevealReceived {
+        /// Exact original change hash.
+        change: String,
+        /// Selected source entry.
+        entry: EntryId,
+    },
+    /// Explicitly discard an original source across all ciphertext packaging.
+    DiscardReceived(String),
+    /// Create a new author confirmation from a selected source entry.
+    ExtractReceived {
+        /// Original change hash.
+        change: String,
+        /// Selected entry at that causal state.
+        entry: EntryId,
+        /// Current destination group.
+        group: GroupId,
+        /// Durable exact-intent retry identity.
+        operation: OperationId,
+    },
     /// Read public signed device/control state, without acquiring another credential.
     Authority,
     /// Explicitly create and reveal one invitation's bearer material.

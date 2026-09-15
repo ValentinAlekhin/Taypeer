@@ -35,9 +35,37 @@ pub struct ApplyReport {
     pub pending: Vec<PendingPacket>,
 }
 
-struct Packet {
-    id: Digest,
-    sources: Vec<(OriginalChange, SourceProof)>,
+pub(super) struct Packet {
+    pub id: Digest,
+    pub sources: Vec<(OriginalChange, SourceProof)>,
+}
+// Bound aggregate decoded sources as well as each encrypted packet. The conservative
+// proof estimate includes binding keys and avoids allocating a second serialized copy.
+pub(super) fn account_source(
+    total: &mut usize,
+    source: &OriginalChange,
+    proof: &SourceProof,
+) -> Result<(), ServiceError> {
+    let size = source
+        .bytes()
+        .len()
+        .saturating_add(proof.blobs.len().saturating_mul(256))
+        .saturating_add(1024);
+    *total = total.saturating_add(size);
+    if *total > taypeer_storage::MAX_FILE_SIZE {
+        return Err(StorageError::TooLarge.into());
+    }
+    Ok(())
+}
+
+enum AdmissionFailure {
+    Pending(PendingReason),
+    Io,
+}
+impl From<PendingReason> for AdmissionFailure {
+    fn from(reason: PendingReason) -> Self {
+        Self::Pending(reason)
+    }
 }
 impl ManagedState {
     pub(super) fn load_required_blobs(
@@ -79,26 +107,29 @@ impl ManagedState {
         }
         let mut report = ApplyReport::default();
         let mut packets = Vec::new();
-        for descriptor in self.snapshot.metadata().manifest.body.objects.values() {
-            if !matches!(
-                descriptor.kind,
-                ObjectKind::Change | ObjectKind::Checkpoint | ObjectKind::Baseline
-            ) || descriptor.digest == self.accepted
-                || metadata.processed.contains(&descriptor.digest)
-                || metadata.discarded.contains(&descriptor.digest)
+        let mut decoded_bytes = 0usize;
+        for id in metadata.packet_ids(&self.snapshot) {
+            if id == self.accepted
+                || metadata.processed.contains(&id)
+                || metadata.discarded.contains(&id)
             {
                 continue;
             }
-            let object = self.snapshot.object(descriptor.digest)?;
+            let object = metadata.object(&self.snapshot, id)?;
             match self.read_packet(&object, &metadata) {
-                Ok(packet) => packets.push(packet),
+                Ok(packet) => {
+                    for (source, proof) in &packet.sources {
+                        account_source(&mut decoded_bytes, source, proof)?;
+                    }
+                    packets.push(packet);
+                }
                 Err(ServiceError::AwaitingData) => report.pending.push(PendingPacket {
-                    object: descriptor.digest,
+                    object: id,
                     reason: PendingReason::HistoricalKey,
                 }),
                 Err(ServiceError::Storage(StorageError::Io)) => return Err(StorageError::Io.into()),
                 Err(_) => report.pending.push(PendingPacket {
-                    object: descriptor.digest,
+                    object: id,
                     reason: PendingReason::Invalid,
                 }),
             }
@@ -111,7 +142,9 @@ impl ManagedState {
             pending.clear();
             for packet in &packets {
                 for (source, proof) in &packet.sources {
-                    if candidate.contains_source(&source.metadata().hash)? {
+                    if metadata.discarded_sources.contains(&source.metadata().hash)
+                        || candidate.contains_source(&source.metadata().hash)?
+                    {
                         continue;
                     }
                     match self.admit_source(source, proof, &candidate, &blobs, &metadata) {
@@ -124,7 +157,8 @@ impl ManagedState {
                                 .insert(source.metadata().hash.clone(), proof.clone());
                             report.applied += 1;
                         }
-                        Err(reason) => {
+                        Err(AdmissionFailure::Io) => return Err(StorageError::Io.into()),
+                        Err(AdmissionFailure::Pending(reason)) => {
                             pending.entry(packet.id).or_insert(reason);
                         }
                     }
@@ -164,12 +198,12 @@ impl ManagedState {
         }
         Ok((candidate, blobs, report))
     }
-    fn read_packet(
+    pub(super) fn read_packet(
         &self,
         object: &EncryptedObject,
         metadata: &Checkpoint,
     ) -> Result<Packet, ServiceError> {
-        let key = metadata.key(object.envelope().epoch)?;
+        let key = metadata.object_key(object, self.snapshot.chain())?;
         let sources = if object.envelope().kind == ObjectKind::Change {
             let (clear, blobs) = object.unlock_bundle(&key)?;
             if blobs.ids().next().is_some() {
@@ -177,10 +211,16 @@ impl ManagedState {
             }
             let (proof, bytes) = codec::decode::<SourceProof>(&clear)?;
             let source = OriginalChange::parse(bytes)?;
-            codec::verify_source(&source, &proof, self.snapshot.chain())?;
+            metadata.verify_original(&source, &proof, self.snapshot.chain())?;
             vec![(source, proof)]
         } else {
-            let (metadata, document) = codec::read_checkpoint(object, &key, self.snapshot.chain())?;
+            let (metadata, document) = codec::read_checkpoint(
+                object,
+                &key,
+                metadata
+                    .origin_chain(self.snapshot.chain(), object.envelope().trust_set)?
+                    .as_ref(),
+            )?;
             document
                 .changes_since(&[])?
                 .into_iter()
@@ -206,23 +246,27 @@ impl ManagedState {
         document: &Document,
         blobs: &BlobStore,
         metadata: &Checkpoint,
-    ) -> Result<(Document, BlobStore, BTreeMap<BlobId, Digest>), PendingReason> {
-        codec::verify_source(source, proof, self.snapshot.chain())
+    ) -> Result<(Document, BlobStore, BTreeMap<BlobId, Digest>), AdmissionFailure> {
+        metadata
+            .verify_original(source, proof, self.snapshot.chain())
             .map_err(|_| PendingReason::Invalid)?;
+        if proof.trust_set != self.snapshot.chain().head().trust_set {
+            return Err(PendingReason::RevokedAuthor.into());
+        }
         if !self
             .snapshot
             .chain()
             .continuous(proof.author, proof.control)
             .map_err(|_| PendingReason::Invalid)?
         {
-            return Err(PendingReason::RevokedAuthor);
+            return Err(PendingReason::RevokedAuthor.into());
         }
         for dependency in &source.metadata().dependencies {
             if !document
                 .contains_source(dependency)
                 .map_err(|_| PendingReason::Invalid)?
             {
-                return Err(PendingReason::Dependency);
+                return Err(PendingReason::Dependency.into());
             }
         }
         let mut candidate = document.clone();
@@ -236,15 +280,16 @@ impl ManagedState {
         let mut blobs = blobs.clone();
         load_blobs(&self.snapshot, &metadata, &candidate, &mut blobs).map_err(
             |error| match error {
-                ServiceError::Storage(StorageError::MissingBlob) => PendingReason::Blob,
-                ServiceError::AwaitingData => PendingReason::HistoricalKey,
-                _ => PendingReason::Invalid,
+                ServiceError::Storage(StorageError::Io) => AdmissionFailure::Io,
+                ServiceError::Storage(StorageError::MissingBlob) => PendingReason::Blob.into(),
+                ServiceError::AwaitingData => PendingReason::HistoricalKey.into(),
+                _ => PendingReason::Invalid.into(),
             },
         )?;
         Ok((candidate, blobs, metadata.blobs))
     }
 }
-fn load_blobs(
+pub(super) fn load_blobs(
     snapshot: &ArchiveSnapshot,
     metadata: &Checkpoint,
     document: &Document,
@@ -255,11 +300,12 @@ fn load_blobs(
             continue;
         }
         let digest = metadata.blobs.get(&id).ok_or(StorageError::MissingBlob)?;
-        let object = snapshot.object(*digest)?;
+        let object = metadata.object(snapshot, *digest)?;
         if object.envelope().kind != ObjectKind::Blob {
             return Err(ServiceError::InvalidDocument);
         }
-        let (clear, staged) = object.unlock_bundle(&metadata.key(object.envelope().epoch)?)?;
+        let (clear, staged) =
+            object.unlock_bundle(&metadata.object_key(&object, snapshot.chain())?)?;
         if !clear.is_empty() || staged.ids().count() != 1 || staged.length(&id).is_none() {
             return Err(ServiceError::InvalidDocument);
         }
@@ -267,7 +313,7 @@ fn load_blobs(
     }
     Ok(())
 }
-fn merge_bindings(
+pub(super) fn merge_bindings(
     target: &mut BTreeMap<BlobId, Digest>,
     incoming: &BTreeMap<BlobId, Digest>,
 ) -> Result<(), ServiceError> {
@@ -285,6 +331,7 @@ pub(super) fn merge_accepted_metadata(
 ) -> Result<Checkpoint, ServiceError> {
     current.processed = prior.processed.clone();
     current.discarded = prior.discarded.clone();
+    current.discarded_sources = prior.discarded_sources.clone();
     merge_bindings(&mut current.blobs, &prior.blobs)?;
     for (hash, proof) in &prior.proofs {
         if current

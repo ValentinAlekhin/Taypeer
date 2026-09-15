@@ -244,6 +244,16 @@ impl HostContext {
         if path.try_exists().map_err(|_| RuntimeError::Transport)? {
             return Err(cipher_ipc::storage(taypeer_storage::Error::AlreadyExists));
         }
+        let (registration, store) = self.create_store(path, seed)?;
+        self.coordinator.register(store).map_err(sync_error)?;
+        copies.insert(path.to_owned(), registration.clone());
+        Ok(registration)
+    }
+    fn create_store(
+        &self,
+        path: &Path,
+        seed: ArchiveSeed,
+    ) -> Result<(Registration, ArchiveStore), RuntimeError> {
         let root = seed
             .controls
             .first()
@@ -262,9 +272,15 @@ impl HostContext {
                 Some(self.profile.anchor(&registration)),
             )
             .map_err(cipher_ipc::storage)?;
-        self.coordinator.register(store).map_err(sync_error)?;
-        copies.insert(path.to_owned(), registration.clone());
-        Ok(registration)
+        Ok((registration, store))
+    }
+    fn publish_recovery(&self, path: &Path, seed: ArchiveSeed) -> Result<(), RuntimeError> {
+        let path = canonical_path(path)?;
+        // The original remains registered. The separate archive becomes active only
+        // after an explicit close/open, so one database never has two live writers.
+        let (_, store) = self.create_store(&path, seed)?;
+        drop(store);
+        Ok(())
     }
 }
 pub(crate) struct Callbacks {
@@ -313,6 +329,27 @@ impl Callbacks {
                     },
                 )?);
                 self.snapshot(None)
+            }
+            IoRequest::Recover { path, seed } => {
+                let root = seed
+                    .controls
+                    .first()
+                    .ok_or(RuntimeError::Protocol)?
+                    .hash()
+                    .map_err(|_| RuntimeError::Protocol)?;
+                let chain = ControlChain::validate(seed.controls.clone(), root)
+                    .map_err(|_| RuntimeError::Protocol)?;
+                let objects = cipher_ipc::read_objects(seed.objects, &self.directory, &chain)?;
+                self.context.publish_recovery(
+                    &path,
+                    ArchiveSeed {
+                        controls: seed.controls,
+                        objects,
+                        checkpoint: seed.checkpoint,
+                        baseline: seed.baseline,
+                    },
+                )?;
+                Ok(IoValue::Done)
             }
             IoRequest::Snapshot { known } => self.snapshot(known),
             IoRequest::Commit(request) => {

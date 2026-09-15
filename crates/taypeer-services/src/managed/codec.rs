@@ -18,7 +18,11 @@ pub(super) struct Checkpoint {
     pub blobs: BTreeMap<BlobId, Digest>,
     pub processed: BTreeSet<Digest>,
     pub discarded: BTreeSet<Digest>,
+    #[serde(default)]
+    pub discarded_sources: BTreeSet<String>,
     pub administration: BTreeMap<Digest, AdministrativeIntent>,
+    #[serde(default)]
+    pub recovery: recovery::Provenance,
 }
 /// Private exact-intent receipts travel only inside authenticated encrypted checkpoints.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -66,12 +70,14 @@ impl Checkpoint {
             || self.proofs.len() > 100_000
             || self.blobs.len() > 100_000
             || self.processed.len() > 100_000
+            || self.discarded_sources.len() > 100_000
             || self.administration.len() > 100_000
             || self.discarded.len() > 100_000
             || document.database_id() != &chain.head().database
         {
             return Err(ServiceError::InvalidDocument);
         }
+        self.recovery.verify(chain)?;
         let sources = document.changes_since(&[])?;
         if sources.len() != self.proofs.len() {
             return Err(ServiceError::InvalidDocument);
@@ -81,7 +87,7 @@ impl Checkpoint {
                 .proofs
                 .get(&source.metadata().hash)
                 .ok_or(ServiceError::InvalidDocument)?;
-            verify_source(&source, proof, chain)?;
+            self.verify_original(&source, proof, chain)?;
         }
         self.key(chain.at(control)?.epoch)?;
         Ok(())

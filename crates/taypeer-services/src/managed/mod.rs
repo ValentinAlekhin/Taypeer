@@ -12,8 +12,13 @@ use taypeer_trust::{AuthorKey, ControlChain, Digest, Identity, ObjectKind, Sourc
 mod administration;
 mod apply;
 mod codec;
+mod collection;
+pub use collection::CollectionReport;
+mod pending;
+mod recovery;
 pub use apply::{ApplyReport, PendingPacket, PendingReason};
 use codec::Checkpoint;
+pub use pending::ReceivedSource;
 
 #[cfg(test)]
 mod tests;
@@ -111,6 +116,14 @@ impl ManagedState {
         Ok(key)
     }
     pub fn commit(&mut self, document: &Document, blobs: &BlobStore) -> Result<(), ServiceError> {
+        self.commit_bound(document, blobs, &BTreeMap::new())
+    }
+    fn commit_bound(
+        &mut self,
+        document: &Document,
+        blobs: &BlobStore,
+        bindings: &BTreeMap<BlobId, Digest>,
+    ) -> Result<(), ServiceError> {
         let author = self.writer()?;
         let open = self.open.as_ref().ok_or(ServiceError::Locked)?;
         let chain = self.snapshot.chain();
@@ -119,10 +132,11 @@ impl ManagedState {
         }
         let key = open.metadata.key(chain.head().epoch)?;
         let mut metadata = open.metadata.clone();
+        apply::merge_bindings(&mut metadata.blobs, bindings)?;
         let mut objects = self.seal_new_blobs(blobs, &mut metadata)?;
         for source in document.changes_since(&[])? {
             if let Some(proof) = metadata.proofs.get(&source.metadata().hash) {
-                codec::verify_source(&source, proof, chain)?;
+                metadata.verify_original(&source, proof, chain)?;
                 continue;
             }
             if source.metadata().author != Some(*author.device_id().as_bytes()) {
@@ -181,9 +195,19 @@ impl ManagedState {
     fn persist(
         &mut self,
         document: &Document,
+        metadata: Checkpoint,
+        objects: Vec<EncryptedObject>,
+        administration: Option<administration::Transition>,
+    ) -> Result<(), ServiceError> {
+        self.persist_candidate(document, metadata, objects, administration, None)
+    }
+    fn persist_candidate(
+        &mut self,
+        document: &Document,
         mut metadata: Checkpoint,
         mut objects: Vec<EncryptedObject>,
         administration: Option<administration::Transition>,
+        collection: Option<collection::Collection>,
     ) -> Result<(), ServiceError> {
         let author = self.writer()?;
         let open = self.open.as_ref().ok_or(ServiceError::Locked)?;
@@ -199,8 +223,16 @@ impl ManagedState {
                 self.snapshot.metadata().journal.clone(),
             ),
         };
+        if let Some(collection) = &collection {
+            journal = collection.journal.clone();
+        }
         let key = metadata.key(chain.head().epoch)?;
         metadata.processed.insert(self.accepted);
+        if let Some(collection) = &collection {
+            metadata
+                .processed
+                .retain(|id| !collection.remove.contains(id));
+        }
         let clear = Zeroizing::new(document.export());
         metadata.verify(document, chain, chain.head_hash()?)?;
         let checkpoint = codec::seal_payload(
@@ -214,7 +246,9 @@ impl ManagedState {
         )?;
         let checkpoint_id = checkpoint.descriptor().digest;
         objects.push(checkpoint);
-        let baseline = if administration.is_some() {
+        let baseline = if administration.is_some()
+            || collection.as_ref().is_some_and(|c| c.refresh_baseline)
+        {
             let object = codec::seal_payload(
                 chain,
                 author,
@@ -233,12 +267,14 @@ impl ManagedState {
         } else {
             self.baseline
         };
+        let remove = collection.map_or_else(BTreeSet::new, |c| c.remove);
+        journal.retained.retain(|id| !remove.contains(id));
         let request = PreparedCommit {
             expected: self.snapshot.fingerprint(),
             control: self.snapshot.chain().head_hash()?,
             controls: chain.records().to_vec(),
             objects,
-            remove: BTreeSet::new(),
+            remove,
             checkpoint: checkpoint_id,
             baseline,
             journal,
@@ -323,9 +359,11 @@ impl DatabaseService {
             keys: BTreeMap::from([(0, Zeroizing::new(*key.secret_bytes()))]),
             proofs: BTreeMap::new(),
             administration: BTreeMap::new(),
+            recovery: recovery::Provenance::default(),
             blobs: BTreeMap::new(),
             processed: BTreeSet::new(),
             discarded: BTreeSet::new(),
+            discarded_sources: BTreeSet::new(),
         };
         let chain = ControlChain::genesis(
             document.database_id().clone(),
@@ -439,6 +477,7 @@ impl DatabaseService {
             // Portable receipt claims from another device are never local apply/discard decisions.
             metadata.processed.clear();
             metadata.discarded.clear();
+            metadata.discarded_sources.clear();
         }
         if let Some(author) = author.as_ref().filter(|_| admitted) {
             document.set_writer(*author.device_id().as_bytes());
@@ -505,6 +544,10 @@ impl DatabaseService {
     }
 }
 fn latest_baseline(snapshot: &ArchiveSnapshot) -> Result<EncryptedObject, ServiceError> {
+    let active = snapshot.object(snapshot.metadata().manifest.body.baseline)?;
+    if active.envelope().control == snapshot.chain().head_hash()? {
+        return Ok(active);
+    }
     for object in snapshot
         .metadata()
         .manifest

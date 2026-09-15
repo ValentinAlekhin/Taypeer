@@ -103,7 +103,7 @@ pub fn run_worker(
         .lock()
         .map_err(|_| RuntimeError::Transport)?
         .response(value(&session.database))?;
-    let outcome = serve(&channel, &mut service, &session);
+    let outcome = serve(&channel, &mut service, &session, &boot);
     // EOF and protocol errors also revoke access. A broken parent cannot receive
     // a draft failure, but the process must still stop holding the document.
     let closed = service.lock_all_checked().map_err(RuntimeError::from);
@@ -114,6 +114,7 @@ fn serve(
     channel: &Arc<Mutex<Channel>>,
     service: &mut DatabaseService,
     session: &SessionToken,
+    boot: &Boot,
 ) -> Result<(), RuntimeError> {
     loop {
         let command: Command = channel
@@ -121,7 +122,14 @@ fn serve(
             .map_err(|_| RuntimeError::Transport)?
             .read()?;
         let lock = matches!(command, Command::Lock);
-        let result = dispatch(service, session, command);
+        let result = match command {
+            Command::RecoverTrust {
+                path,
+                operation,
+                password,
+            } => recover(service, session, channel, boot, &path, operation, &password),
+            command => dispatch(service, session, command),
+        };
         channel
             .lock()
             .map_err(|_| RuntimeError::Transport)?
@@ -130,6 +138,51 @@ fn serve(
             return Ok(());
         }
     }
+}
+
+fn recover(
+    service: &DatabaseService,
+    session: &SessionToken,
+    channel: &Arc<Mutex<Channel>>,
+    boot: &Boot,
+    path: &std::path::Path,
+    operation: taypeer_trust::Digest,
+    password: &[u8],
+) -> Result<Value, RuntimeError> {
+    use crate::cipher_ipc::{IoRequest, IoValue, Seed, spool_objects};
+    let profile = crate::profile::NativeProfile::load(&boot.profile)?;
+    let author = profile.author()?;
+    let identity = taypeer_trust::Identity::new(author.public(), profile.transport_public())
+        .map_err(|_| RuntimeError::Protocol)?;
+    if path.try_exists().map_err(|_| RuntimeError::Transport)? {
+        let root = service.trust_recovery_retry(session, path, password, &identity, operation)?;
+        return Ok(json!({"root": root, "database": session.database, "path": path}));
+    }
+    let seed = service.prepare_trust_recovery(session, password, identity, operation)?;
+    let root = seed
+        .controls
+        .first()
+        .ok_or(RuntimeError::Protocol)?
+        .hash()
+        .map_err(|_| RuntimeError::Protocol)?;
+    let mut spools = Vec::new();
+    let objects = spool_objects(seed.objects, &boot.spool, &mut spools)?;
+    let reply = channel
+        .lock()
+        .map_err(|_| RuntimeError::Transport)?
+        .io(IoRequest::Recover {
+            path: path.to_owned(),
+            seed: Seed {
+                controls: seed.controls,
+                objects,
+                checkpoint: seed.checkpoint,
+                baseline: seed.baseline,
+            },
+        })?;
+    if !matches!(reply, IoValue::Done) {
+        return Err(RuntimeError::Protocol);
+    }
+    Ok(json!({"root": root, "database": session.database, "path": path}))
 }
 
 fn value(data: &impl Serialize) -> Result<Value, RuntimeError> {
@@ -142,7 +195,30 @@ fn dispatch(
     command: Command,
 ) -> Result<Value, RuntimeError> {
     Ok(match command {
+        Command::RecoverTrust { .. } => return Err(RuntimeError::Protocol),
         Command::ApplyReceived => value(&service.apply_received(session)?.value)?,
+        Command::CollectReceived => value(&service.collect_received(session)?.value)?,
+        Command::ReceivedSources => value(&service.received_sources(session)?.value)?,
+        Command::InspectReceived(change) => {
+            value(&service.inspect_received(session, &change)?.value)?
+        }
+        Command::RevealReceived { change, entry } => value(
+            &service
+                .reveal_received(session, &change, &entry)?
+                .value
+                .expose(),
+        )?,
+        Command::DiscardReceived(change) => value(&service.discard_received(session, &change)?)?,
+        Command::ExtractReceived {
+            change,
+            entry,
+            group,
+            operation,
+        } => value(
+            &service
+                .extract_received(session, &change, &entry, group, &operation)?
+                .value,
+        )?,
         Command::Authority => value(&service.authority(session)?)?,
         Command::CreateInvitation => {
             let (invitation, secret) = service.create_invitation(session, unix_seconds()?)?;

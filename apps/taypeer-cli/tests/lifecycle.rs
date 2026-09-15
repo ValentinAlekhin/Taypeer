@@ -54,6 +54,7 @@ fn confirm(path: &Path, input: &Path, prepared: &Value, operation: &str) {
     assert_eq!(fs::read(path).unwrap(), bytes);
 }
 #[test]
+#[ignore = "native-keychain: explicitly opt in; may display macOS access dialogs"]
 fn move_clone_trash_restore_and_purge_survive_new_processes() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("PUBLIC.taypeer");
@@ -132,6 +133,7 @@ fn move_clone_trash_restore_and_purge_survive_new_processes() {
     assert!(!tree.to_string().contains("PUBLIC_HIDDEN_PROCESS"));
 }
 #[test]
+#[ignore = "native-keychain: explicitly opt in; may display macOS access dialogs"]
 fn late_source_is_masked_and_recovery_receipt_survives_worker_restart() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("PUBLIC.taypeer");

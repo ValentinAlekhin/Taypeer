@@ -24,7 +24,7 @@ pub use lifecycle::{InspectionTarget, InspectionView, TreeView};
 mod managed;
 mod patch;
 mod persistence;
-pub use managed::{ApplyReport, PendingPacket, PendingReason};
+pub use managed::{ApplyReport, CollectionReport, PendingPacket, PendingReason, ReceivedSource};
 pub use operations::{ConflictFieldView, ConflictVariantView, ConflictView, new_operation_id};
 pub use patch::{EntryPatch, FieldUpdate};
 pub use taypeer_document::{ConflictContext, Resolution};

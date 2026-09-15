@@ -25,6 +25,7 @@ model {
     control = entity 'Подписанное управление' { #conceptual }
     manifest = entity 'Подписанный состав контейнера' { #conceptual }
     packet = entity 'Зашифрованный пакет' { #conceptual }
+    provenance = entity 'Происхождение восстановленного набора' { #conceptual }
   }
   data.database -> data.group '0..* групп'
   data.group -> data.entry '0..* активных записей'
@@ -50,5 +51,7 @@ model {
   data.workingCopy -> data.deviceIdentity 'Локальный автор; не переносится файлом'
   data.manifest -> data.control 'Точное состояние управления'
   data.manifest -> data.packet 'Аутентифицированный состав ciphertext'
+  data.trustSet -> data.provenance 'Проверяемая история без переноса допуска'
+  data.provenance -> data.packet 'Старый ciphertext под новой независимой защитой'
   data.pending -> data.packet 'Исходник до успешной обработки'
 }

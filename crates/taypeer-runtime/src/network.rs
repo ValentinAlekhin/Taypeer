@@ -63,6 +63,7 @@ pub struct PeerProgress {
     pub result: Result<ExchangeReport, taypeer_sync::Error>,
 }
 pub(crate) struct Network {
+    relay: RelaySetting,
     node: Arc<Node>,
     pump: tokio::task::JoinHandle<()>,
     progress: Arc<Mutex<BTreeMap<(DatabaseId, PublicKey), PeerProgress>>>,
@@ -71,6 +72,9 @@ impl RuntimeHost {
     /// Start Iroh for this CLI lifetime. A relay is used only when explicitly selected.
     pub fn start_network(&mut self, relay: RelaySetting) -> Result<EndpointAddr, RuntimeError> {
         if let Some(network) = &self.network {
+            if network.relay != relay {
+                return Err(RuntimeError::Protocol);
+            }
             return Ok(network.node.address());
         }
         let routes: BTreeMap<PublicKey, EndpointAddr> =
@@ -160,6 +164,7 @@ impl RuntimeHost {
         });
         let address = node.address();
         self.network = Some(Network {
+            relay,
             node,
             pump,
             progress,

@@ -2,6 +2,7 @@
 #![cfg(target_os = "macos")]
 
 #[test]
+#[ignore = "native-keychain: explicitly opt in; may display macOS access dialogs"]
 fn three_cli_profiles_exchange_through_a_verified_relay_without_direct_paths() {
     use iroh_relay::server::{CertConfig, RelayConfig, Server, ServerConfig, TlsConfig};
     use std::net::Ipv4Addr;

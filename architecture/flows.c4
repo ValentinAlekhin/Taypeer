@@ -151,3 +151,45 @@ views 'Локальный файл' {
     taypeer.mac <- taypeer.sessions 'Подтвердить после sync или показать ошибку'
   }
 }
+
+views 'Разбор сетевых источников' {
+  dynamic view inspectReceived {
+    title 'Просмотр и извлечение непринятых изменений'
+    description 'Просмотр изолирован от текущего документа. Подтверждение создаёт изменения действующего автора и долговечную квитанцию происхождения.'
+    taypeer.cli -> taypeer.secretWorker 'Выбрать исходное изменение и запись'
+    taypeer.secretWorker -> taypeer.sessions 'Проверить сессию и точный выбор'
+    taypeer.sessions -> taypeer.trust 'Проверить подписи исходников и зависимости'
+    taypeer.sessions -> taypeer.document 'Изолированное представление выбранного источника'
+    taypeer.cli <- taypeer.secretWorker 'Маскированный просмотр'
+    taypeer.cli -> taypeer.secretWorker 'Извлечь выбранное или явно удалить источник'
+    taypeer.secretWorker -> taypeer.sessions 'Подготовить данные и квитанцию повтора'
+    taypeer.sessions -> taypeer.document 'Новое авторское изменение с происхождением'
+    taypeer.secretWorker -> taypeer.coordinator 'Зашифрованный кандидат с точным поколением'
+    taypeer.coordinator -> taypeer.storage 'Атомарно сохранить результат и квитанцию'
+    taypeer.cli <- taypeer.secretWorker 'Подтверждённый результат'
+  }
+  dynamic view collectReceived {
+    title 'Освобождение зашифрованных секций'
+    description 'Доступные данные, конфликты, история и непринятые источники определяют удержание. Неизвестные ссылки останавливают освобождение.'
+    taypeer.cli -> taypeer.secretWorker 'Запросить очистку рабочей копии'
+    taypeer.secretWorker -> taypeer.sessions 'Проверить сессию и текущий control'
+    taypeer.sessions -> taypeer.document 'Получить ссылки доступных и отложенных данных'
+    taypeer.sessions -> taypeer.trust 'Проверить исходные подписи ожидающих пакетов'
+    taypeer.secretWorker -> taypeer.coordinator 'Checkpoint, удержания и точное поколение'
+    taypeer.coordinator -> taypeer.storage 'Атомарно заменить состав ciphertext'
+    taypeer.cli <- taypeer.secretWorker 'Подтверждённое освобождение либо причина удержания'
+  }
+
+  dynamic view recoverTrust {
+    title 'Новый доверенный набор из читаемой копии'
+    description 'Исходный файл не изменяется. Старые подписи, ключи и непринятые данные сохраняются как происхождение, без переноса полномочий.'
+    taypeer.cli -> taypeer.secretWorker 'Новый файл, пароль и ID восстановления'
+    taypeer.secretWorker -> taypeer.sessions 'Проверить читаемую сессию и источник'
+    taypeer.sessions -> taypeer.trust 'Создать независимый genesis с локальным управляющим'
+    taypeer.sessions -> taypeer.crypto 'Новый ключ; защитить исторический ciphertext и keyring'
+    taypeer.secretWorker -> taypeer.coordinator 'Передать только зашифрованный seed нового файла'
+    taypeer.coordinator -> taypeer.storage 'Создать отдельный файл без перезаписи источника'
+    taypeer.cli <- taypeer.secretWorker 'Надёжно созданный новый доверенный набор'
+  }
+
+}
