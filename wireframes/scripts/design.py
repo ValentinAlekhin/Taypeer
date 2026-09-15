@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import urllib.request
 from datetime import datetime, timezone
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -51,17 +52,48 @@ def write_json(path, data):
 
 
 def scene(file=None, document_id=None):
+    if document_id is not None:
+        # App eval in OpenPencil 0.14 omits some lazy instance subtrees.
+        # A complete live backup preserves them and any manual changes. Parse it
+        # exactly like the saved FIG instead of weakening the scene signature.
+        live = BUILD / 'backups' / ('live-' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ') + '.fig')
+        live.parent.mkdir(parents=True, exist_ok=True)
+        save_live_copy(document_id, live)
+        return scene(live)
     args = ['eval']
     if file is not None:
         args.append(file)
-    if document_id is not None:
-        args.extend(['--document-id', document_id])
     args.extend(['--stdin', '--json'])
     return json.loads(run_cli(*args, input=(ROOT / 'source/snapshot.js').read_text()))
 
 
+def save_live_copy(document_id, path):
+    """Use the installed MCP's save_file RPC; CLI 0.14 exports FIG only headlessly."""
+    if sys.platform == 'darwin':
+        directory = Path.home() / 'Library/Application Support/OpenPencil'
+    elif os.name == 'nt':
+        directory = Path(os.environ.get('LOCALAPPDATA', Path.home()/'AppData/Local')) / 'OpenPencil'
+    else:
+        directory = Path(os.environ['XDG_RUNTIME_DIR'])/'openpencil' if os.environ.get('XDG_RUNTIME_DIR') else Path.home()/'.openpencil'
+    discovery = Path(os.environ.get('OPENPENCIL_MCP_DISCOVERY_PATH', directory/'mcp.json'))
+    info = json.loads(discovery.read_text())
+    port = info.get('httpPort')
+    if not isinstance(port, int) or not 0 < port < 65536:
+        raise RuntimeError('OpenPencil live backup requires a local MCP HTTP port.')
+    headers = {'Content-Type':'application/json'}
+    if info.get('authToken'):
+        headers['Authorization'] = 'Bearer ' + info['authToken']
+    payload = {'command':'save_file', 'args':{'document_id':document_id, 'path':str(path.resolve())}}
+    request = urllib.request.Request(f'http://127.0.0.1:{port}/rpc', data=json.dumps(payload).encode(), headers=headers)
+    # The discovery credential is sent only to loopback, never through a proxy.
+    with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(request, timeout=30) as response:
+        result = json.load(response)
+    if result.get('ok') is False or not path.is_file():
+        raise RuntimeError('OpenPencil could not save a complete live backup.')
+
+
 def input_hash():
-    paths = ['source/compact.js', 'source/desktop.js', 'source/checks.js', 'source/snapshot.js',
+    paths = ['source/compact.js', 'source/desktop.js', 'source/android.js', 'source/checks.js', 'source/snapshot.js',
              'assets/lucide-base.fig', 'assets/lucide-extra.json',
              'assets/demo-invitation.json',
              'scripts/design.py', 'scripts/verify.py']
@@ -78,7 +110,8 @@ def build():
     code = ('const EXTRA_ICONS = ' + json.dumps(icons) + ';\n'
             + 'const DEMO_INVITATION = ' + json.dumps(invitation) + ';\n'
             + (ROOT / 'source/compact.js').read_text() + '\n'
-            + (ROOT / 'source/desktop.js').read_text())
+            + (ROOT / 'source/desktop.js').read_text() + '\n'
+            + (ROOT / 'source/android.js').read_text())
     temporary = BUILD / 'candidate-writing.fig'
     try:
         result = json.loads(run_cli('eval', ROOT / 'assets/lucide-base.fig', '-o', temporary,

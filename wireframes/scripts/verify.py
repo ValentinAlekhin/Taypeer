@@ -56,12 +56,18 @@ def export(fig, out, cli):
             cli('export', fig, '--node', node['id'], '-o', staging/name)
             with Image.open(staging/name) as check:
                 check.verify()
-        for prefix in ['macos', 'android', 'dialog', 'tabs', 'menus', 'states', 'qa']:
-            subset = [n for n in index if n['file'].startswith(prefix)]
+        groups = ['macos', 'android', 'android-form', 'android-states', 'android-qa', 'android-flow',
+                  'dialog', 'tabs', 'menus', 'states', 'qa']
+        def category(node):
+            return next((p for p in sorted(groups, key=len, reverse=True)
+                         if node['file'].startswith(p + '-')), None)
+        for prefix in groups:
+            subset = [n for n in index if category(n) == prefix]
             if not subset:
                 continue
-            tw, th = (528, 328) if prefix == 'macos' else (195, 422) if prefix == 'android' else (392, 344)
-            cols = 4 if prefix == 'android' else 3
+            phones = prefix in ['android', 'android-form', 'android-qa']
+            tw, th = (528, 328) if prefix == 'macos' else (195, 422) if phones else (392, 400)
+            cols = 4 if phones else 3
             for start in range(0, len(subset), 12):
                 chunk = subset[start:start+12]
                 rows = (len(chunk)+cols-1)//cols

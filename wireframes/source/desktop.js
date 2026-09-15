@@ -747,7 +747,7 @@ function buildDesktopV1() {
     if(fresh)fill(fresh,'bg');
   }
   function buildReviewVariants() {
-    const light = {bg:'#F7F7F8',panel:'#FFFFFF',chrome:'#F1F1F3',raised:'#EBEBEF',selected:'#E6E6EA',border:'#DCDCE0',fg:'#242426',muted:'#6C6C73',dim:'#929298',primary:'#315FAF',onPrimary:'#FFFFFF',danger:'#B42318',warning:'#8B6508',success:'#247744'};
+    const light = LIGHT_PALETTE;
     const lightCollection = figma.createVariableCollection('Taypeer · semantic / light');
     const lightVars = Object.fromEntries(Object.entries(light).map(([key,value])=>[key,figma.createVariable(key,'COLOR',lightCollection.id,{...rgb(value),a:1})]));
     function role(color) {

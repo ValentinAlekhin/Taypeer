@@ -53,8 +53,56 @@ class PublishSafety(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     design.check_candidate()
 
+    def test_live_backup_is_parsed_without_dropping_vectors_or_manual_edits(self):
+        manual = [{'name':'Manual edit', 'children':[{'type':'INSTANCE', 'children':[
+            {'type':'VECTOR', 'vectorPaths':[{'data':'M0 0L20 20'}]}]}]}]
+        saved = []
+
+        def save(document_id, path):
+            self.assertEqual(document_id, 'correct-tab')
+            path.write_bytes(b'complete live fig')
+            saved.append(path)
+
+        def cli(*args, **kwargs):
+            self.assertEqual(args[0], 'eval')
+            self.assertEqual(Path(args[1]).read_bytes(), b'complete live fig')
+            return json.dumps(manual)
+
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(design, 'BUILD', Path(directory)), patch.object(design, 'save_live_copy', side_effect=save), patch.object(design, 'run_cli', side_effect=cli):
+                actual = design.scene(document_id='correct-tab')
+            self.assertEqual(actual, manual)
+            self.assertTrue(saved[0].is_file())
+        self.state['live_scene'] = design.json_hash(actual)
+        with self.assertRaises(RuntimeError):
+            design.assert_publish_safe(**self.state)
+
+
 
 class ExportSafety(unittest.TestCase):
+    def test_android_sheets_do_not_mix_with_phone_contact_sheets(self):
+        from PIL import Image
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory)
+            fig = out/'input.fig'
+            fig.write_bytes(b'fixture')
+            nodes = [{'id':str(i), 'name':name, 'page':'Android', 'w':100, 'h':100}
+                     for i, name in enumerate(['Android / entries', 'Android form / create',
+                                               'Android states / system', 'Android QA / small'])]
+
+            def cli(*args, **kwargs):
+                if args[0] == 'eval':
+                    return json.dumps(nodes)
+                Image.new('RGB', (100, 100)).save(Path(args[-1]))
+                return ''
+
+            verify.export(fig, out, cli)
+            for group in ['android', 'android-form', 'android-states', 'android-qa']:
+                self.assertTrue((out/'previews'/f'{group}-contact.png').is_file())
+            # One row in each sheet: a broad Android prefix must not collect all.
+            with Image.open(out/'previews'/'android-contact.png') as sheet:
+                self.assertEqual(sheet.height, 484)
+
     def test_large_sets_export_every_frame_and_paginate_contact_sheets(self):
         from PIL import Image
         with tempfile.TemporaryDirectory() as directory:
