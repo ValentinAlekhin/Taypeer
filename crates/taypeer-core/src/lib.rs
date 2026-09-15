@@ -4,6 +4,8 @@
 
 mod binary;
 pub use binary::*;
+mod policy;
+pub use policy::{DatabasePolicy, PolicyError};
 mod order;
 pub use order::{OrderError, OrderKey};
 

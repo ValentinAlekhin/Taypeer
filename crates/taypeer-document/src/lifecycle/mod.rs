@@ -184,6 +184,7 @@ impl Document {
             database_id: self.database_id.clone(),
             name: self.name.clone(),
             doc,
+            writer: self.writer,
         })
     }
 
@@ -192,7 +193,8 @@ impl Document {
         self.heads()
     }
 
-    fn heads(&self) -> Vec<String> {
+    /// Causal heads for an encrypted checkpoint or an editor's exact base.
+    pub fn heads(&self) -> Vec<String> {
         self.doc
             .get_heads()
             .iter()

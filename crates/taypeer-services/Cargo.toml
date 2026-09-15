@@ -16,12 +16,16 @@ roxmltree.workspace = true
 tempfile.workspace = true
 rand_core.workspace = true
 taypeer-storage.workspace = true
+taypeer-trust.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 zeroize.workspace = true
 
 taypeer-core.workspace = true
 taypeer-document.workspace = true
+
+[dev-dependencies]
+taypeer-sync.workspace = true
 
 [lints]
 workspace = true

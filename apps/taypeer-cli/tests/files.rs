@@ -1,5 +1,6 @@
 //! End-to-end encrypted file scenarios through real CLI and worker processes.
 
+#![cfg(target_os = "macos")]
 use serde_json::Value;
 use std::{
     io::Write,
@@ -9,6 +10,10 @@ use std::{
 
 fn run(path: Option<&Path>, args: &[&str], password: &[u8]) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_taypeer-cli"));
+    let database_path = path.unwrap_or_else(|| Path::new(args[2]));
+    command
+        .arg("--profile")
+        .arg(database_path.parent().unwrap().join("profile"));
     command.args(["--json", "--password-stdin"]);
     if let Some(path) = path {
         command.arg("--file").arg(path);

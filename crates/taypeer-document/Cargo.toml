@@ -7,6 +7,8 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+rand_core.workspace = true
+zeroize.workspace = true
 taypeer-core.workspace = true
 automerge.workspace = true
 serde.workspace = true

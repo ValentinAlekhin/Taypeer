@@ -21,6 +21,10 @@ model {
     purge = entity 'Отметка окончательной очистки' { #conceptual }
     pending = entity 'Отложенный источник' { #conceptual }
     workingCopy = entity 'Рабочая копия' { #conceptual }
+    deviceIdentity = entity 'Идентичность устройства' { #conceptual }
+    control = entity 'Подписанное управление' { #conceptual }
+    manifest = entity 'Подписанный состав контейнера' { #conceptual }
+    packet = entity 'Зашифрованный пакет' { #conceptual }
   }
   data.database -> data.group '0..* групп'
   data.group -> data.entry '0..* активных записей'
@@ -41,4 +45,10 @@ model {
   data.purge -> data.generation 'Закрывает прежнее поколение'
   data.pending -> data.generation 'Поздние исходные изменения'
   data.database -> data.workingCopy 'Локальные копии'
+  data.trustSet -> data.control 'Линейная цепочка полномочий'
+  data.control -> data.deviceIdentity 'Управляющий и допущенные устройства'
+  data.workingCopy -> data.deviceIdentity 'Локальный автор; не переносится файлом'
+  data.manifest -> data.control 'Точное состояние управления'
+  data.manifest -> data.packet 'Аутентифицированный состав ciphertext'
+  data.pending -> data.packet 'Исходник до успешной обработки'
 }

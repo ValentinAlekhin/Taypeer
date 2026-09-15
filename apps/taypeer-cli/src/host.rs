@@ -12,8 +12,9 @@ use std::{
     path::{Path, PathBuf},
 };
 use taypeer_core::{AttributeId, EntryId, GroupId, OperationId, RevisionId};
-use taypeer_runtime::{Command, Worker};
+use taypeer_runtime::{Command, RuntimeHost, Worker};
 use taypeer_services::{GroupMove, LifecycleAction, ObjectId};
+mod p2p;
 
 struct Database {
     path: PathBuf,
@@ -25,21 +26,35 @@ pub(crate) struct Host {
     databases: BTreeMap<String, Database>,
     selected: Option<String>,
     pub input: Input,
+    runtime: Option<RuntimeHost>,
+    profile: PathBuf,
 }
 
 impl Host {
-    pub fn new(input: Input) -> Result<Self, CliError> {
+    pub fn new(input: Input, profile: Option<PathBuf>) -> Result<Self, CliError> {
+        let profile = match profile {
+            Some(path) => path,
+            None => RuntimeHost::default_profile_path()?,
+        };
         Ok(Self {
             executable: std::env::current_exe().map_err(|_| CliError::Io)?,
             databases: BTreeMap::new(),
             selected: None,
             input,
+            runtime: None,
+            profile,
         })
     }
 
     pub fn open(&mut self, path: &Path, name: Option<String>) -> Result<Value, CliError> {
         let password = self.input.password(name.is_some())?;
-        let mut worker = Worker::open(&self.executable, path, password.to_string(), name)?;
+        self.ensure_runtime()?;
+        let mut worker = self.runtime.as_ref().ok_or(CliError::Io)?.open(
+            &self.executable,
+            path,
+            password.to_string(),
+            name,
+        )?;
         let id = worker.database_id().as_str().to_owned();
         if self.databases.contains_key(&id) {
             worker.close()?;
@@ -59,7 +74,25 @@ impl Host {
 
     fn selected(&mut self) -> Result<&mut Database, CliError> {
         let id = self.selected.as_ref().ok_or(CliError::NoDatabase)?;
-        self.databases.get_mut(id).ok_or(CliError::UnknownDatabase)
+        let database = self
+            .databases
+            .get_mut(id)
+            .ok_or(CliError::UnknownDatabase)?;
+        if database
+            .worker
+            .as_ref()
+            .is_some_and(|worker| !worker.is_open())
+            && let Some(mut worker) = database.worker.take()
+        {
+            worker.close()?;
+        }
+        Ok(database)
+    }
+    fn ensure_runtime(&mut self) -> Result<(), CliError> {
+        if self.runtime.is_none() {
+            self.runtime = Some(RuntimeHost::new(&self.profile)?);
+        }
+        Ok(())
     }
 
     fn request(&mut self, mut command: Command) -> Result<Value, CliError> {
@@ -77,6 +110,9 @@ impl Host {
 
     pub fn execute(&mut self, action: Action) -> Result<Value, CliError> {
         let command = match action {
+            Action::Sync(command) => return self.sync(command),
+            Action::Invite(command) => return self.invite(command),
+            Action::Device(command) => return self.device(command),
             Action::Attachment(command) => crate::binary_host::attachment(command, &self.input)?,
             Action::Icon(crate::binary_args::IconCommand::List) => {
                 return serde_json::to_value(taypeer_core::LUCIDE_KEYS)
@@ -278,7 +314,7 @@ impl Host {
             DatabaseCommand::Create { path, name } => self.open(&path, Some(name)),
             DatabaseCommand::Open { path } => self.open(&path, None),
             DatabaseCommand::List => Ok(Value::Array(self.databases.iter().map(|(id, db)| {
-                json!({"database": id, "file": db.path, "locked": db.worker.is_none(), "selected": self.selected.as_ref() == Some(id)})
+                json!({"database": id, "file": db.path, "locked": db.worker.as_ref().is_none_or(|worker| !worker.is_open()), "selected": self.selected.as_ref() == Some(id)})
             }).collect())),
             DatabaseCommand::Use { id } => {
                 if !self.databases.contains_key(&id) { return Err(CliError::UnknownDatabase); }
@@ -293,7 +329,7 @@ impl Host {
                 if self.selected()?.worker.is_some() { return Err(CliError::AlreadyOpen); }
                 let path = self.selected()?.path.clone();
                 let password = self.input.password(false)?;
-                let mut worker = Worker::open(&self.executable, &path, password.to_string(), None)?;
+                let mut worker = self.runtime.as_ref().ok_or(CliError::Io)?.open(&self.executable, &path, password.to_string(), None)?;
                 if self.selected.as_deref() != Some(worker.database_id().as_str()) {
                     worker.close()?;
                     return Err(CliError::UnknownDatabase);
@@ -306,6 +342,7 @@ impl Host {
                 let mut database = self.databases.remove(&id).ok_or(CliError::UnknownDatabase)?;
                 self.selected = self.databases.keys().next().cloned();
                 if let Some(worker) = &mut database.worker { worker.close()?; }
+                self.runtime.as_ref().ok_or(CliError::Io)?.close(&taypeer_core::DatabaseId::new(id))?;
                 Ok(Value::Null)
             }
         }
@@ -326,6 +363,11 @@ impl Host {
 
     pub fn close_all(&mut self) -> Result<(), CliError> {
         let result = self.lock_all();
+        if let Some(runtime) = &self.runtime {
+            for id in self.databases.keys() {
+                runtime.close(&taypeer_core::DatabaseId::new(id))?;
+            }
+        }
         self.databases.clear();
         self.selected = None;
         result

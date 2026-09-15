@@ -21,8 +21,10 @@ pub use binary::*;
 mod lifecycle;
 mod operations;
 pub use lifecycle::{InspectionTarget, InspectionView, TreeView};
+mod managed;
 mod patch;
 mod persistence;
+pub use managed::{ApplyReport, PendingPacket, PendingReason};
 pub use operations::{ConflictFieldView, ConflictVariantView, ConflictView, new_operation_id};
 pub use patch::{EntryPatch, FieldUpdate};
 pub use taypeer_document::{ConflictContext, Resolution};
@@ -94,6 +96,16 @@ pub enum ServiceError {
     InvalidDocument,
     /// New attachment contents exceed the current database quota.
     AttachmentLimit,
+    /// A copied or revoked profile has read/export access but no current author permission.
+    ReadOnly,
+    /// A signature or authenticated device binding is not authorized.
+    Unauthorized,
+    /// Native author credential storage is unavailable or denied access.
+    Credentials,
+    /// New authority is known but its required encrypted baseline/content is still in transit.
+    AwaitingData,
+    /// The signed authority chain rejected an operation.
+    Trust(taypeer_trust::Error),
     /// An explicit image download or validation failed.
     Icon(icons::IconError),
     /// An encrypted file operation failed without exposing paths or secret content.
@@ -116,6 +128,11 @@ impl fmt::Display for ServiceError {
             Self::SessionExhausted => "no further session generation is available",
             Self::InvalidDocument => "the document is invalid",
             Self::AttachmentLimit => "the attachment limit is exceeded",
+            Self::ReadOnly => "the device has read-only access",
+            Self::Unauthorized => "the device is not authorized",
+            Self::Credentials => "native credential storage is unavailable",
+            Self::AwaitingData => "required encrypted data has not arrived",
+            Self::Trust(_) => "signed authority verification failed",
             Self::Icon(_) => "the image could not be loaded",
             Self::Storage(_) => "the encrypted file operation failed",
         })
@@ -133,6 +150,7 @@ impl From<taypeer_document::Error> for ServiceError {
             taypeer_document::Error::InvalidContext => Self::InvalidContext,
             taypeer_document::Error::DuplicateId => Self::InvalidInput,
             taypeer_document::Error::InvalidDocument => Self::InvalidDocument,
+            taypeer_document::Error::Random => Self::Storage(taypeer_storage::Error::Random),
         }
     }
 }
@@ -142,6 +160,7 @@ struct DatabaseState {
     blobs: Option<BlobStore>,
     label: String,
     file: Option<FileStore>,
+    managed: Option<managed::ManagedState>,
     key: Option<ReadKey>,
     generation: u64,
     unlocked: bool,
@@ -233,6 +252,7 @@ impl DatabaseService {
                 document: Some(document),
                 blobs: Some(BlobStore::new()?),
                 file: None,
+                managed: None,
                 key: None,
                 generation: 0,
                 unlocked: false,
@@ -252,6 +272,9 @@ impl DatabaseService {
             .databases
             .get_mut(database)
             .ok_or(ServiceError::NotFound)?;
+        if state.managed.is_some() {
+            return Err(ServiceError::InvalidContext);
+        }
         if state.file.is_some() {
             return state.unlock_file(database, password.as_bytes());
         }
@@ -272,7 +295,16 @@ impl DatabaseService {
 
     /// Revoke document access; file-backed drafts are encrypted locally before plaintext is released.
     pub fn lock(&mut self, session: &SessionToken) -> Result<(), ServiceError> {
-        let state = self.checked_mut(session)?;
+        let state = self
+            .databases
+            .get_mut(&session.database)
+            .ok_or(ServiceError::NotFound)?;
+        if !state.unlocked {
+            return Err(ServiceError::Locked);
+        }
+        if state.generation != session.generation {
+            return Err(ServiceError::ExpiredSession);
+        }
         let draft_result = state.stash_and_close();
         // Access closes even if incrementing the generation is no longer possible.
         state.unlocked = false;
@@ -588,7 +620,7 @@ impl DatabaseService {
                     .values()
                     .map(|a| a.blob.clone()),
             );
-            if state.blobs()?.unique_bytes(&refs) > taypeer_core::DATABASE_ATTACHMENT_LIMIT {
+            if state.blobs()?.unique_bytes(&refs) > state.policy().total_attachment_bytes() {
                 return Err(ServiceError::AttachmentLimit);
             }
         }
@@ -597,6 +629,9 @@ impl DatabaseService {
         state.commit(candidate)?;
         if let Some(file) = &state.file {
             file.discard_draft()?;
+        }
+        if let Some(managed) = &state.managed {
+            managed.port.discard_draft()?;
         }
         state.draft = None;
         Ok(stamped(session, id))
@@ -613,6 +648,9 @@ impl DatabaseService {
         }
         if let Some(file) = &state.file {
             file.discard_draft()?;
+        }
+        if let Some(managed) = &state.managed {
+            managed.port.discard_draft()?;
         }
         state.draft = None;
         Ok(stamped(session, ()))
@@ -735,6 +773,9 @@ impl DatabaseService {
             .get_mut(&session.database)
             .ok_or(ServiceError::NotFound)?;
         check_session(state, session)?;
+        if let Some(managed) = &state.managed {
+            managed.check_edit_permission()?;
+        }
         Ok(state)
     }
 }
@@ -745,6 +786,9 @@ fn check_session(state: &DatabaseState, session: &SessionToken) -> Result<(), Se
     }
     if state.generation != session.generation {
         return Err(ServiceError::ExpiredSession);
+    }
+    if let Some(managed) = &state.managed {
+        managed.check_session()?;
     }
     Ok(())
 }

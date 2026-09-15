@@ -121,7 +121,7 @@ impl Client {
         self.run_io(
             window,
             cx,
-            move |service| service.save_draft(&token),
+            move |service, _host| service.save_draft(&token),
             |this, result, window, cx| match result {
                 Ok(reply) if this.accepts(&reply.session) => {
                     this.selected = Some(reply.value);

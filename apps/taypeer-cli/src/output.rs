@@ -24,6 +24,30 @@ impl From<RuntimeError> for CliError {
 impl CliError {
     pub fn key(&self) -> &'static str {
         match self {
+            Self::Runtime(RuntimeError::Profile(taypeer_runtime::profile::ProfileError::Busy)) => {
+                "profile_busy"
+            }
+            Self::Runtime(
+                RuntimeError::Profile(taypeer_runtime::profile::ProfileError::Credentials)
+                | RuntimeError::Service(taypeer_services::ServiceError::Credentials),
+            ) => "credentials_error",
+            Self::Runtime(RuntimeError::Service(taypeer_services::ServiceError::ReadOnly)) => {
+                "read_only"
+            }
+            Self::Runtime(RuntimeError::Service(taypeer_services::ServiceError::AwaitingData)) => {
+                "awaiting_data"
+            }
+            Self::Runtime(RuntimeError::Service(
+                taypeer_services::ServiceError::Trust(_)
+                | taypeer_services::ServiceError::Unauthorized,
+            )) => "authority_error",
+            Self::Runtime(RuntimeError::Service(
+                taypeer_services::ServiceError::Storage(
+                    taypeer_services::StorageError::Changed
+                    | taypeer_services::StorageError::CommitUncertain,
+                )
+                | taypeer_services::ServiceError::ExpiredSession,
+            )) => "stale_generation",
             Self::Runtime(taypeer_runtime::RuntimeError::Service(
                 taypeer_services::ServiceError::AttachmentLimit,
             )) => "attachment_limit",

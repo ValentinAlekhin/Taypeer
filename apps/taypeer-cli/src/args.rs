@@ -16,6 +16,8 @@ pub(crate) enum Language {
     about = "Encrypted databases and interactive sessions"
 )]
 pub(crate) struct Cli {
+    #[arg(long, global = true, help = crate::output::help("help_profile"))]
+    pub profile: Option<PathBuf>,
     /// Output machine-readable JSON.
     #[arg(long, global = true)]
     pub json: bool,
@@ -34,6 +36,12 @@ pub(crate) struct Cli {
 
 #[derive(Subcommand)]
 pub(crate) enum Action {
+    #[command(about = crate::output::help("help_sync"), subcommand)]
+    Sync(crate::p2p_args::SyncCommand),
+    #[command(about = crate::output::help("help_invite"), subcommand)]
+    Invite(crate::p2p_args::InviteCommand),
+    #[command(about = crate::output::help("help_device"), subcommand)]
+    Device(crate::p2p_args::DeviceCommand),
     #[command(about = crate::output::help("help_attachment"), subcommand)]
     Attachment(crate::binary_args::AttachmentCommand),
     #[command(about = crate::output::help("help_icon"), subcommand)]

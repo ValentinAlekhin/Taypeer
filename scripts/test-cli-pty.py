@@ -20,10 +20,13 @@ def json_response(data):
 
 
 class Terminal:
-    def __init__(self, binary):
+    def __init__(self, binary, profile=None):
         self.pid, self.fd = pty.fork()
         if self.pid == 0:
-            os.execv(binary, [binary, "--json", "session"])
+            arguments = [binary, "--json"]
+            if profile is not None:
+                arguments.extend(["--profile", str(profile)])
+            os.execv(binary, arguments + ["session"])
         self.pending = b""
         self.transcript = b""
         self.wait(b"\x1b[?25h")
@@ -81,7 +84,9 @@ class Terminal:
 
 def main():
     binary = str(Path(sys.argv[1] if len(sys.argv) > 1 else "target/debug/taypeer-cli").resolve())
-    terminal = Terminal(binary)
+    profile_directory = tempfile.TemporaryDirectory(prefix="taypeer-public-pty-profile-")
+    profile = Path(profile_directory.name) / "profile"
+    terminal = Terminal(binary, profile)
     try:
         with tempfile.TemporaryDirectory(prefix="taypeer-public-pty-") as directory:
             path = Path(directory) / "public.taypeer"
@@ -179,7 +184,7 @@ def main():
             else:
                 raise AssertionError("CLI did not terminate")
             result = subprocess.run(
-                [binary, "--json", "--file", str(path), "--password-stdin", "entry", "list"],
+                [binary, "--profile", str(profile), "--json", "--file", str(path), "--password-stdin", "entry", "list"],
                 input=b"PUBLIC_PTY_MASTER_CANARY", capture_output=True, timeout=30,
             )
             assert result.returncode == 0, "worker retained the writer lock after exit"
@@ -187,6 +192,7 @@ def main():
         print("CLI PTY: hidden input, cancellation, draft guard, trash/restore, move, binary draft cancel/restore/export/save, lock, close and reopen passed")
     finally:
         terminal.close()
+        profile_directory.cleanup()
 
 
 if __name__ == "__main__":

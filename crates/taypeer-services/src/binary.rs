@@ -3,8 +3,8 @@
 use super::*;
 use std::{fs::File, io::Write, path::PathBuf};
 use taypeer_core::{
-    ATTACHMENT_LIMIT, AttachmentId, BlobId, Color, DATABASE_ATTACHMENT_LIMIT, EntryField,
-    EntryFields, FieldValue, ICON_LIMIT, IconRef, IconSource, OperationId,
+    AttachmentId, BlobId, Color, DatabasePolicy, EntryField, EntryFields, FieldValue, ICON_LIMIT,
+    IconRef, IconSource, OperationId,
 };
 use taypeer_document::SourcePreview;
 
@@ -215,12 +215,18 @@ impl DatabaseService {
                     return Err(ServiceError::InvalidInput);
                 }
                 let mut draft = state.document().begin_edit_entry(entry)?;
-                apply_edit(&mut draft, &mut blobs, &request.edit)?;
+                apply_edit(&mut draft, &mut blobs, &request.edit, state.policy())?;
                 draft
                     .fields()
                     .validate()
                     .map_err(|_| ServiceError::InvalidInput)?;
-                check_quota(state.document(), draft.fields(), &blobs, &request.edit)?;
+                check_quota(
+                    state.document(),
+                    draft.fields(),
+                    &blobs,
+                    &request.edit,
+                    state.policy(),
+                )?;
                 let mut candidate = state.document().clone();
                 candidate.save_binary_entry(draft, operation, &intent, now)?;
                 state.commit_blobs(candidate, blobs)?;
@@ -233,12 +239,18 @@ impl DatabaseService {
                 if draft.binary_receipt(operation, &intent)? {
                     return Ok(stamped(session, ()));
                 }
-                apply_edit(draft.document_mut()?, &mut blobs, &request.edit)?;
+                apply_edit(
+                    draft.document_mut()?,
+                    &mut blobs,
+                    &request.edit,
+                    state.policy(),
+                )?;
                 check_quota(
                     state.document(),
                     draft.document()?.fields(),
                     &blobs,
                     &request.edit,
+                    state.policy(),
                 )?;
                 draft.record_binary(operation.clone(), intent);
                 state.persist_binary_draft(&draft, &blobs)?;
@@ -264,8 +276,8 @@ impl DatabaseService {
             && self
                 .databases
                 .values()
-                .filter_map(|state| state.file.as_ref())
-                .any(|file| file.path() == destination)
+                .filter_map(|state| state.path())
+                .any(|path| path == destination)
         {
             return Err(ServiceError::InvalidInput);
         }
@@ -319,13 +331,13 @@ impl DatabaseService {
         } else {
             refs.retained.clone()
         };
-        let (file_bytes, backup_bytes) = physical_usage(state.file.as_ref())?;
+        let (file_bytes, backup_bytes) = physical_usage(state.path())?;
         Ok(stamped(
             session,
             StorageUsage {
                 attachment_bytes,
-                attachment_limit: DATABASE_ATTACHMENT_LIMIT,
-                over_limit: attachment_bytes > DATABASE_ATTACHMENT_LIMIT,
+                attachment_limit: state.policy().total_attachment_bytes(),
+                over_limit: attachment_bytes > state.policy().total_attachment_bytes(),
                 retained_bytes: blobs.unique_bytes(&all),
                 draft_bytes: state
                     .draft
@@ -396,22 +408,27 @@ fn acquire_icon(
     Ok(IconRef::Image { blob, source })
 }
 
-fn stage_file(blobs: &mut BlobStore, path: &Path) -> Result<BlobId, ServiceError> {
+fn stage_file(
+    blobs: &mut BlobStore,
+    path: &Path,
+    policy: DatabasePolicy,
+) -> Result<BlobId, ServiceError> {
     let input = File::open(path).map_err(StorageError::from)?;
     let metadata = input.metadata().map_err(StorageError::from)?;
     if !metadata.is_file() {
         return Err(ServiceError::InvalidInput);
     }
-    if metadata.len() > ATTACHMENT_LIMIT {
+    if metadata.len() > policy.attachment_bytes() {
         return Err(ServiceError::AttachmentLimit);
     }
-    Ok(blobs.insert(input, metadata.len(), ATTACHMENT_LIMIT)?)
+    Ok(blobs.insert(input, metadata.len(), policy.attachment_bytes())?)
 }
 
 fn apply_edit(
     draft: &mut taypeer_document::EntryDraft,
     blobs: &mut BlobStore,
     edit: &BinaryEdit,
+    policy: DatabasePolicy,
 ) -> Result<(), ServiceError> {
     match edit {
         BinaryEdit::Icon(input) => {
@@ -433,7 +450,7 @@ fn apply_edit(
             if name.is_empty() {
                 return Err(ServiceError::InvalidInput);
             }
-            let blob = stage_file(blobs, path)?;
+            let blob = stage_file(blobs, path, policy)?;
             draft.add_attachment(name, blob);
         }
         BinaryEdit::Attachment(AttachmentEdit::Rename { attachment, name }) => {
@@ -451,7 +468,7 @@ fn apply_edit(
             if !draft.fields().attachments.contains_key(attachment) {
                 return Err(ServiceError::NotFound);
             }
-            let blob = stage_file(blobs, path)?;
+            let blob = stage_file(blobs, path, policy)?;
             draft
                 .fields_mut()
                 .attachments
@@ -482,6 +499,7 @@ pub(super) fn check_quota(
     fields: &EntryFields,
     blobs: &BlobStore,
     edit: &BinaryEdit,
+    policy: DatabasePolicy,
 ) -> Result<(), ServiceError> {
     if matches!(
         edit,
@@ -489,7 +507,7 @@ pub(super) fn check_quota(
     ) {
         let mut refs = document.blob_references()?.attachments;
         refs.extend(fields.attachments.values().map(|a| a.blob.clone()));
-        if blobs.unique_bytes(&refs) > DATABASE_ATTACHMENT_LIMIT {
+        if blobs.unique_bytes(&refs) > policy.total_attachment_bytes() {
             return Err(ServiceError::AttachmentLimit);
         }
     }
@@ -571,14 +589,12 @@ fn snapshot_view(snapshot: &taypeer_core::EntrySnapshot, blobs: &BlobStore) -> B
     result
 }
 
-fn physical_usage(file: Option<&FileStore>) -> Result<(u64, u64), ServiceError> {
-    let Some(file) = file else {
+fn physical_usage(path: Option<&Path>) -> Result<(u64, u64), ServiceError> {
+    let Some(path) = path else {
         return Ok((0, 0));
     };
-    let current = std::fs::metadata(file.path())
-        .map_err(StorageError::from)?
-        .len();
-    let mut path = file.path().as_os_str().to_os_string();
+    let current = std::fs::metadata(path).map_err(StorageError::from)?.len();
+    let mut path = path.as_os_str().to_os_string();
     path.push(".backups");
     let directory = PathBuf::from(path);
     let mut backups = 0_u64;

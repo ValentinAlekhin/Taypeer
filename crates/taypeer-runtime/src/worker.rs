@@ -2,43 +2,108 @@
 
 use crate::{
     Command, RuntimeError,
-    protocol::{Boot, Response, read_frame, write_frame},
+    cipher_ipc::{Channel, RemotePersistence},
+    protocol::Boot,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::io::{Read, Write};
+use std::sync::{Arc, Mutex};
 use taypeer_services::{DatabaseService, SessionToken};
 use zeroize::Zeroize;
 
 /// Serve one database over inherited private pipes until lock or EOF.
 /// Never attach this entry point to a public socket or ordinary terminal output.
-pub fn run_worker(reader: &mut impl Read, writer: &mut impl Write) -> Result<(), RuntimeError> {
-    let mut boot: Boot = read_frame(reader)?;
+pub fn run_worker(
+    reader: impl Read + Send + 'static,
+    writer: impl Write + Send + 'static,
+) -> Result<(), RuntimeError> {
+    let channel = Arc::new(Mutex::new(Channel::new(reader, writer)));
+    let mut boot: Boot = channel
+        .lock()
+        .map_err(|_| RuntimeError::Transport)?
+        .read()?;
+    if let Some(invitation) = boot.invitation.take() {
+        let result = (|| {
+            let profile = crate::profile::NativeProfile::load(&boot.profile)?;
+            let author = profile.author()?;
+            let identity =
+                taypeer_trust::Identity::new(author.public(), profile.transport_public())
+                    .map_err(|_| RuntimeError::Protocol)?;
+            let proof = taypeer_trust::JoinProof::sign(&invitation, identity, &author)
+                .map_err(|_| RuntimeError::Protocol)?;
+            value(&proof)
+        })();
+        channel
+            .lock()
+            .map_err(|_| RuntimeError::Transport)?
+            .response(result)?;
+        return Ok(());
+    }
     let mut service = DatabaseService::new();
-    let opened = match boot.create_name.take() {
-        Some(name) => service.create_file(&boot.path, name, boot.password.as_bytes()),
-        None => service.open_file(&boot.path, boot.password.as_bytes()),
-    };
+    let opened = (|| {
+        let profile = crate::profile::NativeProfile::load(&boot.profile)?;
+        let seed = match boot.create_name.take() {
+            Some(name) => {
+                let author = profile.author()?;
+                let identity =
+                    taypeer_trust::Identity::new(author.public(), profile.transport_public())
+                        .map_err(|_| RuntimeError::Protocol)?;
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_err(|_| RuntimeError::Protocol)?
+                    .as_millis();
+                Some(DatabaseService::prepare_managed(
+                    name,
+                    boot.password.as_bytes(),
+                    &author,
+                    identity,
+                    now.try_into().map_err(|_| RuntimeError::Protocol)?,
+                    Default::default(),
+                )?)
+            }
+            None => None,
+        };
+        let port = RemotePersistence::attach(
+            Arc::clone(&channel),
+            boot.path.clone(),
+            boot.spool.clone(),
+            seed,
+        )?;
+        service
+            .open_managed(Box::new(port), boot.password.as_bytes(), || {
+                profile
+                    .author()
+                    .map(Some)
+                    .map_err(|_| taypeer_services::ServiceError::Credentials)
+            })
+            .map_err(RuntimeError::from)
+    })();
     boot.password.zeroize();
     let session = match opened {
         Ok(session) => session,
         Err(error) => {
-            write_frame(
-                writer,
-                &Response {
-                    result: Err(error.into()),
-                },
-            )?;
+            channel
+                .lock()
+                .map_err(|_| RuntimeError::Transport)?
+                .response(Err(error))?;
             return Ok(());
         }
     };
-    write_frame(
-        writer,
-        &Response {
-            result: value(&session.database),
-        },
-    )?;
-    let outcome = serve(reader, writer, &mut service, &session);
+    if service.can_write(&session)?
+        && let Err(error) = service.apply_received(&session)
+    {
+        channel
+            .lock()
+            .map_err(|_| RuntimeError::Transport)?
+            .response(Err(error.into()))?;
+        return Ok(());
+    }
+    channel
+        .lock()
+        .map_err(|_| RuntimeError::Transport)?
+        .response(value(&session.database))?;
+    let outcome = serve(&channel, &mut service, &session);
     // EOF and protocol errors also revoke access. A broken parent cannot receive
     // a draft failure, but the process must still stop holding the document.
     let closed = service.lock_all_checked().map_err(RuntimeError::from);
@@ -46,16 +111,21 @@ pub fn run_worker(reader: &mut impl Read, writer: &mut impl Write) -> Result<(),
 }
 
 fn serve(
-    reader: &mut impl Read,
-    writer: &mut impl Write,
+    channel: &Arc<Mutex<Channel>>,
     service: &mut DatabaseService,
     session: &SessionToken,
 ) -> Result<(), RuntimeError> {
     loop {
-        let command: Command = read_frame(reader)?;
+        let command: Command = channel
+            .lock()
+            .map_err(|_| RuntimeError::Transport)?
+            .read()?;
         let lock = matches!(command, Command::Lock);
         let result = dispatch(service, session, command);
-        write_frame(writer, &Response { result })?;
+        channel
+            .lock()
+            .map_err(|_| RuntimeError::Transport)?
+            .response(result)?;
         if lock {
             return Ok(());
         }
@@ -72,6 +142,48 @@ fn dispatch(
     command: Command,
 ) -> Result<Value, RuntimeError> {
     Ok(match command {
+        Command::ApplyReceived => value(&service.apply_received(session)?.value)?,
+        Command::Authority => value(&service.authority(session)?)?,
+        Command::CreateInvitation => {
+            let (invitation, secret) = service.create_invitation(session, unix_seconds()?)?;
+            value(&(invitation, secret.expose()))?
+        }
+        Command::ApproveInvitation(request) => {
+            value(&service.approve_invitation(session, request, unix_seconds()?)?)?
+        }
+        Command::CloseInvitation { request, reject } => {
+            service.close_invitation(session, request, reject)?;
+            Value::Null
+        }
+        Command::ConsentManagement(operation) => {
+            value(&service.consent_management(session, operation)?)?
+        }
+        Command::TransferManagement(consent) => {
+            service.transfer_management(session, consent)?;
+            Value::Null
+        }
+        Command::RotatePassword {
+            operation,
+            password,
+            revoke,
+        } => {
+            service.rotate_password(session, operation, &password, revoke)?;
+            Value::Null
+        }
+        Command::DatabasePolicy => value(&service.database_policy(session)?.value)?,
+        Command::SetDatabasePolicy {
+            operation,
+            policy,
+            password,
+        } => {
+            service.set_database_policy(
+                session,
+                operation,
+                policy,
+                password.as_ref().map(|p| p.as_slice()),
+            )?;
+            Value::Null
+        }
         Command::BinaryView(target) => value(&service.binary_view(session, &target)?.value)?,
         Command::EditBinary { request, operation } => {
             value(&service.edit_binary(session, &request, &operation)?.value)?
@@ -277,4 +389,11 @@ fn dispatch(
             Value::Null
         }
     })
+}
+
+fn unix_seconds() -> Result<u64, RuntimeError> {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|t| t.as_secs())
+        .map_err(|_| RuntimeError::Protocol)
 }

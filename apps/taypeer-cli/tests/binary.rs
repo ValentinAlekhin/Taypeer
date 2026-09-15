@@ -1,4 +1,6 @@
 //! Synthetic local replicas feed real CLI processes; no network admission is implied.
+#![cfg(target_os = "macos")]
+mod support;
 use serde_json::Value;
 use std::{
     fs,
@@ -6,13 +8,12 @@ use std::{
     path::Path,
     process::{Command, Stdio},
 };
-use taypeer_core::{EntryId, GroupId};
-use taypeer_document::Document;
-use taypeer_storage::FileStore;
 
 const PASSWORD: &[u8] = b"PUBLIC lifecycle process master";
 fn run(path: &Path, args: &[&str]) -> std::process::Output {
     let mut child = Command::new(env!("CARGO_BIN_EXE_taypeer-cli"))
+        .arg("--profile")
+        .arg(support::profile(path))
         .args(["--json", "--password-stdin", "--file"])
         .arg(path)
         .args(args)
@@ -33,23 +34,6 @@ fn ok(path: &Path, args: &[&str]) -> Value {
     );
     serde_json::from_slice(&output.stdout).unwrap()
 }
-fn fixture() -> (Document, GroupId, GroupId, EntryId) {
-    let mut doc = Document::new("PUBLIC process fixture", 1).unwrap();
-    let a = doc.create_group("PUBLIC A".into(), None, 2).unwrap().id;
-    let b = doc.create_group("PUBLIC B".into(), None, 2).unwrap().id;
-    let mut draft = doc.begin_create_entry(a.clone()).unwrap();
-    draft.fields_mut().title = "PUBLIC entry".into();
-    draft.fields_mut().password = Some("PUBLIC_HIDDEN_PROCESS".into());
-    let entry = doc.save_entry(draft, 3).unwrap();
-    (doc, a, b, entry)
-}
-fn persist(path: &Path, doc: &Document) {
-    let blobs = taypeer_storage::BlobStore::new().unwrap();
-    let clear = doc.export();
-    let reader = blobs.bundle(&clear).unwrap();
-    let length = reader.length();
-    FileStore::create_stream(path, PASSWORD, reader, length, 500).unwrap();
-}
 
 #[test]
 fn binary_commands_and_receipts_survive_new_processes() {
@@ -57,8 +41,8 @@ fn binary_commands_and_receipts_survive_new_processes() {
     let path = directory.path().join("PUBLIC.taypeer");
     let input = directory.path().join("PUBLIC-input.txt");
     let output = directory.path().join("PUBLIC-output.txt");
-    let (doc, group, _, entry) = fixture();
-    persist(&path, &doc);
+    let (doc, group, _, entry) = support::fixture(&path);
+    support::persist(&path, &doc, PASSWORD);
     fs::write(&input, b"PUBLIC original").unwrap();
     let add = [
         "attachment",
@@ -222,8 +206,8 @@ fn favicon_retry_does_not_repeat_network_after_worker_restart() {
     };
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("PUBLIC.taypeer");
-    let (doc, _, _, entry) = fixture();
-    persist(&path, &doc);
+    let (doc, _, _, entry) = support::fixture(&path);
+    support::persist(&path, &doc, PASSWORD);
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     listener.set_nonblocking(true).unwrap();
     let url = format!("http://{}/page", listener.local_addr().unwrap());

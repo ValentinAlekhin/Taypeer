@@ -15,7 +15,9 @@ use taypeer_core::{
 };
 
 mod binary;
+mod source;
 pub use binary::BlobReferences;
+pub use source::{OriginalChange, SourceMetadata};
 mod codec;
 mod fields;
 mod groups;
@@ -49,6 +51,8 @@ pub enum Error {
     DuplicateId,
     /// Known document structure is malformed or has an unexpected type.
     InvalidDocument,
+    /// The operating system could not allocate a fresh author branch identity.
+    Random,
 }
 
 impl fmt::Display for Error {
@@ -142,6 +146,7 @@ pub struct Document {
     database_id: DatabaseId,
     name: String,
     doc: Automerge,
+    writer: Option<[u8; 32]>,
 }
 
 impl fmt::Debug for Document {
@@ -161,12 +166,26 @@ struct StoredRevision {
 impl Document {
     /// Creates an empty database with no implicit root group or entry.
     pub fn new(name: impl Into<String>, now: Timestamp) -> Result<Self, Error> {
-        let name = name.into();
+        Self::new_inner(name.into(), now, None)
+    }
+
+    /// Create an empty document whose first change is bound to a verified author.
+    /// The service is responsible for checking admission and signing the source bytes.
+    pub fn new_with_writer(
+        name: impl Into<String>,
+        now: Timestamp,
+        writer: [u8; 32],
+    ) -> Result<Self, Error> {
+        Self::new_inner(name.into(), now, Some(writer))
+    }
+
+    fn new_inner(name: String, now: Timestamp, writer: Option<[u8; 32]>) -> Result<Self, Error> {
         validate_group_name(&name)?;
         let database_id = DatabaseId::new(random_id());
         let mut doc = Automerge::new();
+        source::prepare_actor(&mut doc, writer)?;
         let mut tx = doc.transaction();
-        tx.put(ROOT, "schema", 3_u64)?;
+        tx.put(ROOT, "schema", 4_u64)?;
         tx.put(ROOT, "database_id", database_id.as_str())?;
         tx.put(ROOT, "name", name.as_str())?;
         tx.put(ROOT, "created_at", now)?;
@@ -183,6 +202,7 @@ impl Document {
             database_id,
             name,
             doc,
+            writer,
         })
     }
 
@@ -201,7 +221,7 @@ impl Document {
     /// This parser is not a substitute for outer authentication or resource limits.
     pub fn load(bytes: &[u8]) -> Result<Self, Error> {
         let doc = Automerge::load(bytes)?;
-        if unique(&doc, &ROOT, "schema")?.to_u64() != Some(3) {
+        if unique(&doc, &ROOT, "schema")?.to_u64() != Some(4) {
             return Err(Error::InvalidDocument);
         }
         let database_id = DatabaseId::new(
@@ -218,6 +238,7 @@ impl Document {
             database_id,
             name,
             doc,
+            writer: None,
         };
         document.validate_structure()?;
         Ok(document)
@@ -272,6 +293,7 @@ impl Document {
             created_at: now,
             modified_at: now,
         };
+        self.prepare_write()?;
         let mut tx = self.doc.transaction();
         let (address, object) = objects::initialize(&mut tx, &ObjectId::Group(group.id.clone()))?;
         tx.put_object(&object, "placement_times", ObjType::Map)?;
@@ -309,6 +331,7 @@ impl Document {
         if group.name == name {
             return Ok(());
         }
+        self.prepare_write()?;
         let mut tx = self.doc.transaction();
         let address = objects::single(&tx, &ObjectId::Group(id.clone()))?;
         let group_object = objects::generation_object(&tx, &address)?;
@@ -413,6 +436,7 @@ impl Document {
         }
         if draft.original.as_ref() == Some(&draft.fields) {
             if let Some((operation, intent)) = receipt {
+                self.prepare_write()?;
                 let mut tx = self.doc.transaction();
                 operations::write_receipt(&mut tx, operation, intent, &draft.entry_id)?;
                 tx.commit();
@@ -445,6 +469,7 @@ impl Document {
             }
         }
         let mut candidate = self.doc.clone();
+        source::prepare_actor(&mut candidate, self.writer)?;
         let mut tx = candidate.transaction_at(PatchLog::null(), &draft.base);
         let entry = if draft.original.is_none() {
             // Check the current state as well as the isolated base to prevent overwrite on reuse.
@@ -553,6 +578,7 @@ impl Document {
         let revision_id = RevisionId::new(random_id());
         let base = self.doc.get_heads();
         let mut candidate = self.doc.clone();
+        source::prepare_actor(&mut candidate, self.writer)?;
         let mut tx = candidate.transaction();
         let entry = objects::entry_object(&tx, id)?;
         let mut changed = BTreeSet::new();
@@ -642,6 +668,7 @@ impl Document {
             database_id: self.database_id.clone(),
             name: self.name.clone(),
             doc: self.doc.fork(),
+            writer: self.writer,
         }
     }
 
@@ -659,6 +686,7 @@ impl Document {
             database_id: self.database_id.clone(),
             name: self.name.clone(),
             doc: candidate,
+            writer: self.writer,
         };
         checked.validate_structure()?;
         let candidate = checked.doc;

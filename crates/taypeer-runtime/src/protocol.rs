@@ -19,6 +19,9 @@ pub(crate) struct Boot {
     pub path: PathBuf,
     pub password: String,
     pub create_name: Option<String>,
+    pub profile: PathBuf,
+    pub spool: PathBuf,
+    pub invitation: Option<taypeer_trust::Invitation>,
 }
 
 impl Drop for Boot {
@@ -31,6 +34,45 @@ impl Drop for Boot {
 /// No command implicitly reveals a protected value.
 #[derive(Serialize, Deserialize)]
 pub enum Command {
+    /// Validate original provenance/dependencies and durably apply independently eligible packets.
+    ApplyReceived,
+    /// Read public signed device/control state, without acquiring another credential.
+    Authority,
+    /// Explicitly create and reveal one invitation's bearer material.
+    CreateInvitation,
+    /// Approve the recipient of a durable request.
+    ApproveInvitation(taypeer_trust::Digest),
+    /// Explicitly refuse a received request or cancel an unused invitation.
+    CloseInvitation {
+        /// Request identity.
+        request: taypeer_trust::Digest,
+        /// True refuses a recipient; false cancels an issued code.
+        reject: bool,
+    },
+    /// Create signed recipient consent for an exact handoff operation.
+    ConsentManagement(taypeer_trust::Digest),
+    /// Durably relinquish management using the recipient's explicit signed consent.
+    TransferManagement(taypeer_trust::HandoffConsent),
+    /// Rotate password/key, optionally revoking a member in the same durable transition.
+    RotatePassword {
+        /// Idempotent administrative operation.
+        operation: taypeer_trust::Digest,
+        /// Exact explicit password input, never argv.
+        password: Zeroizing<Vec<u8>>,
+        /// Optional excluded device.
+        revoke: Option<taypeer_trust::DeviceId>,
+    },
+    /// Read authenticated shared quota and KDF settings.
+    DatabasePolicy,
+    /// Change manager-controlled policy; password is required when recalibrating KDF.
+    SetDatabasePolicy {
+        /// Idempotent operation.
+        operation: taypeer_trust::Digest,
+        /// Validated shared settings.
+        policy: taypeer_core::DatabasePolicy,
+        /// Exact reauthentication input when needed.
+        password: Option<Zeroizing<Vec<u8>>>,
+    },
     /// Read binary-only metadata from an explicit scope.
     BinaryView(taypeer_services::BinaryTarget),
     /// Stage or confirm a retryable binary command.
@@ -321,6 +363,8 @@ impl Command {
 /// Content-free failures suitable for a client to localize.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RuntimeError {
+    /// Native profile, secure credential storage or endpoint ownership failed.
+    Profile(crate::profile::ProfileError),
     /// The shared application service rejected the command.
     Service(ServiceError),
     /// A private pipe or child process failed.
@@ -331,6 +375,11 @@ pub enum RuntimeError {
     TooLarge,
     /// This worker has already been closed or invalidated.
     Closed,
+}
+impl From<crate::profile::ProfileError> for RuntimeError {
+    fn from(error: crate::profile::ProfileError) -> Self {
+        Self::Profile(error)
+    }
 }
 impl From<ServiceError> for RuntimeError {
     fn from(value: ServiceError) -> Self {

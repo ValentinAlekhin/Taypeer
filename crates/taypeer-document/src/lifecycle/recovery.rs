@@ -80,6 +80,7 @@ impl Document {
         }
         let hashes = parse_heads(&self.doc, heads)?;
         let mut candidate = self.clone();
+        candidate.prepare_write()?;
         let mut tx = candidate.doc.transaction_at(PatchLog::null(), &hashes);
         let shell = objects::shell(&tx, &address.object)?;
         tx.put(shell, "current", address.generation.as_str())?;
@@ -216,6 +217,7 @@ impl Document {
         )?;
         let heads = self.heads();
         let mut candidate = self.clone();
+        candidate.prepare_write()?;
         let mut tx = candidate.doc.transaction();
         let node = match request.mode {
             RecoveryMode::Clone => objects::initialize(&mut tx, &target.object)?.1,

@@ -264,6 +264,7 @@ impl Document {
         } else {
             BTreeSet::new()
         };
+        self.prepare_write()?;
         let mut tx = self.doc.transaction_at(PatchLog::null(), &base);
         let target = objects::entry_object(&tx, &context.entry)?;
         let attributes = object(&tx, &target, "attributes")?;
@@ -375,6 +376,7 @@ impl Document {
             return Err(Error::NotFound);
         }
         let mut candidate = self.clone();
+        candidate.prepare_write()?;
         let mut tx = candidate.doc.transaction();
         let root = object(&tx, &ROOT, "purged_revisions")?;
         for revision in revisions {

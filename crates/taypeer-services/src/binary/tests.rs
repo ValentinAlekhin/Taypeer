@@ -1,6 +1,7 @@
 //! Synthetic local branches model quota growth; no network admission is involved.
 use super::*;
 use std::io::Read;
+use taypeer_core::ATTACHMENT_LIMIT;
 
 #[test]
 fn merged_contents_over_quota_remain_readable_and_new_additions_fail() {
@@ -99,11 +100,11 @@ fn per_file_boundary_is_exact_and_rejection_preserves_staging() {
     let file = File::create(&path).unwrap();
     let mut blobs = BlobStore::new().unwrap();
     file.set_len(ATTACHMENT_LIMIT).unwrap();
-    let id = stage_file(&mut blobs, &path).unwrap();
+    let id = stage_file(&mut blobs, &path, DatabasePolicy::default()).unwrap();
     assert_eq!(blobs.length(&id), Some(ATTACHMENT_LIMIT));
     file.set_len(ATTACHMENT_LIMIT + 1).unwrap();
     assert_eq!(
-        stage_file(&mut blobs, &path).err(),
+        stage_file(&mut blobs, &path, DatabasePolicy::default()).err(),
         Some(ServiceError::AttachmentLimit)
     );
     assert_eq!(blobs.ids().count(), 1);

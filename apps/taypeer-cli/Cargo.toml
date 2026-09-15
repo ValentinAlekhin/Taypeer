@@ -13,11 +13,15 @@ crossterm.workspace = true
 taypeer-runtime.workspace = true
 taypeer-services.workspace = true
 taypeer-core.workspace = true
+taypeer-trust.workspace = true
+taypeer-sync.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
+iroh-relay = { workspace = true, features = ["test-utils", "server"] }
+tokio.workspace = true
 tempfile.workspace = true
 taypeer-document.workspace = true
 taypeer-storage.workspace = true

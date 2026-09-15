@@ -69,6 +69,7 @@ struct WindowSubscriptions {
 
 pub(super) struct Client {
     service: DatabaseService,
+    native_host: Option<taypeer_runtime::RuntimeHost>,
     database: Option<DatabaseId>,
     session: Option<SessionToken>,
     sessions: BTreeMap<DatabaseId, SessionToken>,
@@ -122,6 +123,7 @@ impl Client {
         };
         let mut this = Self {
             service: DatabaseService::new(),
+            native_host: None,
             database: None,
             session: None,
             sessions: BTreeMap::new(),

@@ -1,0 +1,25 @@
+[package]
+name = "taypeer-sync"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+taypeer-core.workspace = true
+taypeer-trust.workspace = true
+taypeer-storage.workspace = true
+iroh.workspace = true
+iroh-relay.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+iroh = { workspace = true, features = ["test-utils"] }
+iroh-relay = { workspace = true, features = ["test-utils"] }
+
+[lints]
+workspace = true

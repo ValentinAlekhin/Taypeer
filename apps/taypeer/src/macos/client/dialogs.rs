@@ -76,7 +76,7 @@ impl Client {
         self.run_io(
             window,
             cx,
-            move |service| match form {
+            move |service, _host| match form {
                 Some(Form::Group(parent)) => service
                     .create_group(&token, name, parent)
                     .map(|reply| Some(reply.value.id)),

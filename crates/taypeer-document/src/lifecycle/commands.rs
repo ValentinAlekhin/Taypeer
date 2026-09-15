@@ -70,6 +70,7 @@ impl Document {
         };
         let mut candidate = self.clone();
         let hashes = parse_heads(&candidate.doc, &prepared.heads)?;
+        candidate.prepare_write()?;
         let mut tx = candidate.doc.transaction_at(PatchLog::null(), &hashes);
         for (address, observed) in &prepared.affected {
             let node = objects::generation_object(&tx, address)?;
@@ -247,6 +248,7 @@ impl Document {
         let heads = basis.heads();
         let hashes = parse_heads(&self.doc, &heads)?;
         let mut candidate = self.clone();
+        candidate.prepare_write()?;
         let mut tx = candidate.doc.transaction_at(PatchLog::null(), &hashes);
         let target = objects::generation_object(&tx, &address)?;
         let changed_placement = node.placements != [placement.clone()] || request.review.is_some();
@@ -315,6 +317,7 @@ impl Document {
         let heads = basis.heads();
         let hashes = parse_heads(&self.doc, &heads)?;
         let mut candidate = self.clone();
+        candidate.prepare_write()?;
         let mut tx = candidate.doc.transaction_at(PatchLog::null(), &hashes);
         if before.placements != [destination.clone()] || review.is_some() {
             let node = objects::generation_object(&tx, &address)?;
@@ -386,6 +389,7 @@ impl Document {
             );
         }
         let mut candidate = self.clone();
+        candidate.prepare_write()?;
         let mut tx = candidate.doc.transaction();
         // Initialize all shells before references or snapshots are read.
         for address in mapping.values() {

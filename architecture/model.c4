@@ -53,6 +53,13 @@ model {
       description 'Владеет открытым документом и ключами чтения. Блокировка инвалидирует сессию и завершает процесс даже при ошибке черновика.'
       metadata { source 'crates/taypeer-runtime/src/lib.rs'; contract 'docs/core-cli.md'; evidence 'apps/taypeer-cli/tests/files.rs' }
     }
+    coordinator = component 'Координатор рабочей копии' {
+      #partial
+      style { border solid }
+      technology 'Rust; host CLI/macOS'
+      description 'Единственный файловый writer. Сериализует зашифрованные кандидаты и приём, проверяет поколение и подтверждает только надёжную фиксацию.'
+      metadata { source 'crates/taypeer-sync/src/coordinator.rs'; contract 'docs/p2p.md'; evidence 'docs/p2p-acceptance.md' }
+    }
     core = component 'Ядро предметной области' {
       #partial
       technology 'Rust'
@@ -71,34 +78,36 @@ model {
       #partial
       style { border solid }
       technology 'Rust + Automerge'
-      description 'Automerge: поля, размещения, поколения, история и ссылки на бинарное содержимое. Локальные операции через Rust API и CLI сохраняют варианты; допуск и сетевой приём пока не реализованы.'
+      description 'Automerge: данные, история, конфликты и бинарные ссылки. Исходные изменения привязаны к автору; допуск проверяет сервис.'
       metadata { source 'crates/taypeer-document/src/lib.rs'; contract 'docs/data-model.md'; evidence 'spikes/encrypted-sync/REPORT.md' }
     }
     crypto = component 'Защита содержимого' {
       #partial
       style { border solid }
       technology 'Rust; KDF: Argon2id'
-      description 'Файловый срез: Argon2id и AEAD через taypeer-storage. Ротация и полная приёмка защиты остаются запланированы.'
+      description 'Файловый срез: Argon2id и AEAD через taypeer-storage. Независимые эпохи и исторические ключи реализованы в managed-сервисе; полная приёмка защиты впереди.'
       metadata { source 'crates/taypeer-storage/src/crypto.rs'; contract 'docs/storage.md'; evidence 'spikes/encrypted-sync/REPORT.md' }
     }
     storage = component 'Хранение контейнера' {
       #partial
       style { border solid }
       technology 'Rust'
-      description 'Потоковые бинарные секции, зашифрованный staging, атомарная запись и снимки. Зашифрованная очередь остаётся запланирована.'
+      description 'Потоковые бинарные секции, зашифрованный staging, атомарная запись и снимки. Подписанная ciphertext-очередь сохраняется до ACK.'
       metadata { source 'crates/taypeer-storage/src/file.rs'; contract 'docs/storage.md'; evidence 'spikes/encrypted-sync/REPORT.md' }
     }
     sync = component 'Зашифрованный обмен' {
-      #planned
+      #partial
+      style { border solid }
       technology 'Rust + Iroh'
       description 'Получение и пересылка, включая заблокированную БД; без ключей чтения.'
-      metadata { contract 'docs/architecture.md'; evidence 'spikes/encrypted-sync/REPORT.md' }
+      metadata { source 'crates/taypeer-sync/src/lib.rs'; contract 'docs/p2p.md'; evidence 'docs/p2p-acceptance.md' }
     }
     trust = component 'Допуск и управление' {
-      #planned
+      #partial
+      style { border solid }
       technology 'Rust'
       description 'Проверка подписанного управления, приглашения и переходы доверия.'
-      metadata { contract 'docs/compatibility.md'; evidence 'spikes/encrypted-sync/REPORT.md' }
+      metadata { source 'crates/taypeer-trust/src/lib.rs'; contract 'docs/p2p.md'; evidence 'docs/p2p-acceptance.md' }
     }
     evolution = component 'Эволюция и восстановление' {
       #planned
@@ -174,10 +183,17 @@ model {
   taypeer.cli -> taypeer.generator 'Явная генерация секрета'
   taypeer.cli -> taypeer.macPlatform 'Защищённое локальное состояние и события ОС'
   taypeer.cli -> taypeer.sync 'Запуск и остановка обмена'
+  taypeer.cli -> taypeer.coordinator 'Время жизни зарегистрированных рабочих копий'
+  taypeer.secretWorker -> taypeer.coordinator 'Зашифрованный кандидат и ожидаемое поколение'
+  taypeer.coordinator -> taypeer.storage 'Единственная надёжная фиксация файла'
+  taypeer.coordinator -> taypeer.trust 'Подписи, управление и актуальность кандидата'
+  taypeer.coordinator -> taypeer.local 'Профиль, сетевой ключ и отметка поколения'
   taypeer.secretWorker -> taypeer.sessions 'Последовательные команды текущей сессии'
   taypeer.secretWorker -> taypeer.document 'Открытый документ и адресные изменения'
   taypeer.secretWorker -> taypeer.crypto 'Ключи чтения и защита кандидатов'
+  taypeer.secretWorker -> taypeer.macPlatform 'Авторский credential после проверки пароля'
   taypeer.mac -> taypeer.sessions 'Команды Rust'
+  taypeer.mac -> taypeer.coordinator 'Общий writer зарегистрированного файла'
   taypeer.android -> taypeer.ffi 'Команды и события'
   taypeer.ffi -> taypeer.sessions 'Сценарии Rust'
   taypeer.sessions -> taypeer.core 'Правила предметной области'
@@ -197,7 +213,7 @@ model {
   taypeer.evolution -> taypeer.document 'Преобразование представления'
   taypeer.evolution -> taypeer.trust 'Проверка полномочий и происхождения'
   taypeer.sync -> taypeer.trust 'Проверка допуска'
-  taypeer.sync -> taypeer.storage 'Зашифрованная очередь'
+  taypeer.sync -> taypeer.coordinator 'Сохранение входящих объектов и получение ciphertext'
   taypeer.sync -> taypeer.local 'Сетевые учётные данные'
   taypeer.trust -> taypeer.local 'Приватные полномочия устройства'
   taypeer.trust -> taypeer.storage 'Подписанное состояние управления'
@@ -220,6 +236,6 @@ model {
   taypeer.android -> taypeer.theme 'Палитра Compose'
   taypeer.theme -> taypeer.local 'Выбор темы устройства'
   taypeer.sync -> peer 'Обмен зашифрованными данными' { technology 'Iroh direct' }
-  taypeer.sync -> relay 'Разрешённый маршрут' { technology 'Iroh relay' }
+  taypeer.sync -> relay 'Разрешённый маршрут с проверкой TLS; возможен relay-only' { technology 'Iroh relay' }
   relay -> peer 'Передача трафика'
 }

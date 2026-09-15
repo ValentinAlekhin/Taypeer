@@ -37,9 +37,11 @@ views 'Сценарии' {
     description 'ACK относится только к надёжно сохранённой единице. Полное применение может ждать blobs и зависимостей.'
     peer -> taypeer.sync 'Зашифрованный пакет'
     taypeer.sync -> taypeer.trust 'Проверить внешний допуск'
-    taypeer.sync -> taypeer.storage 'Сохранить пакет в очереди'
+    taypeer.sync -> taypeer.coordinator 'Передать проверенный ciphertext'
+    taypeer.coordinator -> taypeer.storage 'Сохранить пакет и manifest'
     taypeer.storage -> taypeer.vault 'Надёжная запись'
-    taypeer.sync <- taypeer.storage 'Пакет сохранён'
+    taypeer.coordinator <- taypeer.storage 'Пакет сохранён'
+    taypeer.sync <- taypeer.coordinator 'Надёжная фиксация завершена'
     peer <- taypeer.sync 'Подтверждение получения'
   }
   dynamic view unlockApply {

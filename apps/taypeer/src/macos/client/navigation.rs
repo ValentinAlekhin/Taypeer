@@ -51,7 +51,7 @@ impl Client {
         self.run_io(
             window,
             cx,
-            move |service| service.lock(&token),
+            move |service, _host| service.lock(&token),
             |this, result, _, _| {
                 this.error = result.err().map(|_| "file_draft_error");
             },
@@ -71,7 +71,15 @@ impl Client {
         self.run_io(
             window,
             cx,
-            move |service| service.unlock(&id, &password),
+            move |service, host| {
+                if service.is_file(&id) {
+                    super::files::native_host(host)?
+                        .unlock_local(service, &id, password.as_bytes())
+                        .map_err(super::files::native_error)
+                } else {
+                    service.unlock(&id, &password)
+                }
+            },
             Self::accept_file_session,
         );
     }
@@ -109,7 +117,7 @@ impl Client {
             self.run_io(
                 window,
                 cx,
-                move |service| service.cancel_draft(&token),
+                move |service, _host| service.cancel_draft(&token),
                 move |this, result, window, cx| match result {
                     Ok(_) => {
                         this.editor = None;
@@ -208,7 +216,7 @@ impl Client {
         self.run_io(
             window,
             cx,
-            move |service| service.cancel_draft(&token),
+            move |service, _host| service.cancel_draft(&token),
             |this, result, window, cx| match result {
                 Ok(_) => {
                     this.restore = false;

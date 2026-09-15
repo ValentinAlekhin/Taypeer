@@ -20,6 +20,7 @@ views 'Обзор' {
       taypeer.document,
       taypeer.crypto,
       taypeer.storage,
+      taypeer.coordinator,
       taypeer.sync,
       taypeer.trust,
       taypeer.evolution
@@ -52,6 +53,7 @@ views 'Обзор' {
       taypeer.crypto,
       taypeer.document,
       taypeer.storage,
+      taypeer.coordinator,
       taypeer.sync,
       taypeer.trust,
       taypeer.vault,
@@ -70,7 +72,7 @@ views 'Обзор' {
   view implementation {
     title 'Что существует в основном workspace'
     description 'macOS, Rust-правила, Automerge, файловые сессии, бинарные секции и явная загрузка иконок. Не подтверждает безопасность или готовность полной v1.'
-    include taypeer.mac, taypeer.cli, taypeer.secretWorker, taypeer.generator, taypeer.iconLoader, taypeer.core, taypeer.sessions, taypeer.document, taypeer.crypto, taypeer.storage, taypeer.vault, taypeer.backups, taypeer.demo, taypeer.theme
+    include taypeer.mac, taypeer.cli, taypeer.secretWorker, taypeer.coordinator, taypeer.sync, taypeer.trust, taypeer.generator, taypeer.iconLoader, taypeer.core, taypeer.sessions, taypeer.document, taypeer.crypto, taypeer.storage, taypeer.vault, taypeer.backups, taypeer.demo, taypeer.theme
     autoLayout LeftRight
   }
 }

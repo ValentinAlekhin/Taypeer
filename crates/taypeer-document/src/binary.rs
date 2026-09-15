@@ -115,6 +115,7 @@ impl Document {
         intent: &serde_json::Value,
     ) -> Result<(), Error> {
         if self.binary_receipt(operation, intent)?.is_none() {
+            self.prepare_write()?;
             let mut tx = self.doc.transaction();
             lifecycle::put_receipt(&mut tx, operation, &("binary", intent), &[])?;
             tx.commit();
@@ -175,6 +176,7 @@ impl Document {
             return Err(Error::InvalidContext);
         }
         let mut candidate = self.clone();
+        candidate.prepare_write()?;
         let mut tx = candidate.doc.transaction_at(PatchLog::null(), &base);
         let node = objects::generation_object(&tx, &address)?;
         tx.put(&node, "icon", encode(&icon)?)?;

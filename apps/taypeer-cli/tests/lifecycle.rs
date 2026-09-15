@@ -1,4 +1,6 @@
 //! Synthetic local replicas feed real CLI processes; no network admission is implied.
+#![cfg(target_os = "macos")]
+mod support;
 use serde_json::Value;
 use std::{
     fs,
@@ -6,13 +8,14 @@ use std::{
     path::Path,
     process::{Command, Stdio},
 };
-use taypeer_core::{EntryId, GroupId, OperationId};
-use taypeer_document::{Document, LifecycleAction, ObjectId};
-use taypeer_storage::FileStore;
+use taypeer_core::OperationId;
+use taypeer_document::{LifecycleAction, ObjectId};
 
 const PASSWORD: &[u8] = b"PUBLIC lifecycle process master";
 fn run(path: &Path, args: &[&str]) -> std::process::Output {
     let mut child = Command::new(env!("CARGO_BIN_EXE_taypeer-cli"))
+        .arg("--profile")
+        .arg(support::profile(path))
         .args(["--json", "--password-stdin", "--file"])
         .arg(path)
         .args(args)
@@ -33,23 +36,7 @@ fn ok(path: &Path, args: &[&str]) -> Value {
     );
     serde_json::from_slice(&output.stdout).unwrap()
 }
-fn fixture() -> (Document, GroupId, GroupId, EntryId) {
-    let mut doc = Document::new("PUBLIC process fixture", 1).unwrap();
-    let a = doc.create_group("PUBLIC A".into(), None, 2).unwrap().id;
-    let b = doc.create_group("PUBLIC B".into(), None, 2).unwrap().id;
-    let mut draft = doc.begin_create_entry(a.clone()).unwrap();
-    draft.fields_mut().title = "PUBLIC entry".into();
-    draft.fields_mut().password = Some("PUBLIC_HIDDEN_PROCESS".into());
-    let entry = doc.save_entry(draft, 3).unwrap();
-    (doc, a, b, entry)
-}
-fn persist(path: &Path, doc: &Document) {
-    let blobs = taypeer_storage::BlobStore::new().unwrap();
-    let clear = doc.export();
-    let reader = blobs.bundle(&clear).unwrap();
-    let length = reader.length();
-    FileStore::create_stream(path, PASSWORD, reader, length, 500).unwrap();
-}
+
 fn confirm(path: &Path, input: &Path, prepared: &Value, operation: &str) {
     fs::write(input, serde_json::to_vec(prepared).unwrap()).unwrap();
     let args = [
@@ -71,8 +58,8 @@ fn move_clone_trash_restore_and_purge_survive_new_processes() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("PUBLIC.taypeer");
     let input = directory.path().join("PUBLIC-selection.json");
-    let (doc, a, b, entry) = fixture();
-    persist(&path, &doc);
+    let (doc, a, b, entry) = support::fixture(&path);
+    support::persist(&path, &doc, PASSWORD);
     ok(
         &path,
         &[
@@ -148,7 +135,7 @@ fn move_clone_trash_restore_and_purge_survive_new_processes() {
 fn late_source_is_masked_and_recovery_receipt_survives_worker_restart() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("PUBLIC.taypeer");
-    let (mut doc, _, b, entry) = fixture();
+    let (mut doc, _, b, entry) = support::fixture(&path);
     let mut late = doc.fork();
     let mut draft = late.begin_edit_entry(&entry).unwrap();
     draft.fields_mut().password = Some("PUBLIC_LATE_SECRET".into());
@@ -164,7 +151,7 @@ fn late_source_is_masked_and_recovery_receipt_survives_worker_restart() {
             .unwrap();
     }
     doc.merge(&late).unwrap();
-    persist(&path, &doc);
+    support::persist(&path, &doc, PASSWORD);
     assert!(
         !run(&path, &["entry", "show", entry.as_str()])
             .status

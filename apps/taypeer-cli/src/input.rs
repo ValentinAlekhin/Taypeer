@@ -27,7 +27,7 @@ impl Input {
         Ok(password)
     }
 
-    fn secret(&self, key: &str) -> Result<Zeroizing<String>, CliError> {
+    pub(crate) fn secret(&self, key: &str) -> Result<Zeroizing<String>, CliError> {
         crate::secret_input::read(&message(self.language, key))
     }
 

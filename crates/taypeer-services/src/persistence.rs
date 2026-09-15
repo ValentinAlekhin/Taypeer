@@ -9,6 +9,17 @@ impl From<taypeer_storage::Error> for ServiceError {
 }
 
 impl DatabaseState {
+    pub(super) fn policy(&self) -> taypeer_core::DatabasePolicy {
+        self.managed
+            .as_ref()
+            .map_or_else(Default::default, |managed| managed.policy())
+    }
+    pub(super) fn path(&self) -> Option<&Path> {
+        self.managed
+            .as_ref()
+            .map(|managed| managed.port.path())
+            .or_else(|| self.file.as_ref().map(|file| file.path()))
+    }
     pub(super) fn document(&self) -> &Document {
         self.document
             .as_ref()
@@ -47,6 +58,9 @@ impl DatabaseState {
                 length,
             )?;
         }
+        if let Some(managed) = &mut self.managed {
+            managed.commit(&candidate, &retained)?;
+        }
         self.document = Some(candidate);
         let mut keep = refs.retained;
         if let Some(draft) = &self.draft {
@@ -64,6 +78,9 @@ impl DatabaseState {
         draft: &DraftState,
         blobs: &BlobStore,
     ) -> Result<(), ServiceError> {
+        if let Some(managed) = &self.managed {
+            managed.save_draft(draft, blobs)?;
+        }
         if let Some(file) = &self.file {
             let mut interrupted = draft.clone();
             interrupted.interrupt();
@@ -128,6 +145,24 @@ impl DatabaseState {
     }
     pub(super) fn stash_and_close(&mut self) -> Result<(), ServiceError> {
         stash_draft(self);
+        if self.managed.is_some() {
+            let result = (|| {
+                let managed = self.managed.as_ref().ok_or(ServiceError::InvalidContext)?;
+                if let Some(draft) = &self.draft {
+                    managed.save_draft(draft, self.blobs()?)?;
+                } else {
+                    managed.port.discard_draft()?;
+                }
+                Ok(())
+            })();
+            if let Some(managed) = &mut self.managed {
+                managed.close();
+            }
+            self.document = None;
+            self.blobs = None;
+            self.draft = None;
+            return result;
+        }
         let Some(file) = &self.file else {
             return Ok(());
         };
@@ -211,6 +246,7 @@ impl DatabaseService {
                 blobs: Some(blobs),
                 label,
                 file: Some(file),
+                managed: None,
                 key: Some(key),
                 generation: 1,
                 unlocked: true,
@@ -226,7 +262,7 @@ impl DatabaseService {
     pub fn is_file(&self, database: &DatabaseId) -> bool {
         self.databases
             .get(database)
-            .is_some_and(|state| state.file.is_some())
+            .is_some_and(|state| state.file.is_some() || state.managed.is_some())
     }
 }
 

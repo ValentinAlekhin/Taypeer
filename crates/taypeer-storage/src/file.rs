@@ -26,17 +26,17 @@ pub struct FileStore {
     uncertain: bool,
 }
 
-fn sibling(path: &Path, suffix: &str) -> PathBuf {
+pub(crate) fn sibling(path: &Path, suffix: &str) -> PathBuf {
     let mut name = path.as_os_str().to_owned();
     name.push(suffix);
     PathBuf::from(name)
 }
-fn parent(path: &Path) -> Result<&Path, Error> {
+pub(crate) fn parent(path: &Path) -> Result<&Path, Error> {
     path.parent()
         .filter(|p| !p.as_os_str().is_empty())
         .ok_or(Error::Io)
 }
-fn canonical_destination(path: &Path) -> Result<PathBuf, Error> {
+pub(crate) fn canonical_destination(path: &Path) -> Result<PathBuf, Error> {
     let name = path.file_name().ok_or(Error::Io)?;
     let directory = path
         .parent()
@@ -77,7 +77,7 @@ fn atomic_write(path: &Path, bytes: &[u8], create: bool) -> Result<(), Error> {
         .and_then(|directory| directory.sync_all())
         .map_err(|_| Error::CommitUncertain)
 }
-fn lock(path: &Path) -> Result<File, Error> {
+pub(crate) fn lock(path: &Path) -> Result<File, Error> {
     let mut options = OpenOptions::new();
     options.read(true).write(true).create(true).truncate(false);
     #[cfg(unix)]
@@ -93,7 +93,7 @@ fn lock(path: &Path) -> Result<File, Error> {
     Ok(file)
 }
 
-fn fingerprint(file: &mut File) -> Result<[u8; 32], Error> {
+pub(crate) fn fingerprint(file: &mut File) -> Result<[u8; 32], Error> {
     file.seek(SeekFrom::Start(0))?;
     let length = file.metadata()?.len();
     if length > crypto::MAX_ENCODED_SIZE {
@@ -129,7 +129,7 @@ fn header(file: &mut File) -> Result<Vec<u8>, Error> {
     Ok(bytes)
 }
 
-fn persist(temp: NamedTempFile, path: &Path, create: bool) -> Result<(), Error> {
+pub(crate) fn persist(temp: NamedTempFile, path: &Path, create: bool) -> Result<(), Error> {
     temp.as_file().sync_all()?;
     if create {
         temp.persist_noclobber(path).map_err(|error| {
@@ -147,7 +147,7 @@ fn persist(temp: NamedTempFile, path: &Path, create: bool) -> Result<(), Error> 
         .map_err(|_| Error::CommitUncertain)
 }
 
-fn copy_durable(source: &Path, destination: &Path) -> Result<(), Error> {
+pub(crate) fn copy_durable(source: &Path, destination: &Path) -> Result<(), Error> {
     let mut input = File::open(source)?;
     let mut output = NamedTempFile::new_in(parent(destination)?)?;
     let length = input.metadata()?.len();
@@ -421,7 +421,7 @@ impl FileStore {
         }
     }
 }
-fn backup_files(directory: &Path) -> Result<Vec<(u64, PathBuf)>, Error> {
+pub(crate) fn backup_files(directory: &Path) -> Result<Vec<(u64, PathBuf)>, Error> {
     let mut files = Vec::new();
     for entry in fs::read_dir(directory)? {
         let entry = entry?;

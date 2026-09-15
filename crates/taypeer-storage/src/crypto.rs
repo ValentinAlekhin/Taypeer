@@ -22,6 +22,18 @@ const MAGIC: &[u8; 8] = b"TAYPEER\0";
 /// This does not guarantee erasure of plaintext in other allocations.
 pub struct ReadKey(Zeroizing<[u8; 32]>);
 
+impl ReadKey {
+    /// Reconstitute a historical key from authenticated encrypted session state.
+    /// This API must never be exposed through UI or transport IPC.
+    pub fn from_secret(bytes: &[u8; 32]) -> Self {
+        Self(Zeroizing::new(*bytes))
+    }
+    /// Serialize a historical key only into an encrypted session candidate.
+    pub fn secret_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+}
+
 pub(super) fn random<const N: usize>() -> Result<[u8; N], Error> {
     let mut bytes = [0; N];
     OsRng

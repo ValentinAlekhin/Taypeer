@@ -7,12 +7,39 @@ use std::path::PathBuf;
 use taypeer_services::{DatabaseService, ServiceError, SessionToken};
 use zeroize::Zeroizing;
 
+pub(super) fn native_host(
+    host: &mut Option<taypeer_runtime::RuntimeHost>,
+) -> Result<&mut taypeer_runtime::RuntimeHost, ServiceError> {
+    if host.is_none() {
+        let path = taypeer_runtime::RuntimeHost::default_profile_path().map_err(native_error)?;
+        *host = Some(taypeer_runtime::RuntimeHost::new(&path).map_err(native_error)?);
+    }
+    host.as_mut().ok_or(ServiceError::InvalidContext)
+}
+
+pub(super) fn native_error(error: taypeer_runtime::RuntimeError) -> ServiceError {
+    use taypeer_runtime::{RuntimeError, profile::ProfileError};
+    match error {
+        RuntimeError::Service(error) => error,
+        RuntimeError::Profile(ProfileError::Busy) => {
+            ServiceError::Storage(taypeer_services::StorageError::Busy)
+        }
+        RuntimeError::Profile(_) => ServiceError::Credentials,
+        _ => ServiceError::Storage(taypeer_services::StorageError::Io),
+    }
+}
+
 impl Client {
     pub(super) fn run_io<T: Send + 'static>(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
-        operation: impl FnOnce(&mut DatabaseService) -> Result<T, ServiceError> + Send + 'static,
+        operation: impl FnOnce(
+            &mut DatabaseService,
+            &mut Option<taypeer_runtime::RuntimeHost>,
+        ) -> Result<T, ServiceError>
+        + Send
+        + 'static,
         complete: impl FnOnce(&mut Self, Result<T, ServiceError>, &mut Window, &mut Context<Self>)
         + 'static,
     ) {
@@ -23,15 +50,17 @@ impl Client {
         self.revealed.clear();
         self.root_focus.focus(window, cx);
         let mut service = std::mem::take(&mut self.service);
+        let mut native_host = self.native_host.take();
         let work = cx.background_executor().spawn(async move {
-            let result = operation(&mut service);
-            (service, result)
+            let result = operation(&mut service, &mut native_host);
+            (service, native_host, result)
         });
         self.io_task = Some(cx.spawn_in(window, async move |client, cx| {
-            let (service, result) = work.await;
+            let (service, native_host, result) = work.await;
             // A dropped window discards the response and its owned service, never resurrecting UI.
             let _ = client.update_in(cx, move |this, window, cx| {
                 this.service = service;
+                this.native_host = native_host;
                 this.busy = false;
                 if this.lock_requested {
                     this.lock_requested = false;
@@ -52,7 +81,7 @@ impl Client {
         self.run_io(
             window,
             cx,
-            |service| service.lock_all_checked(),
+            |service, _host| service.lock_all_checked(),
             |this, result, _, cx| {
                 this.error = result.err().map(|_| "file_draft_error");
                 cx.notify();
@@ -140,7 +169,11 @@ impl Client {
             self.run_io(
                 window,
                 cx,
-                move |service| service.open_file(&path, password.as_bytes()),
+                move |service, host| {
+                    native_host(host)?
+                        .open_local(service, &path, password.as_bytes(), None)
+                        .map_err(native_error)
+                },
                 Self::accept_file_session,
             );
             return;
@@ -172,7 +205,11 @@ impl Client {
                         this.run_io(
                             window,
                             cx,
-                            move |service| service.create_file(&path, name, password.as_bytes()),
+                            move |service, host| {
+                                native_host(host)?
+                                    .open_local(service, &path, password.as_bytes(), Some(name))
+                                    .map_err(native_error)
+                            },
                             Self::accept_file_session,
                         );
                     });
@@ -192,6 +229,11 @@ impl Client {
 pub(super) fn file_error(error: ServiceError) -> &'static str {
     use taypeer_services::StorageError;
     match error {
+        ServiceError::ReadOnly => "file_read_only",
+        ServiceError::Credentials => "file_credentials_error",
+        ServiceError::Unauthorized | ServiceError::Trust(_) | ServiceError::ExpiredSession => {
+            "file_authority_error"
+        }
         ServiceError::Storage(StorageError::Authentication) => "file_auth_error",
         ServiceError::Storage(StorageError::EmptyPassword) => "file_empty_password",
         ServiceError::Storage(StorageError::UnsupportedVersion) => "file_version_error",
