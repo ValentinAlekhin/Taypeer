@@ -4,7 +4,8 @@ Original SVG files from [lucide-icons/lucide](https://github.com/lucide-icons/lu
 revision `c2c28580b3009b8de62224c1fec6f78abb3e37d8`.
 
 Files are unmodified. Stable Taypeer key `home` maps to upstream `house.svg`;
-`file-key-2` maps to `file-key.svg`. All other filenames match upstream.
+`file-key-2` maps to `file-key.svg`; UI action key `trash-2` maps to `trash.svg`.
+All other filenames match upstream.
 `SHA256SUMS` records the exact vendored bytes. `LICENSE` includes the upstream
 ISC license and MIT attribution for inherited Feather icons.
 

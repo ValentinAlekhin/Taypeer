@@ -1,9 +1,9 @@
 // Steps show architectural interactions, not exhaustive state machines or wire protocols.
-// mac is the desktop entry point; Android reaches the same sessions through ffi.
+// mac service flows are planned UI integration, except the existing headless demoEdit smoke.
 views 'Сценарии' {
   dynamic view demoEdit {
     title 'Демонстрационное подтверждение в памяти'
-    description 'Только искусственные данные. После завершения процесса документы и черновики теряются; этот путь не заменяет надёжное сохранение файла.'
+    description 'Headless --smoke-test, без GUI. Только искусственные данные сервиса; этот путь не заменяет надёжное сохранение файла.'
     taypeer.mac -> taypeer.sessions 'Команда с поколением сессии и черновиком'
     taypeer.sessions -> taypeer.core 'Проверка предметных правил'
     taypeer.sessions -> taypeer.document 'Адресные правки и одна версия от исходных heads'
@@ -12,7 +12,7 @@ views 'Сценарии' {
   }
   dynamic view save {
     title 'Подтверждение записи'
-    description 'Путь macOS; Android вызывает те же сценарии через UniFFI. При ошибке записи форма остаётся доступной.'
+    description 'Планируемая интеграция macOS UI; Android вызывает те же сценарии через UniFFI. При ошибке записи форма остаётся доступной.'
     taypeer.mac -> taypeer.sessions 'Подтвердить черновик'
     taypeer.sessions -> taypeer.core 'Проверить команду'
     taypeer.sessions -> taypeer.document 'Подготовить изменение'
@@ -144,6 +144,7 @@ views 'Локальный файл' {
   }
   dynamic view fileSave {
     title 'Подтверждение записи в локальном файле'
+    description 'Целевой сценарий подключения UI к сервису; в текущем UI используются только образцы в памяти.'
     taypeer.mac -> taypeer.sessions 'Передать команду фоновому исполнителю'
     taypeer.sessions -> taypeer.document 'Подготовить кандидат с историей'
     taypeer.sessions -> taypeer.crypto 'Зашифровать документ'

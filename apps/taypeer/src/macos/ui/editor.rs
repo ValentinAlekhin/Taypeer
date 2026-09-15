@@ -1,0 +1,387 @@
+//! Editable entry tabs. The draft owns values; these widgets adapt native input.
+
+use super::{forms, style::*, workspace::WorkspaceStore};
+use crate::ui_state::*;
+use gpui_kit::prelude::FluentBuilder;
+use gpui_kit::{
+    component::{
+        button::*,
+        checkbox::Checkbox,
+        input::{InputEvent, InputState, Textarea, TextareaState},
+        *,
+    },
+    *,
+};
+
+pub(super) struct EditorView {
+    store: Entity<WorkspaceStore>,
+    editor: Entity<EditorStore>,
+    fields: Vec<(EntryField, Entity<InputState>)>,
+    notes: Entity<TextareaState>,
+    _subscriptions: Vec<Subscription>,
+}
+impl EditorView {
+    pub fn new(
+        store: Entity<WorkspaceStore>,
+        editor: Entity<EditorStore>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let content = editor.read(cx).content().clone();
+        let fields: Vec<_> = EntryField::ALL
+            .into_iter()
+            .filter(|f| *f != EntryField::Notes)
+            .map(|f| {
+                (
+                    f,
+                    input(f.value(&content), f == EntryField::Password, window, cx),
+                )
+            })
+            .collect();
+        let notes = cx.new(|cx| {
+            let mut state = TextareaState::new(window, cx);
+            state.set_value(content.notes.clone(), window, cx);
+            state
+        });
+        let mut subscriptions = vec![
+            cx.observe(&editor, |_, _, cx| cx.notify()),
+            cx.observe(&store, |_, _, cx| cx.notify()),
+        ];
+        for (field, input) in &fields {
+            let editor = editor.clone();
+            let field = *field;
+            subscriptions.push(
+                cx.subscribe(input, move |_, input, event: &InputEvent, cx| {
+                    if matches!(event, InputEvent::Change) {
+                        let value = input.read(cx).value().to_string();
+                        editor.update(cx, |editor, cx| {
+                            editor.edit(|content| field.set(content, value));
+                            cx.notify();
+                        });
+                    }
+                }),
+            );
+        }
+        subscriptions.push(cx.subscribe(&notes, {
+            let editor = editor.clone();
+            move |_, input, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    let value = input.read(cx).value().to_string();
+                    editor.update(cx, |editor, cx| {
+                        editor.edit(|content| content.notes = value);
+                        cx.notify();
+                    });
+                }
+            }
+        }));
+        if let Some((_, input)) = fields.first() {
+            input.update(cx, |input, cx| input.focus(window, cx));
+        }
+        Self {
+            store,
+            editor,
+            fields,
+            notes,
+            _subscriptions: subscriptions,
+        }
+    }
+    fn overview(&self, cx: &mut Context<Self>) -> AnyElement {
+        let mut result = v_flex();
+        for (entry_field, input) in &self.fields {
+            let mut control = h_flex().gap_1().child(
+                div().flex_1().min_w_0().child(
+                    field(input, entry_field.key())
+                        .appearance(false)
+                        .when(*entry_field == EntryField::Password, |input| {
+                            input.mask_toggle()
+                        }),
+                ),
+            );
+            if *entry_field == EntryField::Password {
+                control =
+                    control.child(icon_button("generator", "dice-5", "ui.generator").on_click(
+                        cx.listener(|this, _, window, cx| {
+                            super::inspector::open_generator(this.editor.clone(), window, cx)
+                        }),
+                    ));
+            }
+            if *entry_field == EntryField::Url {
+                control = control.child(icon_button("favicon", "download", "ui.favicon").on_click(
+                    cx.listener(|this, _, window, cx| {
+                        forms::image_sample(this.editor.clone(), window, cx)
+                    }),
+                ));
+            }
+            result = result.child(row(entry_field.key(), control, cx));
+        }
+        result
+            .child(row(
+                "notes",
+                Textarea::new(&self.notes)
+                    .aria_label(tr("notes"))
+                    .appearance(false)
+                    .bordered(false)
+                    .h(rems(7.)),
+                cx,
+            ))
+            .into_any_element()
+    }
+    fn advanced(&self, cx: &mut Context<Self>) -> AnyElement {
+        let content = self.editor.read(cx).content();
+        let mut result = v_flex().child(
+            h_flex()
+                .justify_between()
+                .pr_3()
+                .child(section("attributes"))
+                .child(
+                    icon_button("add-attribute", "plus", "add_attribute").on_click(cx.listener(
+                        |this, _, window, cx| {
+                            forms::attribute(this.editor.clone(), None, window, cx)
+                        },
+                    )),
+                ),
+        );
+        for (index, attribute) in content.attributes.iter().enumerate() {
+            let value = if attribute.protected {
+                "••••••••••••".into()
+            } else {
+                attribute.value.clone()
+            };
+            let editor = self.editor.clone();
+            result = result.child(
+                h_flex()
+                    .min_h(rems(2.75))
+                    .px_6()
+                    .gap_3()
+                    .border_b_1()
+                    .border_color(cx.theme().border)
+                    .child(div().w(rems(9.)).truncate().child(attribute.key.clone()))
+                    .child(div().flex_1().min_w_0().truncate().child(value))
+                    .child(
+                        Checkbox::new(("protect", index))
+                            .checked(attribute.protected)
+                            .accessibility_label(tr("protected"))
+                            .tooltip(tr("protected"))
+                            .on_click(move |checked, _, cx| {
+                                editor.update(cx, |editor, cx| {
+                                    editor.edit(|content| {
+                                        if let Some(attribute) = content.attributes.get_mut(index) {
+                                            attribute.protected = *checked;
+                                        }
+                                    });
+                                    cx.notify();
+                                })
+                            }),
+                    )
+                    .child(
+                        icon_button(("edit-attribute", index), "pencil", "ui.edit_attribute")
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                forms::attribute(this.editor.clone(), Some(index), window, cx)
+                            })),
+                    )
+                    .child(
+                        icon_button(("remove-attribute", index), "x", "remove").on_click(
+                            cx.listener(move |this, _, _, cx| {
+                                this.editor.update(cx, |editor, cx| {
+                                    editor.edit(|content| {
+                                        content.attributes.remove(index);
+                                    });
+                                    cx.notify();
+                                })
+                            }),
+                        ),
+                    ),
+            );
+        }
+        result = result.child(
+            h_flex()
+                .justify_between()
+                .pr_3()
+                .child(section("ui.attachments"))
+                .child(
+                    icon_button("add-attachment", "file-plus-2", "ui.add_attachment").on_click(
+                        cx.listener(|this, _, window, cx| {
+                            forms::attachment(this.editor.clone(), None, window, cx)
+                        }),
+                    ),
+                ),
+        );
+        for (index, attachment) in content.attachments.iter().enumerate() {
+            result = result.child(
+                h_flex()
+                    .min_h(rems(2.75))
+                    .px_6()
+                    .gap_3()
+                    .border_b_1()
+                    .border_color(cx.theme().border)
+                    .child(icon("file"))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .child(attachment.name.clone()),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .child(format!("{} KiB", attachment.bytes / 1024)),
+                    )
+                    .child(
+                        icon_button(
+                            ("rename-attachment", index),
+                            "pencil",
+                            "ui.rename_attachment",
+                        )
+                        .on_click(cx.listener(
+                            move |this, _, window, cx| {
+                                forms::attachment(this.editor.clone(), Some(index), window, cx)
+                            },
+                        )),
+                    )
+                    .child(
+                        icon_button(("remove-attachment", index), "x", "remove").on_click(
+                            cx.listener(move |this, _, _, cx| {
+                                this.editor.update(cx, |editor, cx| {
+                                    editor.edit(|content| {
+                                        content.attachments.remove(index);
+                                    });
+                                    cx.notify();
+                                })
+                            }),
+                        ),
+                    ),
+            );
+        }
+        result
+            .child(
+                div()
+                    .p_6()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(tr("ui.demo_attachments")),
+            )
+            .into_any_element()
+    }
+    fn appearance(&self, cx: &mut Context<Self>) -> AnyElement {
+        let content = self.editor.read(cx).content();
+        v_flex()
+            .child(row(
+                "ui.icon",
+                h_flex()
+                    .gap_3()
+                    .child(icon(&content.icon))
+                    .child(
+                        Button::new("choose-icon")
+                            .label(tr("ui.choose_icon"))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                super::icons::choose(
+                                    this.editor.read(cx).content().icon.clone(),
+                                    {
+                                        let editor = this.editor.clone();
+                                        move |name, cx| {
+                                            editor.update(cx, |editor, cx| {
+                                                editor.edit(|content| content.icon = name.into());
+                                                cx.notify();
+                                            })
+                                        }
+                                    },
+                                    window,
+                                    cx,
+                                )
+                            })),
+                    )
+                    .child(
+                        Button::new("image-url")
+                            .ghost()
+                            .label(tr("ui.image_url"))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                forms::image_sample(this.editor.clone(), window, cx)
+                            })),
+                    ),
+                cx,
+            ))
+            .child(row(
+                "ui.foreground_color",
+                Button::new("foreground")
+                    .label(
+                        content
+                            .foreground
+                            .map(|c| format!("#{c:06X}"))
+                            .unwrap_or_else(|| tr("ui.default_color").to_string()),
+                    )
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        forms::color(this.editor.clone(), false, window, cx)
+                    })),
+                cx,
+            ))
+            .child(row(
+                "ui.background_color",
+                Button::new("background")
+                    .label(
+                        content
+                            .background
+                            .map(|c| format!("#{c:06X}"))
+                            .unwrap_or_else(|| tr("ui.default_color").to_string()),
+                    )
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        forms::color(this.editor.clone(), true, window, cx)
+                    })),
+                cx,
+            ))
+            .child(section("ui.preview"))
+            .child(
+                div()
+                    .mx_6()
+                    .p_4()
+                    .rounded_sm()
+                    .bg(content
+                        .background
+                        .map(|c| rgb(c).into())
+                        .unwrap_or(cx.theme().background))
+                    .text_color(
+                        content
+                            .foreground
+                            .map(|c| rgb(c).into())
+                            .unwrap_or(cx.theme().foreground),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_3()
+                            .child(icon(&content.icon))
+                            .child(content.title.clone()),
+                    ),
+            )
+            .into_any_element()
+    }
+}
+impl Render for EditorView {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let content = self.editor.read(cx).content().clone();
+        for (entry_field, input) in &self.fields {
+            let value = entry_field.value(&content);
+            if input.read(cx).value().as_str() != value {
+                input.update(cx, |input, cx| {
+                    input.set_value(value.to_owned(), window, cx)
+                });
+            }
+        }
+        let tab = self.store.read(cx).state().tab;
+        let content = match tab {
+            EntryTab::Overview => self.overview(cx),
+            EntryTab::Advanced => self.advanced(cx),
+            EntryTab::Appearance => self.appearance(cx),
+            EntryTab::Properties | EntryTab::History => div().into_any_element(),
+        };
+        v_flex()
+            .child(content)
+            .when_some(self.editor.read(cx).error(), |el, error| {
+                el.child(
+                    div()
+                        .p_4()
+                        .text_color(cx.theme().danger)
+                        .child(tr(error.key())),
+                )
+            })
+    }
+}

@@ -1,0 +1,56 @@
+model {
+  extend taypeer.mac {
+    ui = component 'Компоненты macOS UI' {
+      #partial
+      technology 'GPUI + GPUI Kit'
+      description 'Обычный запуск: интерактивный UI по макетам. Экраны владеют вводом, фокусом и подписками.'
+      metadata { source 'apps/taypeer/src/macos/ui/mod.rs'; contract 'docs/macos-ui.md' }
+    }
+    workspace = component 'Состояние окна' {
+      #partial
+      description 'Навигация, открытые демобазы, поиск, выбор и отложенные переходы. Координирует команды независимых владельцев состояния.'
+      metadata { source 'apps/taypeer/src/macos/ui/workspace.rs'; contract 'docs/macos-ui.md' }
+    }
+    editor = component 'Черновик UI' {
+      #partial
+      description 'Один черновик вкладок Обзор, Дополнительно и Вид; отмена, подтверждение и временное восстановление после демоблокировки.'
+      metadata { source 'apps/taypeer/src/ui_state/draft.rs'; contract 'docs/macos-ui.md' }
+    }
+    catalog = store 'Демонстрационные данные UI' {
+      #partial
+      description 'Искусственные БД, группы, записи и версии только в памяти. Не вызывает Rust-сервис, криптографию или сеть.'
+      metadata { source 'apps/taypeer/src/ui_state/catalog.rs'; contract 'docs/macos-ui.md' }
+    }
+    preferences = component 'Настройки оформления UI' {
+      #partial
+      description 'Язык, тема, масштаб текста и размеры панелей. Сохраняет существующий несекретный формат настроек.'
+      metadata { source 'apps/taypeer/src/macos/ui/appearance.rs'; contract 'docs/macos-ui.md' }
+    }
+  }
+  taypeer.mac.ui -> taypeer.mac.workspace 'События навигации и представления'
+  taypeer.mac.ui -> taypeer.mac.editor 'Ввод и отображение черновика'
+  taypeer.mac.workspace -> taypeer.mac.catalog 'Запросы и подтверждённые демоправки'
+  taypeer.mac.workspace -> taypeer.mac.editor 'Открыть, подтвердить, отменить или приостановить'
+  taypeer.mac.ui -> taypeer.mac.preferences 'Настройки и подписка на оформление'
+  taypeer.mac.preferences -> taypeer.theme 'Семантические палитры'
+  taypeer.mac.preferences -> taypeer.local 'Только несекретное оформление'
+}
+views 'macOS UI' {
+  view macosUi {
+    title 'Компоненты и состояние macOS UI'
+    description 'Единственный macOS UI на искусственных данных. Интеграция с рабочими БД отложена.'
+    include taypeer.mac.*, taypeer.theme, taypeer.local
+    autoLayout LeftRight
+  }
+  dynamic view uiEdit {
+    title 'Правки в демонстрационном UI'
+    taypeer.mac.ui -> taypeer.mac.workspace 'Открыть запись'
+    taypeer.mac.workspace -> taypeer.mac.catalog 'Прочитать демонстрационную запись'
+    taypeer.mac.workspace -> taypeer.mac.editor 'Создать общий черновик вкладок'
+    taypeer.mac.ui -> taypeer.mac.editor 'Изменить поля'
+    taypeer.mac.ui -> taypeer.mac.workspace 'Подтвердить'
+    taypeer.mac.workspace -> taypeer.mac.editor 'Проверить форму и получить черновик'
+    taypeer.mac.workspace -> taypeer.mac.catalog 'Обновить запись и историю в памяти'
+    taypeer.mac.ui <- taypeer.mac.workspace 'Показать актуальное состояние'
+  }
+}

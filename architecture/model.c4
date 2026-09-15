@@ -20,9 +20,9 @@ model {
 
     mac = app 'Приложение macOS' {
       #partial
-      technology 'Rust; целевой UI: GPUI + GPUI Kit'
+      technology 'Rust + GPUI + GPUI Kit'
       style { color blue; border solid }
-      description 'macOS UI поверх общих Rust-команд: экспериментальные зашифрованные файлы и отдельный demo. Полная v1 и приёмка безопасности остаются впереди.'
+      description 'Компонентный macOS UI на образцах в памяти. Отдельный headless smoke проверяет Rust-сервис; подключение UI к рабочим БД отложено.'
       metadata {
         source 'apps/taypeer/src/main.rs'
         evidence 'spikes/gpui-android/MACOS-2026-09-09.md'
@@ -154,8 +154,8 @@ model {
       #partial
       style { border solid }
       technology 'Rust + API macOS'
-      description 'Системные файловые диалоги и фоновые команды реализованы. Биометрия, ключи устройства и буфер остаются запланированы.'
-      metadata { source 'apps/taypeer/src/macos/client/files.rs'; contract 'docs/architecture.md' }
+      description 'Локальные credentials для runtime и CLI. Системные файловые диалоги, биометрия, буфер и lifecycle нового UI ещё не подключены.'
+      metadata { source 'crates/taypeer-runtime/src/profile.rs'; contract 'docs/architecture.md' }
     }
     androidPlatform = component 'Адаптеры Android' {
       #planned
@@ -204,8 +204,8 @@ model {
   taypeer.secretWorker -> taypeer.document 'Открытый документ и адресные изменения'
   taypeer.secretWorker -> taypeer.crypto 'Ключи чтения и защита кандидатов'
   taypeer.secretWorker -> taypeer.macPlatform 'Авторский credential после проверки пароля'
-  taypeer.mac -> taypeer.sessions 'Команды Rust'
-  taypeer.mac -> taypeer.coordinator 'Общий writer зарегистрированного файла'
+  taypeer.mac -> taypeer.sessions 'Headless smoke; интеграция UI запланирована'
+  taypeer.mac -> taypeer.coordinator 'Запланировано: writer рабочего файла'
   taypeer.android -> taypeer.ffi 'Команды и события'
   taypeer.ffi -> taypeer.sessions 'Сценарии Rust'
   taypeer.sessions -> taypeer.core 'Правила предметной области'
@@ -237,7 +237,7 @@ model {
   taypeer.kdbx -> taypeer.core 'Представимые данные'
   taypeer.kdbx -> files 'Отдельный импорт или экспорт'
   taypeer.iconLoader -> websites 'Запрос по действию пользователя'
-  taypeer.mac -> taypeer.macPlatform 'Платформенные действия'
+  taypeer.mac -> taypeer.macPlatform 'Запланировано: платформенные действия'
   taypeer.android -> taypeer.androidPlatform 'Платформенные действия'
   taypeer.macPlatform -> macos 'API ОС'
   taypeer.androidPlatform -> androidos 'API ОС'
