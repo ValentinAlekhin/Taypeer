@@ -56,23 +56,26 @@ def export(fig, out, cli):
             cli('export', fig, '--node', node['id'], '-o', staging/name)
             with Image.open(staging/name) as check:
                 check.verify()
-        for prefix in ['macos', 'android', 'dialog', 'tabs']:
+        for prefix in ['macos', 'android', 'dialog', 'tabs', 'menus', 'states', 'qa']:
             subset = [n for n in index if n['file'].startswith(prefix)]
             if not subset:
                 continue
             tw, th = (528, 328) if prefix == 'macos' else (195, 422) if prefix == 'android' else (392, 344)
             cols = 4 if prefix == 'android' else 3
-            rows = (len(subset)+cols-1)//cols
-            sheet = Image.new('RGB', (cols*(tw+20)+20, rows*(th+42)+20), '#252525')
-            draw = ImageDraw.Draw(sheet)
-            for i, node in enumerate(subset):
-                with Image.open(staging/node['file']) as original:
-                    im = original.convert('RGB')
-                im.thumbnail((tw, th))
-                x, y = 20+i%cols*(tw+20), 20+i//cols*(th+42)
-                sheet.paste(im, (x, y))
-                draw.text((x, y+th+8), node['name'], fill='#dddddd', font=font)
-            sheet.save(staging/(prefix+'-contact.png'))
+            for start in range(0, len(subset), 12):
+                chunk = subset[start:start+12]
+                rows = (len(chunk)+cols-1)//cols
+                sheet = Image.new('RGB', (cols*(tw+20)+20, rows*(th+42)+20), '#252525')
+                draw = ImageDraw.Draw(sheet)
+                for i, node in enumerate(chunk):
+                    with Image.open(staging/node['file']) as original:
+                        im = original.convert('RGB')
+                    im.thumbnail((tw, th))
+                    x, y = 20+i%cols*(tw+20), 20+i//cols*(th+42)
+                    sheet.paste(im, (x, y))
+                    draw.text((x, y+th+8), node['name'], fill='#dddddd', font=font)
+                suffix = '' if start == 0 else f'-{start//12+1:02}'
+                sheet.save(staging/(prefix+'-contact'+suffix+'.png'))
         write_json(staging/'index.json', index)
         final = out/'previews'
         previous = None

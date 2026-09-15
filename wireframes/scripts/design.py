@@ -61,8 +61,9 @@ def scene(file=None, document_id=None):
 
 
 def input_hash():
-    paths = ['source/compact.js', 'source/checks.js', 'source/snapshot.js',
+    paths = ['source/compact.js', 'source/desktop.js', 'source/checks.js', 'source/snapshot.js',
              'assets/lucide-base.fig', 'assets/lucide-extra.json',
+             'assets/demo-invitation.json',
              'scripts/design.py', 'scripts/verify.py']
     return json_hash({name: file_hash(ROOT / name) for name in paths})
 
@@ -73,7 +74,11 @@ def build():
     base_hash = file_hash(FIG)
     inputs = input_hash()
     icons = json.loads((ROOT / 'assets/lucide-extra.json').read_text())
-    code = 'const EXTRA_ICONS = ' + json.dumps(icons) + ';\n' + (ROOT / 'source/compact.js').read_text()
+    invitation = json.loads((ROOT / 'assets/demo-invitation.json').read_text())
+    code = ('const EXTRA_ICONS = ' + json.dumps(icons) + ';\n'
+            + 'const DEMO_INVITATION = ' + json.dumps(invitation) + ';\n'
+            + (ROOT / 'source/compact.js').read_text() + '\n'
+            + (ROOT / 'source/desktop.js').read_text())
     temporary = BUILD / 'candidate-writing.fig'
     try:
         result = json.loads(run_cli('eval', ROOT / 'assets/lucide-base.fig', '-o', temporary,

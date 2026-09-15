@@ -37,4 +37,42 @@ for(const n of figma.root.findAll(n=>n.name.startsWith('Input / '))){
  if(n.name.endsWith(' / rest')&&n.strokes.length)errors.push(n.name+': resting border');
 }
 if(board('macOS / settings').findAll(n=>n.type==='TEXT'&&n.characters==='Сохранить').length)errors.push('settings: obsolete save action');
+// Safety-relevant visual contracts for the v1 desktop scenarios.
+const required = ['macOS / trash','macOS / pending','macOS / history-compare','macOS / receive',
+ 'macOS / settings-database','macOS / settings-locked','macOS / new-entry',
+ 'Dialog / import-review','Dialog / transfer-report','Dialog / restore-backup','Dialog / migrate',
+ 'Dialog / transfer-control','Dialog / accept-control','Dialog / recover-control',
+ 'States / session','States / exchange','States / conflicts','States / compatibility',
+ 'QA / minimum-1100-720','QA / light-main','QA / light-create','Flow / macOS-v1'];
+for(const name of required)if(!board(name))errors.push('v1: missing '+name);
+const hasText=(b,value)=>b.findAll(n=>n.type==='TEXT'&&n.characters.includes(value)).length>0;
+for(const name of ['Dialog / revoke','Dialog / change-password']) {
+ const b=board(name);
+ if(!hasText(b,'Новый пароль')||!hasText(b,'Повтор пароля'))errors.push(name+': new password and confirmation required');
+}
+const resolver=board('macOS / conflict');
+if(resolver.findAll(n=>n.name.startsWith('Radio / ')).some(n=>n.findAll(c=>c.type==='ELLIPSE'&&c.width===8).length))errors.push('conflicts: implicit initial choice');
+if(!resolver.findAll(n=>n.name==='Button / disabled / Resolve conflict').length)errors.push('conflicts: initial commit must be disabled');
+if(resolver.findAll(n=>n.name==='Icon button / Копировать вариант').length!==2)errors.push('conflicts: both original values need separate copy actions');
+if(!board('Dialog / invite').findAll(n=>n.name==='QR / synthetic invitation').length)errors.push('invitation: QR missing');
+const qr=board('Dialog / invite').findAll(n=>n.name==='QR / synthetic invitation')[0];
+const modules=qr?.children.find(n=>n.type==='VECTOR');
+if(!modules||modules.x<0||modules.y<0||modules.x+modules.width>qr.width||modules.y+modules.height>qr.height)errors.push('invitation: QR modules outside quiet-zone frame');
+if(!hasText(board('Dialog / invite'),'TAYPEER-DEMO-'))errors.push('invitation: synthetic long code missing');
+for(const name of ['macOS / unlock','macOS / receive','macOS / settings-locked']) {
+ if(board(name).findAll(n=>['Sidebar / groups','Table / entries','Entry detail','Editor'].includes(n.name)).length)errors.push(name+': decrypted contents exposed');
+}
+if(!hasText(board('macOS / settings'),'Системная'))errors.push('settings: system theme default missing');
+for(const name of ['macOS / welcome','macOS / settings-locked','macOS / receive']) {
+ if(hasText(board(name),'Синхронизировано')||hasText(board(name),'2,4 МиБ'))errors.push(name+': no active database footer expected');
+}
+const minimum=board('QA / minimum-1100-720');
+if(minimum.width!==1100||minimum.height!==720)errors.push('minimum window: wrong dimensions');
+for(const p of figma.root.children) {
+ const frames=p.children.filter(n=>n.type==='FRAME');
+ for(let i=0;i<frames.length;i++)for(let j=i+1;j<frames.length;j++){
+  const a=frames[i],b=frames[j];
+  if(a.x<b.x+b.width&&b.x<a.x+a.width&&a.y<b.y+b.height&&b.y<a.y+a.height)errors.push('overlapping artboards: '+a.name+' / '+b.name);
+ }
+}
 return {overflow,narrow_text:tiny,design_contracts:{errors,measurements}};

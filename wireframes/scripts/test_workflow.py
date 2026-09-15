@@ -55,6 +55,29 @@ class PublishSafety(unittest.TestCase):
 
 
 class ExportSafety(unittest.TestCase):
+    def test_large_sets_export_every_frame_and_paginate_contact_sheets(self):
+        from PIL import Image
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory)
+            fig = out/'input.fig'
+            fig.write_bytes(b'fixture')
+            nodes = [{'id':f'1:{i}', 'name':f'Dialog / example-{i}',
+                      'page':'Dialogs', 'w':80, 'h':60} for i in range(13)]
+
+            def cli(*args, **kwargs):
+                if args[0] == 'eval':
+                    return json.dumps(nodes)
+                Image.new('RGB', (80, 60), '#111111').save(Path(args[-1]))
+                return ''
+
+            result = verify.export(fig, out, cli)
+            self.assertEqual(result['exported'], 13)
+            previews = out/'previews'
+            self.assertTrue((previews/'dialog-contact.png').is_file())
+            self.assertTrue((previews/'dialog-contact-02.png').is_file())
+            self.assertEqual(len(list(previews.glob('dialog-example-*.png'))), 13)
+            self.assertEqual(len(json.loads((previews/'index.json').read_text())), 13)
+
     def test_failed_render_preserves_previous_previews(self):
         with tempfile.TemporaryDirectory() as directory:
             out = Path(directory)
