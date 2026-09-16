@@ -304,3 +304,88 @@ fn masked_metadata_does_not_grant_a_read_only_copy_write_or_management_access() 
     reader.control.invalidate(LockReason::Manual);
     reader.control.wait_closed().unwrap();
 }
+
+#[test]
+fn value_presence_is_available_without_revealing_current_or_historical_secrets() {
+    let directory = tempfile::tempdir().unwrap();
+    let sessions = SessionController::new(SessionPolicy::default());
+    let client = open(
+        &sessions,
+        &directory.path().join("PUBLIC-presence.taypeer"),
+        true,
+    );
+    let group: GroupId = command(
+        &client,
+        Command::SaveGroup {
+            form: group_form(None, "PUBLIC presence"),
+            operation: OperationId::new("PUBLIC presence group"),
+        },
+    );
+    command::<()>(&client, Command::BeginCreate(group));
+    command::<()>(
+        &client,
+        Command::PatchDraft(EntryPatch {
+            title: FieldUpdate::Set("PUBLIC presence".into()),
+            ..Default::default()
+        }),
+    );
+    for (name, value, protected) in [
+        ("PUBLIC empty secret", "", true),
+        ("PUBLIC filled secret", "PUBLIC é 😀", true),
+        ("PUBLIC empty ordinary", "", false),
+        ("PUBLIC whitespace", "  ", false),
+    ] {
+        command::<()>(
+            &client,
+            Command::PatchAttribute {
+                patch: AttributePatch {
+                    id: None,
+                    name: name.into(),
+                    value: FieldUpdate::Set(value.into()),
+                    protected,
+                },
+                remove: false,
+            },
+        );
+    }
+    command::<()>(
+        &client,
+        Command::EditBinary {
+            request: BinaryRequest {
+                target: BinaryTarget::Draft,
+                edit: BinaryEdit::Appearance {
+                    foreground: FieldUpdate::Set(taypeer_core::Color([12, 34, 56, 78])),
+                    background: FieldUpdate::Clear,
+                },
+                review: None,
+            },
+            operation: OperationId::new("PUBLIC translucent color"),
+        },
+    );
+    let entry: EntryId = command(&client, Command::SaveDraft);
+    let current: taypeer_services::EntryView = command(&client, Command::Entry(entry.clone()));
+    let history: Vec<taypeer_services::RevisionSummary> =
+        command(&client, Command::History(entry.clone()));
+    let old: taypeer_services::EntryView = command(
+        &client,
+        Command::Revision {
+            entry,
+            revision: history[0].id.clone(),
+        },
+    );
+    for view in [current, old] {
+        assert!(!view.has_password);
+        assert_eq!(
+            view.appearance.foreground,
+            Some(taypeer_core::Color([12, 34, 56, 78]))
+        );
+        for attribute in &view.attributes {
+            assert_eq!(attribute.has_value, !attribute.name.contains("empty"));
+            if attribute.protected {
+                assert!(attribute.value.is_none());
+            }
+        }
+        let json = serde_json::to_string(&view).unwrap();
+        assert!(!json.contains("PUBLIC é 😀"));
+    }
+}

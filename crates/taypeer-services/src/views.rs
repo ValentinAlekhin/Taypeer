@@ -141,6 +141,8 @@ pub struct PendingDraftSummary {
 /// An attribute in a read-only view; protected values remain absent.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct AttributeView {
+    /// Whether the value is nonempty, including when protected and masked.
+    pub has_value: bool,
     /// Stable attribute identifier.
     pub id: AttributeId,
     /// Attribute label.
@@ -298,6 +300,7 @@ pub(super) fn entry_view(entry: EntrySnapshot) -> EntryView {
             .attributes
             .into_values()
             .map(|attribute| AttributeView {
+                has_value: !attribute.value.value.is_empty(),
                 id: attribute.id,
                 name: attribute.name,
                 value: (!attribute.value.protected).then_some(attribute.value.value),
@@ -306,7 +309,10 @@ pub(super) fn entry_view(entry: EntrySnapshot) -> EntryView {
             .collect(),
         attachments: fields.attachments.into_values().collect(),
         appearance: fields.appearance,
-        has_password: fields.password.is_some(),
+        has_password: fields
+            .password
+            .as_ref()
+            .is_some_and(|value| !value.is_empty()),
         has_conflicts,
         created_at: entry.created_at,
         modified_at: entry.modified_at,
