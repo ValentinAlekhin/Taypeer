@@ -71,10 +71,15 @@ pub(crate) enum Route {
     Welcome,
     Workspace,
     Settings,
+    Devices,
+    Receive,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Destination {
+    Home,
+    Devices,
+    Receive,
     Database(DatabaseId),
     Group(GroupId),
     Entry(DatabaseId, EntryId),

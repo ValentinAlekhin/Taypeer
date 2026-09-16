@@ -26,6 +26,11 @@ model {
       description 'Фоновые команды отдельных процессов БД. Типизированные результаты, поколения сессий и независимое закрытие доступа.'
       metadata { source 'apps/taypeer/src/backend.rs'; contract 'docs/macos-ui.md'; evidence 'crates/taypeer-runtime/src/worker/tests/presentation.rs' }
     }
+    exchange = component 'Состояние синхронизации UI' {
+      #partial
+      description 'Устройства, приглашения, возобновляемое получение БД и раздельные статусы получения и применения. Сетевые задачи не блокируют локальные команды.'
+      metadata { source 'apps/taypeer/src/macos/ui/sync.rs'; contract 'docs/macos-ui.md' }
+    }
     preferences = component 'Настройки оформления UI' {
       #partial
       description 'Язык, тема, масштаб текста и размеры панелей. Сохраняет существующий несекретный формат настроек.'
@@ -39,6 +44,10 @@ model {
   taypeer.mac.workspace -> taypeer.mac.runtime 'Типизированные команды и ответы'
   taypeer.mac.runtime -> taypeer.secretWorker 'Приватный IPC; отдельный процесс для БД'
   taypeer.mac.runtime -> taypeer.sessionGuard 'Активность, наблюдение и блокировка'
+  taypeer.mac.ui -> taypeer.mac.exchange 'Поделиться, получить БД, устройства и обмен'
+  taypeer.mac.exchange -> taypeer.mac.runtime 'Типизированные фоновые сетевые операции'
+  taypeer.mac.runtime -> taypeer.sync 'Сеть и отменяемые попытки; без ключей чтения'
+  taypeer.mac.runtime -> taypeer.coordinator 'Проверенные устройства, запросы и события ciphertext'
   taypeer.mac.ui -> taypeer.mac.preferences 'Настройки и подписка на оформление'
   taypeer.mac.preferences -> taypeer.theme 'Семантические палитры'
   taypeer.mac.preferences -> taypeer.local 'Только несекретное оформление'
@@ -47,7 +56,7 @@ views 'macOS UI' {
   view macosUi {
     title 'Компоненты и состояние macOS UI'
     description 'Подключение компонентов к общему runtime; UI не владеет открытым документом.'
-    include taypeer.mac.*, taypeer.secretWorker, taypeer.sessionGuard, taypeer.theme, taypeer.local
+    include taypeer.mac.*, taypeer.secretWorker, taypeer.sessionGuard, taypeer.theme, taypeer.local, taypeer.sync, taypeer.coordinator
     autoLayout LeftRight
   }
   dynamic view uiEdit {
@@ -62,5 +71,16 @@ views 'macOS UI' {
     taypeer.mac.runtime -> taypeer.secretWorker 'Команды текущего поколения'
     taypeer.mac.workspace -> taypeer.mac.catalog 'Обновить после подтверждения'
     taypeer.mac.ui <- taypeer.mac.workspace 'Показать актуальное состояние'
+  }
+  dynamic view macosJoin {
+    title 'Подключение БД в macOS'
+    taypeer.mac.ui -> taypeer.mac.exchange 'Вставить приглашение и выбрать новый файл'
+    taypeer.mac.exchange -> taypeer.mac.runtime 'Предъявить приглашение; затем продолжать по ID запроса'
+    taypeer.mac.runtime -> taypeer.sync 'Запросить допуск и получить ciphertext'
+    taypeer.sync -> taypeer.coordinator 'Проверить и надёжно сохранить'
+    taypeer.mac.runtime -> taypeer.mac.exchange 'Файл сохранён; БД ещё заблокирована'
+    taypeer.mac.ui -> taypeer.mac.workspace 'Открыть экран мастер-пароля'
+    taypeer.mac.workspace -> taypeer.mac.runtime 'Разблокировать отдельный worker'
+    taypeer.mac.runtime -> taypeer.secretWorker 'Проверить и применить полученные данные'
   }
 }

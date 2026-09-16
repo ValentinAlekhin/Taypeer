@@ -44,7 +44,9 @@ fn main() {
     }
     #[cfg(target_os = "macos")]
     match mode {
-        launch::LaunchMode::Ui => macos::run(),
+        launch::LaunchMode::Ui => {
+            macos::run(launch::profile(&args).expect("validated UI arguments"))
+        }
         launch::LaunchMode::Smoke => unreachable!("smoke mode returned above"),
     }
     #[cfg(not(target_os = "macos"))]

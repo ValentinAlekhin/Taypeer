@@ -156,6 +156,20 @@ impl Render for SessionView {
                                 })),
                         )
                         .child(
+                            Button::new("welcome-receive")
+                                .icon(icon("download"))
+                                .label(tr("sync.receive"))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.store.update(cx, |s, cx| {
+                                        s.navigate(
+                                            crate::ui_state::Destination::Receive,
+                                            window,
+                                            cx,
+                                        )
+                                    })
+                                })),
+                        )
+                        .child(
                             Button::new("welcome-open")
                                 .icon(icon("folder-open"))
                                 .label(tr("ui.open_file"))

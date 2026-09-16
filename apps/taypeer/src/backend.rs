@@ -3,7 +3,7 @@ use serde::de::DeserializeOwned;
 use std::{
     path::{Path, PathBuf},
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
         mpsc,
     },
@@ -51,8 +51,33 @@ pub(crate) struct Connection {
     pub control: WorkerControl,
     send: mpsc::Sender<Work>,
     updates: Arc<AtomicBool>,
+    application: Arc<Mutex<ApplicationStatus>>,
+}
+#[derive(Clone, Copy)]
+pub(crate) enum ApplicationStatus {
+    Applied,
+    Pending(usize),
+    Failed,
+}
+impl ApplicationStatus {
+    fn read(result: Result<serde_json::Value>) -> Self {
+        match decode::<taypeer_services::ApplyReport>(result) {
+            Ok(report) if report.pending.is_empty() => Self::Applied,
+            Ok(report) => Self::Pending(report.pending.len()),
+            Err(_) => Self::Failed,
+        }
+    }
 }
 impl Connection {
+    pub fn application(&self) -> Option<ApplicationStatus> {
+        self.control.is_open().then(|| {
+            self.application
+                .lock()
+                .map(|s| *s)
+                .unwrap_or(ApplicationStatus::Failed)
+        })
+    }
+
     /// Consume a nonsecret notification that the worker applied incoming changes.
     pub fn take_updates(&self) -> bool {
         self.updates.swap(false, Ordering::AcqRel)
@@ -130,18 +155,57 @@ pub(crate) struct Backend {
     send: mpsc::Sender<HostJob>,
     pub sessions: SessionController,
     pub profile: PathBuf,
+    host: Arc<Mutex<Option<Arc<RuntimeHost>>>>,
+    closed: Arc<AtomicBool>,
 }
 impl Backend {
-    pub fn new() -> Result<Self> {
-        let profile = RuntimeHost::default_profile_path()?;
+    pub fn configure_relay(
+        &self,
+        settings: crate::local_settings::LocalSettings,
+    ) -> Ticket<crate::local_settings::LocalSettings> {
+        let shared = Arc::clone(&self.host);
+        let profile = self.profile.clone();
+        background(move || {
+            let old = crate::local_settings::LocalSettings::load(&profile)?;
+            let next = settings.relay.setting()?;
+            let host = shared.lock().map_err(|_| RuntimeError::Transport)?.clone();
+            let running = host
+                .as_ref()
+                .is_some_and(|host| host.network_address().is_ok());
+            let changed = (|| {
+                if running && let Some(host) = &host {
+                    host.stop_network();
+                    host.start_network(next)?;
+                }
+                settings.save(&profile)?;
+                Ok(settings)
+            })();
+            if changed.is_err()
+                && running
+                && let Some(host) = host
+            {
+                host.stop_network();
+                // A failure to restore connectivity is visible in the subsequent stopped snapshot.
+                let _ = host.start_network(old.relay.setting()?);
+            }
+            changed
+        })
+    }
+    pub fn new(profile: Option<PathBuf>) -> Result<Self> {
+        let profile = profile
+            .map(Ok)
+            .unwrap_or_else(RuntimeHost::default_profile_path)?;
         let policy = SessionSettings::load(&profile)?;
         let sessions = SessionController::new(policy);
         let controller = sessions.clone();
         let directory = profile.clone();
         let (send, receive) = mpsc::channel();
+        let host = Arc::new(Mutex::new(None));
+        let shared_host = Arc::clone(&host);
+        let closed = Arc::new(AtomicBool::new(false));
+        let host_closed = Arc::clone(&closed);
         thread::spawn(move || {
-            // Acquiring a profile/Keychain is deferred until the user's first file operation.
-            let mut host = None;
+            // Acquiring a profile/Keychain is deferred until an explicit file/network operation.
             while let Ok(job) = receive.recv() {
                 match job {
                     HostJob::Open {
@@ -155,23 +219,24 @@ impl Backend {
                             if controller.activity().epoch() != epoch {
                                 return Err(RuntimeError::Closed);
                             }
-                            if host.is_none() {
-                                host = Some(RuntimeHost::with_sessions(
-                                    &directory,
-                                    controller.clone(),
-                                )?);
-                            }
+                            let host =
+                                acquire_host(&shared_host, &directory, &controller, &host_closed)?;
                             let executable =
                                 std::env::current_exe().map_err(|_| RuntimeError::Transport)?;
-                            let mut worker = host
-                                .as_ref()
-                                .ok_or(RuntimeError::Closed)?
-                                .open_configured(&executable, &path, password.to_string(), form)?;
+                            let mut worker = host.open_configured(
+                                &executable,
+                                &path,
+                                password.to_string(),
+                                form,
+                            )?;
                             if controller.activity().epoch() != epoch {
                                 worker.invalidate(taypeer_runtime::session::LockReason::Manual);
                                 return Err(RuntimeError::Closed);
                             }
                             let database = worker.database_id().clone();
+                            let application = Arc::new(Mutex::new(ApplicationStatus::read(
+                                worker.request(&Command::ApplyReceived),
+                            )));
                             let snapshot = Snapshot::read(&mut worker, Query::default())?;
                             let (jobs, pending) = mpsc::channel::<Work>();
                             let updates = Arc::new(AtomicBool::new(false));
@@ -180,8 +245,11 @@ impl Backend {
                                 control: worker.control(),
                                 send: jobs,
                                 updates: Arc::clone(&updates),
+                                application: Arc::clone(&application),
                             };
-                            thread::spawn(move || run_worker(worker, pending, updates));
+                            thread::spawn(move || {
+                                run_worker(worker, pending, updates, application)
+                            });
                             Ok(Opened {
                                 connection,
                                 snapshot,
@@ -198,19 +266,52 @@ impl Backend {
                             if let Some(error) = outcome.error {
                                 return Err(error);
                             }
-                            host.as_ref().ok_or(RuntimeError::Closed)?.close(&database)
+                            let host = shared_host
+                                .lock()
+                                .map_err(|_| RuntimeError::Transport)?
+                                .clone()
+                                .ok_or(RuntimeError::Closed)?;
+                            host.close(&database)
                         });
                         let _ = reply.send(result);
                     }
                 }
             }
             controller.lock_all(taypeer_runtime::session::LockReason::HostExited);
+            if let Ok(mut host) = shared_host.lock()
+                && let Some(host) = host.take()
+            {
+                host.stop_network();
+            }
         });
         Ok(Self {
             send,
             sessions,
             profile,
+            host,
+            closed,
         })
+    }
+    pub fn network<T: Send + 'static>(
+        &self,
+        work: impl FnOnce(&RuntimeHost, &taypeer_runtime::NetworkCancellation) -> Result<T>
+        + Send
+        + 'static,
+    ) -> NetworkTicket<T> {
+        let host = Arc::clone(&self.host);
+        let profile = self.profile.clone();
+        let sessions = self.sessions.clone();
+        let cancellation = taypeer_runtime::NetworkCancellation::default();
+        let task_cancel = cancellation.clone();
+        let closed = Arc::clone(&self.closed);
+        let ticket = background(move || {
+            let host = acquire_host(&host, &profile, &sessions, &closed)?;
+            work(&host, &task_cancel)
+        });
+        NetworkTicket {
+            ticket,
+            cancellation,
+        }
     }
     pub fn open(
         &self,
@@ -238,7 +339,44 @@ impl Backend {
         Ticket(receive, None)
     }
 }
-fn run_worker(mut worker: Worker, jobs: mpsc::Receiver<Work>, updates: Arc<AtomicBool>) {
+fn acquire_host(
+    slot: &Mutex<Option<Arc<RuntimeHost>>>,
+    directory: &Path,
+    sessions: &SessionController,
+    closed: &AtomicBool,
+) -> Result<Arc<RuntimeHost>> {
+    let mut slot = slot.lock().map_err(|_| RuntimeError::Transport)?;
+    if closed.load(Ordering::Acquire) {
+        return Err(RuntimeError::Closed);
+    }
+    if slot.is_none() {
+        *slot = Some(Arc::new(RuntimeHost::with_sessions(
+            directory,
+            sessions.clone(),
+        )?));
+    }
+    slot.as_ref().cloned().ok_or(RuntimeError::Closed)
+}
+pub(crate) struct NetworkTicket<T> {
+    ticket: Ticket<T>,
+    cancellation: taypeer_runtime::NetworkCancellation,
+}
+impl<T> NetworkTicket<T> {
+    pub fn try_take(&self) -> Option<Result<T>> {
+        self.ticket.try_take()
+    }
+}
+impl<T> Drop for NetworkTicket<T> {
+    fn drop(&mut self) {
+        self.cancellation.cancel();
+    }
+}
+fn run_worker(
+    mut worker: Worker,
+    jobs: mpsc::Receiver<Work>,
+    updates: Arc<AtomicBool>,
+    application: Arc<Mutex<ApplicationStatus>>,
+) {
     let mut previous = 0;
     loop {
         match jobs.recv_timeout(std::time::Duration::from_millis(100)) {
@@ -249,6 +387,11 @@ fn run_worker(mut worker: Worker, jobs: mpsc::Receiver<Work>, updates: Arc<Atomi
         let revision = worker.application_revision();
         if revision != previous {
             previous = revision;
+            if let Some(result) = worker.application_progress()
+                && let Ok(mut status) = application.lock()
+            {
+                *status = ApplicationStatus::read(result);
+            }
             updates.store(true, Ordering::Release);
         }
     }
@@ -256,6 +399,7 @@ fn run_worker(mut worker: Worker, jobs: mpsc::Receiver<Work>, updates: Arc<Atomi
 }
 impl Drop for Backend {
     fn drop(&mut self) {
+        self.closed.store(true, Ordering::Release);
         self.sessions
             .lock_all(taypeer_runtime::session::LockReason::HostExited);
     }

@@ -9,6 +9,7 @@ use taypeer_runtime::{RuntimeError, profile::ProfileError};
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct LocalSettings {
+    pub relay: RelayPreference,
     pub device_name: String,
     pub clipboard_seconds: Option<u32>,
     pub recent: Vec<RecentFile>,
@@ -22,6 +23,7 @@ pub(crate) struct RecentFile {
 impl Default for LocalSettings {
     fn default() -> Self {
         Self {
+            relay: RelayPreference::Public,
             device_name: "Mac".into(),
             clipboard_seconds: Some(30),
             recent: Vec::new(),
@@ -49,6 +51,7 @@ impl LocalSettings {
         Ok(value)
     }
     fn validate(&self) -> Result<(), RuntimeError> {
+        self.relay.setting()?;
         if self.device_name.trim().is_empty()
             || self.device_name.len() > 256
             || self.clipboard_seconds.is_some_and(|v| v == 0)
@@ -87,9 +90,59 @@ impl LocalSettings {
     }
 }
 
+/// Product relay options exclude test-only certificate overrides and forced transports.
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "mode",
+    content = "url",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
+pub(crate) enum RelayPreference {
+    #[default]
+    Public,
+    Disabled,
+    Custom(String),
+}
+impl RelayPreference {
+    pub fn setting(&self) -> Result<taypeer_sync::RelaySetting, RuntimeError> {
+        Ok(match self {
+            Self::Public => taypeer_sync::RelaySetting::Default,
+            Self::Disabled => taypeer_sync::RelaySetting::Disabled,
+            Self::Custom(value) => {
+                if !value.starts_with("https://") || value.len() > 2048 {
+                    return Err(ProfileError::Invalid.into());
+                }
+                taypeer_sync::RelaySetting::Custom(
+                    value.parse().map_err(|_| ProfileError::Invalid)?,
+                )
+            }
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn legacy_settings_default_to_public_relay_and_custom_choice_survives_restart() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(
+            directory.path().join("device-ui.json"),
+            br#"{"device_name":"PUBLIC old Mac","clipboard_seconds":17,"recent":[]}"#,
+        )
+        .unwrap();
+        let mut settings = LocalSettings::load(directory.path()).unwrap();
+        assert!(settings.relay == RelayPreference::Public);
+        settings.relay = RelayPreference::Custom("https://relay.example.test".into());
+        settings.save(directory.path()).unwrap();
+        let restored = LocalSettings::load(directory.path()).unwrap();
+        assert!(restored.relay == settings.relay);
+        assert_eq!(restored.device_name, "PUBLIC old Mac");
+        settings.relay = RelayPreference::Custom("http://relay.example.test".into());
+        assert!(settings.save(directory.path()).is_err());
+        assert!(LocalSettings::load(directory.path()).unwrap().relay == restored.relay);
+    }
     #[test]
     fn settings_and_recent_paths_survive_restart_without_credentials() {
         let directory = tempfile::tempdir().unwrap();

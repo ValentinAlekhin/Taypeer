@@ -1,4 +1,5 @@
 //! Window navigation and acceptance of generation-scoped background results.
+mod sync;
 use super::style::tr;
 use crate::{
     backend::{Backend, Connection, Query, Ticket},
@@ -13,6 +14,7 @@ use taypeer_runtime::{Command, RuntimeError, session::LockReason};
 type Pending =
     Box<dyn FnMut(&mut WorkspaceStore, &mut Window, &mut Context<WorkspaceStore>) -> bool>;
 pub(super) struct WorkspaceStore {
+    sync: SyncStore,
     state: NavigationState,
     catalog: Entity<CatalogStore>,
     editor: Option<Entity<EditorStore>>,
@@ -36,7 +38,7 @@ pub(super) struct WorkspaceStore {
 }
 impl WorkspaceStore {
     pub fn new(catalog: Entity<CatalogStore>, cx: &mut Context<Self>) -> Self {
-        let backend = Backend::new();
+        let backend = Backend::new(cx.global::<crate::macos::LaunchProfile>().0.clone());
         let notice = if let Some(platform) = cx.try_global::<crate::macos::platform::Platform>() {
             if let Ok(backend) = &backend {
                 platform.attach(backend.sessions.clone());
@@ -46,6 +48,7 @@ impl WorkspaceStore {
             Some("ui.platform_unavailable")
         };
         let mut result = Self {
+            sync: SyncStore::default(),
             state: Default::default(),
             catalog: catalog.clone(),
             editor: None,
@@ -324,6 +327,14 @@ impl WorkspaceStore {
         cx.notify();
     }
     pub fn poll(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(backend) = &self.backend
+            && self.sync.poll(backend, &self.local.relay)
+        {
+            cx.notify();
+        }
+        if let Some(path) = self.sync.take_received() {
+            self.select_path(path, window, cx);
+        }
         if self.quit_requested && !self.busy() && self.state.pending.is_none() {
             self.quit_requested = false;
             self.navigate(Destination::Quit, window, cx);
@@ -365,6 +376,7 @@ impl WorkspaceStore {
                 }
                 match event.as_str() {
                     "sleep" | "locked" | "platform_closed" => {
+                        self.sync.pause();
                         self.secret_epoch += 1;
                         self.operation += 1;
                         self.opening = false;
@@ -569,6 +581,7 @@ impl WorkspaceStore {
                     this.connections.insert(db.clone(), opened.connection);
                     this.state.unlocked.insert(db.clone());
                     this.state.select_database(db, this.catalog.read(cx));
+                    this.start_sync();
                     this.refresh(cx);
                     done(Ok(()), window, cx);
                 }
@@ -699,7 +712,25 @@ impl WorkspaceStore {
             return;
         }
         self.notice = None;
+        if self.state.route == Route::Receive && destination != Destination::Receive {
+            self.sync.pause();
+        }
         match destination {
+            Destination::Home => {
+                self.state.route = if self.state.database.is_some() {
+                    Route::Workspace
+                } else {
+                    Route::Welcome
+                };
+            }
+            Destination::Devices => {
+                self.state.route = Route::Devices;
+                self.start_sync();
+            }
+            Destination::Receive => {
+                self.state.route = Route::Receive;
+                self.start_sync();
+            }
             Destination::Database(db) => self.state.select_database(db, self.catalog.read(cx)),
             Destination::Group(group) => {
                 self.state.route = Route::Workspace;

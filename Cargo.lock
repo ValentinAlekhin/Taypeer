@@ -6959,6 +6959,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "qrcode"
+version = "0.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d68782463e408eb1e668cf6152704bd856c78c5b6417adaee3203d8f4c1fc9ec"
+
+[[package]]
 name = "quick-error"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8892,6 +8898,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "gpui-kit",
+ "qrcode",
  "rust-i18n 3.1.5",
  "serde",
  "serde_json",
@@ -8899,6 +8906,7 @@ dependencies = [
  "taypeer-runtime",
  "taypeer-services",
  "taypeer-storage",
+ "taypeer-sync",
  "taypeer-trust",
  "tempfile",
  "toml 0.9.12+spec-1.1.0",

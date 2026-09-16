@@ -85,6 +85,9 @@ impl Render for Header {
                                 let create = menu_store.clone();
                                 let lock = menu_store.clone();
                                 let close = menu_store.clone();
+                                let receive = menu_store.clone();
+                                let devices = menu_store.clone();
+                                let share = menu_store.clone();
                                 menu.separator()
                                     .item(PopupMenuItem::new(tr("create_db")).on_click(
                                         move |_, window, cx| {
@@ -124,7 +127,29 @@ impl Render for Header {
                                             }),
                                     )
                                     .separator()
-                                    .item(PopupMenuItem::new(tr("ui.share")).disabled(true))
+                                    .item(PopupMenuItem::new(tr("sync.receive")).on_click(
+                                        move |_, window, cx| {
+                                            receive.update(cx, |s, cx| {
+                                                s.navigate(Destination::Receive, window, cx)
+                                            })
+                                        },
+                                    ))
+                                    .item(
+                                        PopupMenuItem::new(tr("sync.devices"))
+                                            .disabled(selected.is_none())
+                                            .on_click(move |_, window, cx| {
+                                                devices.update(cx, |s, cx| {
+                                                    s.navigate(Destination::Devices, window, cx)
+                                                })
+                                            }),
+                                    )
+                                    .item(
+                                        PopupMenuItem::new(tr("ui.share"))
+                                            .disabled(!state.state().is_unlocked())
+                                            .on_click(move |_, window, cx| {
+                                                super::sync::share(share.clone(), window, cx)
+                                            }),
+                                    )
                             }),
                     )
                     .child(div().absolute().right(px(8.)).top(px(1.)).child(

@@ -1,4 +1,5 @@
 //! Explicit network lifetime, authenticated routes and resumable invitation downloads.
+mod view;
 use crate::{
     RuntimeError, RuntimeHost, Worker,
     cipher_ipc::storage,
@@ -16,6 +17,7 @@ use taypeer_core::DatabaseId;
 use taypeer_storage::{ArchiveCandidate, ArchiveMetadata, ArchiveStore, EncryptedObject};
 use taypeer_sync::{Command, EndpointAddr, ExchangeReport, Node, RelaySetting, Reply};
 use taypeer_trust::{Digest, Invitation, JoinProof, PublicKey};
+pub use view::{DatabaseExchange, DeviceExchange, NetworkCancellation, NetworkSnapshot};
 use zeroize::Zeroizing;
 
 /// Explicitly revealed invitation code. Never Debug/log, argv, history or ordinary status output.
@@ -67,11 +69,13 @@ pub(crate) struct Network {
     node: Arc<Node>,
     pump: tokio::task::JoinHandle<()>,
     progress: Arc<Mutex<BTreeMap<(DatabaseId, PublicKey), PeerProgress>>>,
+    wake: Arc<tokio::sync::Notify>,
 }
 impl RuntimeHost {
     /// Start Iroh for this CLI lifetime. A relay is used only when explicitly selected.
-    pub fn start_network(&mut self, relay: RelaySetting) -> Result<EndpointAddr, RuntimeError> {
-        if let Some(network) = &self.network {
+    pub fn start_network(&self, relay: RelaySetting) -> Result<EndpointAddr, RuntimeError> {
+        let mut slot = self.network.lock().map_err(|_| RuntimeError::Transport)?;
+        if let Some(network) = slot.as_ref() {
             if network.relay != relay {
                 return Err(RuntimeError::Protocol);
             }
@@ -101,11 +105,22 @@ impl RuntimeHost {
         let updates = Arc::clone(&progress);
         let context = Arc::clone(&self.context);
         let endpoint = Arc::clone(&node);
+        let wake = Arc::new(tokio::sync::Notify::new());
+        let triggered = Arc::clone(&wake);
+        let mut events = context.coordinator.subscribe();
         let pump = self.runtime.spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(2));
             let mut saved_routes = BTreeMap::new();
             loop {
-                interval.tick().await;
+                tokio::select! {
+                    _ = interval.tick() => {},
+                    _ = triggered.notified() => {},
+                    event = events.recv() => {
+                        if !matches!(event, Ok(taypeer_sync::CoordinatorEvent::Committed(_))) {
+                            continue;
+                        }
+                    }
+                }
                 let routes = match context.coordinator.routes() {
                     Ok(routes) => routes,
                     Err(_) => break,
@@ -163,47 +178,56 @@ impl RuntimeHost {
             }
         });
         let address = node.address();
-        self.network = Some(Network {
+        *slot = Some(Network {
             relay,
             node,
             pump,
             progress,
+            wake,
         });
         Ok(address)
     }
     /// Stop all network tasks without closing the registered ciphertext files or open workers.
-    pub fn stop_network(&mut self) {
-        if let Some(network) = self.network.take() {
+    pub fn stop_network(&self) {
+        // Serialize lifecycle changes, but never hold this lock for an exchange or disk write.
+        if let Ok(mut slot) = self.network.lock()
+            && let Some(network) = slot.take()
+        {
             network.pump.abort();
             self.runtime.block_on(async {
                 let _ = network.pump.await;
+                network.node.close().await;
             });
-            if let Ok(mut node) = Arc::try_unwrap(network.node) {
-                self.runtime.block_on(node.close());
-            }
         }
+    }
+    fn network_node(&self) -> Result<Arc<Node>, RuntimeError> {
+        self.network
+            .lock()
+            .map_err(|_| RuntimeError::Transport)?
+            .as_ref()
+            .map(|network| Arc::clone(&network.node))
+            .ok_or(RuntimeError::Closed)
     }
     /// Local endpoint routes for an invitation or explicit authenticated peer exchange.
     pub fn network_address(&self) -> Result<EndpointAddr, RuntimeError> {
-        Ok(self
-            .network
-            .as_ref()
-            .ok_or(RuntimeError::Closed)?
-            .node
-            .address())
+        Ok(self.network_node()?.address())
     }
     /// Safe per-peer receipt/error status. Application is reported separately by the worker.
     pub fn network_progress(&self) -> Result<Vec<PeerProgress>, RuntimeError> {
-        Ok(self
+        let progress = self
             .network
+            .lock()
+            .map_err(|_| RuntimeError::Transport)?
             .as_ref()
-            .ok_or(RuntimeError::Closed)?
-            .progress
+            .map(|network| Arc::clone(&network.progress))
+            .ok_or(RuntimeError::Closed)?;
+        let values = progress
             .lock()
             .map_err(|_| RuntimeError::Transport)?
             .values()
             .cloned()
-            .collect())
+            .collect();
+        Ok(values)
     }
     /// Exchange once with an explicitly supplied route. The peer must already be admitted.
     pub fn exchange(
@@ -211,7 +235,7 @@ impl RuntimeHost {
         address: EndpointAddr,
         database: DatabaseId,
     ) -> Result<ExchangeReport, RuntimeError> {
-        let node = &self.network.as_ref().ok_or(RuntimeError::Closed)?.node;
+        let node = self.network_node()?;
         self.runtime
             .block_on(node.exchange(address, database))
             .map_err(sync_error)
@@ -224,6 +248,22 @@ impl RuntimeHost {
         code: InvitationCode,
         destination: &Path,
     ) -> Result<JoinProgress, RuntimeError> {
+        self.join_cancellable(
+            executable,
+            code,
+            destination,
+            &NetworkCancellation::default(),
+        )
+    }
+    /// Present an invitation with cancellation. A persisted request can be resumed after interruption.
+    pub fn join_cancellable(
+        &self,
+        executable: &Path,
+        code: InvitationCode,
+        destination: &Path,
+        cancellation: &NetworkCancellation,
+    ) -> Result<JoinProgress, RuntimeError> {
+        cancellation.check()?;
         if *code.address.id.as_bytes() != *code.invitation.transport.as_bytes() {
             return Err(RuntimeError::Protocol);
         }
@@ -255,18 +295,18 @@ impl RuntimeHost {
         }
         joins.insert(request, pending);
         self.profile().save_state("joins", &joins)?;
-        let node = &self.network.as_ref().ok_or(RuntimeError::Closed)?.node;
+        let node = self.network_node()?;
         let command = Command::Join {
             invitation: Box::new(code.invitation),
             secret: code.secret,
             proof: Box::new(proof),
             address: node.address(),
         };
-        match self
-            .runtime
-            .block_on(node.request(code.address, command))
-            .map_err(sync_error)?
-        {
+        match self.runtime.block_on(cancellation.run(async {
+            node.request(code.address, command)
+                .await
+                .map_err(sync_error)
+        }))? {
             Reply::JoinPending(id) if id == request => Ok(JoinProgress::Pending(id)),
             _ => Err(RuntimeError::Protocol),
         }
@@ -278,24 +318,33 @@ impl RuntimeHost {
     /// Resume approval/download using authenticated recipient identity, including after code expiry.
     /// Each fully fetched object is durably staged and reused after interruption.
     pub fn resume_join(&self, request: Digest) -> Result<JoinProgress, RuntimeError> {
+        self.resume_join_cancellable(request, &NetworkCancellation::default())
+    }
+    /// Resume a download; cancellation keeps completely staged ciphertext for the next attempt.
+    pub fn resume_join_cancellable(
+        &self,
+        request: Digest,
+        cancellation: &NetworkCancellation,
+    ) -> Result<JoinProgress, RuntimeError> {
+        cancellation.check()?;
         let mut joins = self.pending_joins()?;
         let pending = joins.get(&request).ok_or(RuntimeError::Protocol)?.clone();
-        let node = &self.network.as_ref().ok_or(RuntimeError::Closed)?.node;
+        let node = self.network_node()?;
         let command = Command::JoinStatus {
             database: pending.invitation.database.clone(),
             request,
         };
-        let metadata = match self
-            .runtime
-            .block_on(node.request(pending.address.clone(), command))
-            .map_err(sync_error)?
-        {
+        let metadata = match self.runtime.block_on(cancellation.run(async {
+            node.request(pending.address.clone(), command)
+                .await
+                .map_err(sync_error)
+        }))? {
             Reply::JoinPending(id) if id == request => return Ok(JoinProgress::Pending(id)),
             Reply::JoinRejected => return Ok(JoinProgress::Rejected),
             Reply::Joined(metadata) => *metadata,
             _ => return Err(RuntimeError::Protocol),
         };
-        let database = self.download_join(request, &pending, metadata)?;
+        let database = self.download_join(request, &pending, metadata, cancellation)?;
         self.context
             .coordinator
             .remember_route(pending.address)
@@ -313,6 +362,7 @@ impl RuntimeHost {
         request: Digest,
         pending: &PendingJoin,
         metadata: ArchiveMetadata,
+        cancellation: &NetworkCancellation,
     ) -> Result<DatabaseId, RuntimeError> {
         let chain = metadata.verify(pending.invitation.root).map_err(storage)?;
         let sequence = chain
@@ -360,9 +410,10 @@ impl RuntimeHost {
         }
         let directory = self.profile().directory().join(format!("join-{request}"));
         std::fs::create_dir_all(&directory).map_err(|_| RuntimeError::Transport)?;
-        let node = &self.network.as_ref().ok_or(RuntimeError::Closed)?.node;
+        let node = self.network_node()?;
         let mut candidate = ArchiveCandidate::new();
         for descriptor in metadata.manifest.body.objects.values() {
+            cancellation.check()?;
             let path = directory.join(descriptor.digest.to_string());
             let object = if path.try_exists().map_err(|_| RuntimeError::Transport)? {
                 EncryptedObject::receive(
@@ -372,14 +423,15 @@ impl RuntimeHost {
                 )
                 .map_err(storage)?
             } else {
-                let incoming = self
-                    .runtime
-                    .block_on(node.download_object(
+                let incoming = self.runtime.block_on(cancellation.run(async {
+                    node.download_object(
                         pending.address.clone(),
                         pending.invitation.database.clone(),
                         descriptor.clone(),
-                    ))
-                    .map_err(sync_error)?;
+                    )
+                    .await
+                    .map_err(sync_error)
+                }))?;
                 let object = EncryptedObject::receive(
                     incoming.reopen().map_err(|_| RuntimeError::Transport)?,
                     descriptor,
@@ -404,6 +456,7 @@ impl RuntimeHost {
             };
             candidate.insert(object).map_err(storage)?;
         }
+        cancellation.check()?;
         let mut body = metadata.manifest.body;
         body.generation = 0;
         let signed = candidate

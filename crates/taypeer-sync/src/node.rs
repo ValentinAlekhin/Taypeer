@@ -7,7 +7,11 @@ use iroh::{
     endpoint::{Connection, RecvStream, SendStream, presets},
 };
 use serde::{Deserialize, Serialize};
-use std::{io::Read, sync::Arc, time::Duration};
+use std::{
+    io::Read,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 use taypeer_core::DatabaseId;
 use taypeer_storage::ObjectReader;
 use taypeer_trust::{CipherObject, Digest, PublicKey, TransportKey};
@@ -52,11 +56,15 @@ pub struct ExchangeReport {
     pub received: u64,
 }
 
+type ExchangeGates =
+    std::collections::BTreeMap<(DatabaseId, [u8; 32]), Arc<tokio::sync::Mutex<()>>>;
+
 /// One listening endpoint owned by the live CLI host. It contains no author/read key.
 pub struct Node {
     endpoint: Endpoint,
     backend: Arc<dyn Backend>,
-    task: JoinHandle<()>,
+    task: Mutex<Option<JoinHandle<()>>>,
+    exchanges: Mutex<ExchangeGates>,
 }
 impl Node {
     /// Bind the profile's persistent transport identity and start accepting exchanges.
@@ -113,7 +121,8 @@ impl Node {
         Self {
             endpoint,
             backend,
-            task,
+            task: Mutex::new(Some(task)),
+            exchanges: Mutex::new(Default::default()),
         }
     }
     /// Current routes, suitable for an invitation or an admitted peer's address book.
@@ -128,11 +137,13 @@ impl Node {
         Ok(())
     }
     /// Explicit close waits for transport shutdown and terminates outstanding handlers.
-    pub async fn close(&mut self) {
+    pub async fn close(&self) {
         self.endpoint.close().await;
-        self.task.abort();
-        // Cancellation is expected; no backend success is inferred from task termination.
-        let _ = (&mut self.task).await;
+        let task = self.task.lock().ok().and_then(|mut task| task.take());
+        if let Some(task) = task {
+            task.abort();
+            let _ = task.await;
+        }
     }
     async fn connect(&self, address: EndpointAddr) -> Result<Connection, Error> {
         timeout(CONNECT, self.endpoint.connect(address, ALPN))
@@ -154,6 +165,16 @@ impl Node {
         address: EndpointAddr,
         database: DatabaseId,
     ) -> Result<ExchangeReport, Error> {
+        let gate = {
+            let mut gates = self.exchanges.lock().map_err(|_| Error::State)?;
+            gates.retain(|_, gate| Arc::strong_count(gate) > 1);
+            Arc::clone(
+                gates
+                    .entry((database.clone(), *address.id.as_bytes()))
+                    .or_default(),
+            )
+        };
+        let _attempt = gate.lock().await;
         let connection = self.connect(address.clone()).await?;
         let result = self
             .exchange_connected(&connection, address, database)
@@ -236,11 +257,6 @@ impl Node {
         let result = fetch(&connection, database, &descriptor).await;
         connection.close(0_u8.into(), b"complete");
         result
-    }
-}
-impl Drop for Node {
-    fn drop(&mut self) {
-        self.task.abort();
     }
 }
 
@@ -442,3 +458,13 @@ async fn receive_body(recv: &mut RecvStream, length: u64) -> Result<NamedTempFil
 
 #[cfg(test)]
 mod tests;
+
+impl Drop for Node {
+    fn drop(&mut self) {
+        if let Ok(task) = self.task.get_mut()
+            && let Some(task) = task.take()
+        {
+            task.abort();
+        }
+    }
+}

@@ -10,10 +10,14 @@ use assets::ProductAssets;
 use gpui_kit::component::Root;
 use gpui_kit::*;
 
-pub fn run() {
+pub(super) struct LaunchProfile(pub Option<std::path::PathBuf>);
+impl Global for LaunchProfile {}
+
+pub fn run(profile: Option<std::path::PathBuf>) {
     gpui_kit::application()
         .with_assets(ProductAssets)
-        .run(|cx| {
+        .run(move |cx| {
+            cx.set_global(LaunchProfile(profile));
             gpui_kit::init(cx);
             if let Ok(platform) = platform::Platform::start() {
                 cx.set_global(platform);

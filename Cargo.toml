@@ -10,6 +10,7 @@ rust-version = "1.97.1"
 publish = false
 
 [workspace.dependencies]
+qrcode = { version = "=0.14.1", default-features = false }
 taypeer-trust = { path = "crates/taypeer-trust" }
 ed25519-dalek = { version = "=2.2.0", features = ["rand_core", "zeroize"] }
 security-framework = "=3.7.0"

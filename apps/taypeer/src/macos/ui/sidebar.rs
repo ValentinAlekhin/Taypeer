@@ -337,8 +337,11 @@ impl Render for Sidebar {
                             .justify_start()
                             .icon(icon("laptop"))
                             .label(tr("ui.devices"))
-                            .tooltip(tr("ui.next_stage"))
-                            .disabled(true),
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.store.update(cx, |store, cx| {
+                                    store.navigate(Destination::Devices, window, cx)
+                                });
+                            })),
                     ),
             )
     }

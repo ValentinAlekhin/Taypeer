@@ -236,9 +236,75 @@ impl SettingsView {
             .child(section("ui.connection"))
             .child(row(
                 "ui.relay",
-                Button::new("relay")
-                    .disabled(true)
-                    .label(tr("ui.network_unavailable")),
+                h_flex()
+                    .gap_2()
+                    .children(
+                        [
+                            (
+                                "sync.relay_public",
+                                crate::local_settings::RelayPreference::Public,
+                            ),
+                            (
+                                "sync.relay_off",
+                                crate::local_settings::RelayPreference::Disabled,
+                            ),
+                        ]
+                        .into_iter()
+                        .map(|(label, choice)| {
+                            Button::new(label)
+                                .ghost()
+                                .label(tr(label))
+                                .selected(self.store.read(cx).local().relay == choice)
+                                .disabled(
+                                    self.store.read(cx).settings_busy()
+                                        || self.store.read(cx).sync().busy(),
+                                )
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.store
+                                        .update(cx, |s, cx| s.set_relay(choice.clone(), None, cx))
+                                }))
+                        }),
+                    )
+                    .child(
+                        Button::new("custom-relay")
+                            .ghost()
+                            .label(tr("sync.relay_custom"))
+                            .selected(matches!(
+                                self.store.read(cx).local().relay,
+                                crate::local_settings::RelayPreference::Custom(_)
+                            ))
+                            .disabled(
+                                self.store.read(cx).settings_busy()
+                                    || self.store.read(cx).sync().busy(),
+                            )
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                let value = match &this.store.read(cx).local().relay {
+                                    crate::local_settings::RelayPreference::Custom(url) => {
+                                        url.clone()
+                                    }
+                                    _ => String::new(),
+                                };
+                                let store = this.store.clone();
+                                forms::text_form(
+                                    "sync.relay_custom",
+                                    vec![("sync.relay_url", value, false)],
+                                    Box::new(move |values, _, _| {
+                                        let relay = crate::local_settings::RelayPreference::Custom(
+                                            values[0].clone(),
+                                        );
+                                        relay.setting().map_err(FormError::Runtime)?;
+                                        let store = store.clone();
+                                        Ok(Some(Box::new(move |done, _, cx| {
+                                            store.update(cx, |s, cx| {
+                                                s.set_relay(relay, Some(done), cx)
+                                            })
+                                        })))
+                                    }),
+                                    window,
+                                    cx,
+                                );
+                            })),
+                    ),
                 cx,
             ))
             .child(

@@ -8,7 +8,10 @@ mod protocol;
 pub mod session;
 mod worker;
 pub use host::{RegisteredCompatibility, RuntimeHost};
-pub use network::{InvitationCode, JoinProgress, PeerProgress, PendingJoin};
+pub use network::{
+    DatabaseExchange, DeviceExchange, InvitationCode, JoinProgress, NetworkCancellation,
+    NetworkSnapshot, PeerProgress, PendingJoin,
+};
 pub use protocol::{Command, RuntimeError, erase_view};
 pub use worker::run_worker;
 

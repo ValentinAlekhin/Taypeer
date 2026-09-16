@@ -21,7 +21,7 @@ pub struct RuntimeHost {
     _lease: ProfileLease,
     pub(crate) context: Arc<HostContext>,
     pub(crate) runtime: tokio::runtime::Runtime,
-    pub(crate) network: Option<crate::network::Network>,
+    pub(crate) network: Mutex<Option<crate::network::Network>>,
 }
 
 /// Public format and transport-admission state; querying it never unlocks a database.
@@ -169,7 +169,7 @@ impl RuntimeHost {
         Ok(Self {
             sessions,
             _lease: lease,
-            network: None,
+            network: Mutex::new(None),
             context: Arc::new(HostContext {
                 profile,
                 coordinator,

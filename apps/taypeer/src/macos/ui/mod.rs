@@ -16,6 +16,7 @@ mod session;
 mod settings;
 mod sidebar;
 mod style;
+mod sync;
 mod workspace;
 
 use crate::{
@@ -23,7 +24,10 @@ use crate::{
     ui_state::*,
 };
 use appearance::PreferencesStore;
-use gpui_kit::{component::*, *};
+use gpui_kit::{
+    component::{button::ButtonVariants, *},
+    *,
+};
 use style::tr;
 use workspace::WorkspaceStore;
 
@@ -68,6 +72,7 @@ pub(super) struct AppView {
     inspector: Option<Entity<inspector::Inspector>>,
     session: Option<Entity<session::SessionView>>,
     settings: Entity<settings::SettingsView>,
+    sync: Entity<sync::SyncView>,
     focus: FocusHandle,
     layout: Option<((Pixels, u8, bool), Entity<ResizableState>)>,
     editing: bool,
@@ -104,6 +109,7 @@ impl AppView {
         let entries = cx.new(|cx| entries::Entries::new(store.clone(), window, cx));
         let settings = cx
             .new(|cx| settings::SettingsView::new(store.clone(), preferences.clone(), window, cx));
+        let sync = cx.new(|cx| sync::SyncView::new(store.clone(), window, cx));
         let subscriptions = vec![
             cx.observe_in(&store, window, |this, store, window, cx| {
                 let editing = store.read(cx).editor().is_some();
@@ -171,6 +177,7 @@ impl AppView {
             inspector: None,
             session: None,
             settings,
+            sync,
             focus,
             layout: None,
             editing: false,
@@ -187,6 +194,16 @@ impl AppView {
             unlocked && (state.selected.is_some() || self.store.read(cx).editor().is_some());
         if !unlocked {
             self.inspector = None;
+        }
+        if route == Route::Receive || route == Route::Devices {
+            self.session = None;
+            return h_flex()
+                .size_full()
+                .when(route == Route::Devices && unlocked, |el| {
+                    el.child(div().w(px(225.)).child(self.sidebar.clone()))
+                })
+                .child(div().flex_1().min_w_0().child(self.sync.clone()))
+                .into_any_element();
         }
         if route == Route::Settings {
             return self.settings.clone().into_any_element();
@@ -417,8 +434,20 @@ impl Render for AppView {
                     })
                     .when_some(notice, |el, notice| el.child(tr(notice)))
                     .child(div().flex_1())
-                    .when(active, |el| {
-                        el.child(tr("ui.no_sync")).child(style::icon("refresh-cw"))
+                    .when(store.state().database.is_some(), |el| {
+                        el.child(
+                            button::Button::new("sync-status")
+                                .ghost()
+                                .compact()
+                                .label(tr(store
+                                    .sync()
+                                    .database_status(store.state().database.as_ref())))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.store.update(cx, |s, cx| {
+                                        s.navigate(Destination::Devices, window, cx)
+                                    })
+                                })),
+                        )
                     }),
             )
             .children(Root::render_dialog_layer(window, cx))

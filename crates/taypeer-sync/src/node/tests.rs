@@ -179,7 +179,7 @@ async fn forward(relay: Option<RelayUrl>, schema: taypeer_core::SchemaDescriptor
             .contains_key(&f.blob)
     );
     let key = TransportKey::from_seed(&[99; 32]);
-    let mut stranger = test_node(&key, f.coordinators[0].clone(), relay).await;
+    let stranger = test_node(&key, f.coordinators[0].clone(), relay).await;
     assert!(
         stranger
             .request(
@@ -287,12 +287,12 @@ impl Backend for LostReceipt {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_lost_durable_receipt_retries_without_duplicating_ciphertext() {
     let f = fixture();
-    let mut a = test_node(&f.keys[0], f.coordinators[0].clone(), None).await;
+    let a = test_node(&f.keys[0], f.coordinators[0].clone(), None).await;
     let failure = Arc::new(LostReceipt {
         coordinator: f.coordinators[1].clone(),
         fail: AtomicBool::new(true),
     });
-    let mut b = test_node(&f.keys[1], failure, None).await;
+    let b = test_node(&f.keys[1], failure, None).await;
     let result = a.exchange(b.address(), f.database.clone()).await;
     assert!(result.is_err());
     let before = f.coordinators[1].snapshot(&f.database).unwrap();
