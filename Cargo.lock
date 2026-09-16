@@ -8981,21 +8981,18 @@ dependencies = [
 name = "taypeer"
 version = "0.1.0"
 dependencies = [
- "chrono",
  "gpui-kit",
- "qrcode",
  "rust-i18n 3.1.5",
- "serde",
  "serde_json",
- "taypeer-core",
+ "taypeer-database-ui",
+ "taypeer-desktop-platform",
  "taypeer-runtime",
+ "taypeer-runtime-client",
  "taypeer-services",
- "taypeer-storage",
- "taypeer-sync",
- "taypeer-trust",
+ "taypeer-settings-ui",
+ "taypeer-sync-ui",
+ "taypeer-ui",
  "tempfile",
- "toml 0.9.12+spec-1.1.0",
- "zeroize",
 ]
 
 [[package]]
@@ -9030,6 +9027,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "taypeer-database-ui"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "gpui-kit",
+ "qrcode",
+ "serde",
+ "serde_json",
+ "taypeer-core",
+ "taypeer-desktop-platform",
+ "taypeer-runtime",
+ "taypeer-runtime-client",
+ "taypeer-services",
+ "taypeer-settings-ui",
+ "taypeer-sync",
+ "taypeer-sync-ui",
+ "taypeer-trust",
+ "taypeer-ui",
+ "tempfile",
+ "zeroize",
+]
+
+[[package]]
+name = "taypeer-desktop-platform"
+version = "0.1.0"
+dependencies = [
+ "gpui-kit",
+ "serde",
+ "serde_json",
+ "taypeer-runtime",
+ "zeroize",
+]
+
+[[package]]
 name = "taypeer-document"
 version = "0.1.0"
 dependencies = [
@@ -9060,6 +9091,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "taypeer-runtime-client"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "taypeer-core",
+ "taypeer-runtime",
+ "taypeer-services",
+ "taypeer-storage",
+ "taypeer-sync",
+ "taypeer-trust",
+ "zeroize",
+]
+
+[[package]]
 name = "taypeer-services"
 version = "0.1.0"
 dependencies = [
@@ -9079,6 +9125,23 @@ dependencies = [
  "url",
  "usvg 0.46.0",
  "zeroize",
+]
+
+[[package]]
+name = "taypeer-settings-ui"
+version = "0.1.0"
+dependencies = [
+ "gpui-kit",
+ "rust-i18n 3.1.5",
+ "serde",
+ "serde_json",
+ "taypeer-core",
+ "taypeer-runtime",
+ "taypeer-runtime-client",
+ "taypeer-sync",
+ "taypeer-ui",
+ "tempfile",
+ "toml 0.9.12+spec-1.1.0",
 ]
 
 [[package]]
@@ -9114,6 +9177,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "taypeer-sync-ui"
+version = "0.1.0"
+dependencies = [
+ "gpui-kit",
+ "qrcode",
+ "serde_json",
+ "taypeer-core",
+ "taypeer-desktop-platform",
+ "taypeer-runtime",
+ "taypeer-runtime-client",
+ "taypeer-services",
+ "taypeer-settings-ui",
+ "taypeer-sync",
+ "taypeer-trust",
+ "taypeer-ui",
+ "zeroize",
+]
+
+[[package]]
 name = "taypeer-trust"
 version = "0.1.0"
 dependencies = [
@@ -9123,6 +9205,23 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "taypeer-core",
+ "zeroize",
+]
+
+[[package]]
+name = "taypeer-ui"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "gpui-kit",
+ "rust-i18n 3.1.5",
+ "serde",
+ "serde_json",
+ "taypeer-core",
+ "taypeer-desktop-platform",
+ "taypeer-runtime",
+ "taypeer-runtime-client",
+ "toml 0.9.12+spec-1.1.0",
  "zeroize",
 ]
 

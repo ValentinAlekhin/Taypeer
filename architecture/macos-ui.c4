@@ -1,86 +1,107 @@
 model {
-  extend taypeer.mac {
-    ui = component 'Компоненты macOS UI' {
+  extend taypeer.desktop {
+    ui = component 'Desktop-оболочка' {
       #partial
       technology 'GPUI + GPUI Kit'
-      description 'Обычный запуск: интерактивный UI по макетам. Экраны владеют вводом, фокусом и подписками.'
-      metadata { source 'apps/taypeer/src/macos/ui/mod.rs'; contract 'docs/macos-ui.md' }
+      description 'Окно, Root и композиция возможностей; без бизнес-правил. Экраны владеют вводом, фокусом и подписками.'
+      metadata { source 'apps/taypeer/src/desktop/ui/mod.rs'; contract 'docs/macos-ui.md' }
     }
-    workspace = component 'Состояние окна' {
+    workspace = component 'Работа с БД' {
       #partial
       description 'Навигация, открытые файлы БД, поиск, выбор и отложенные переходы. Координирует команды независимых владельцев состояния.'
-      metadata { source 'apps/taypeer/src/macos/ui/workspace.rs'; contract 'docs/macos-ui.md' }
+      metadata { source 'apps/taypeer/crates/taypeer-database-ui/src/ui/workspace.rs'; contract 'docs/macos-ui.md' }
     }
     editor = component 'Черновик UI' {
       #partial
       description 'Ввод трёх вкладок и состояние доставки правок. Подтверждённый черновик принадлежит сервису; открытые копии удаляются при блокировке.'
-      metadata { source 'apps/taypeer/src/ui_state/draft.rs'; contract 'docs/macos-ui.md' }
+      metadata { source 'apps/taypeer/crates/taypeer-database-ui/src/ui_state/draft.rs'; contract 'docs/macos-ui.md' }
     }
     catalog = store 'Загруженные представления UI' {
       #partial
       description 'Каталог путей, маскированные строки и выбранные детали с признаками наличия значений. Не содержит полный документ и секреты закрытых сессий.'
-      metadata { source 'apps/taypeer/src/ui_state/catalog.rs'; contract 'docs/macos-ui.md' }
+      metadata { source 'apps/taypeer/crates/taypeer-database-ui/src/ui_state/catalog.rs'; contract 'docs/macos-ui.md' }
     }
     runtime = component 'Адаптер Rust-команд' {
       #partial
       description 'Фоновые команды отдельных процессов БД. Типизированные результаты, поколения сессий и независимое закрытие доступа.'
-      metadata { source 'apps/taypeer/src/backend.rs'; contract 'docs/macos-ui.md'; evidence 'crates/taypeer-runtime/src/worker/tests/presentation.rs' }
+      metadata { source 'apps/taypeer/crates/taypeer-runtime-client/src/lib.rs'; contract 'docs/macos-ui.md'; evidence 'crates/taypeer-runtime/src/worker/tests/presentation.rs' }
     }
     exchange = component 'Состояние синхронизации UI' {
       #partial
       description 'Устройства, приглашения, возобновляемое получение БД и раздельные статусы получения и применения. Сетевые задачи не блокируют локальные команды.'
-      metadata { source 'apps/taypeer/src/macos/ui/sync.rs'; contract 'docs/macos-ui.md' }
+      metadata { source 'apps/taypeer/crates/taypeer-sync-ui/src/view.rs'; contract 'docs/macos-ui.md' }
     }
-    preferences = component 'Настройки оформления UI' {
+    preferences = component 'Настройки устройства' {
       #partial
-      description 'Язык, тема, масштаб текста и размеры панелей. Сохраняет существующий несекретный формат настроек.'
-      metadata { source 'apps/taypeer/src/macos/ui/appearance.rs'; contract 'docs/macos-ui.md' }
+      description 'Настройки устройства и оформления. Независимый Entity сериализует фоновые записи; сохраняет существующие форматы.'
+      metadata { source 'apps/taypeer/crates/taypeer-settings-ui/src/appearance.rs'; contract 'docs/macos-ui.md' }
     }
+    presentation = component 'Общие элементы приложения' {
+      #partial
+      technology 'GPUI Kit'
+      description 'Тема, локализация, формы и файловые диалоги; не зависят от экранов.'
+      metadata { source 'apps/taypeer/crates/taypeer-ui/src/lib.rs'; contract 'docs/macos-ui.md' }
+    }
+    platform = component 'Desktop capabilities' {
+      #partial
+      description 'Lifecycle, защищённый буфер, пути и платформенное окружение. macOS и явный тестовый адаптер; Linux/Windows отложены.'
+      metadata { source 'apps/taypeer/crates/taypeer-desktop-platform/src/lib.rs'; contract 'docs/macos-ui.md' }
+    }
+
   }
-  taypeer.mac.ui -> taypeer.mac.workspace 'События навигации и представления'
-  taypeer.mac.ui -> taypeer.mac.editor 'Ввод и отображение черновика'
-  taypeer.mac.workspace -> taypeer.mac.catalog 'Обновить представления актуального поколения'
-  taypeer.mac.workspace -> taypeer.mac.editor 'Ввод, подтверждение и отмена'
-  taypeer.mac.workspace -> taypeer.mac.runtime 'Типизированные команды и ответы'
-  taypeer.mac.runtime -> taypeer.secretWorker 'Приватный IPC; отдельный процесс для БД'
-  taypeer.mac.runtime -> taypeer.sessionGuard 'Активность, наблюдение и блокировка'
-  taypeer.mac.ui -> taypeer.mac.exchange 'Поделиться, получить БД, устройства и обмен'
-  taypeer.mac.exchange -> taypeer.mac.runtime 'Типизированные фоновые сетевые операции'
-  taypeer.mac.runtime -> taypeer.sync 'Сеть и отменяемые попытки; без ключей чтения'
-  taypeer.mac.runtime -> taypeer.coordinator 'Проверенные устройства, запросы и события ciphertext'
-  taypeer.mac.ui -> taypeer.mac.preferences 'Настройки и подписка на оформление'
-  taypeer.mac.preferences -> taypeer.theme 'Семантические палитры'
-  taypeer.mac.preferences -> taypeer.local 'Только несекретное оформление'
+  taypeer.desktop.workspace -> taypeer.desktop.presentation 'Компонует общие элементы'
+  taypeer.desktop.exchange -> taypeer.desktop.presentation 'Компонует общие элементы'
+  taypeer.desktop.preferences -> taypeer.desktop.presentation 'Компонует общие элементы'
+  taypeer.desktop.presentation -> taypeer.desktop.platform 'Ввод и системные capabilities'
+  taypeer.desktop.platform -> taypeer.macPlatform 'Текущий адаптер macOS'
+  taypeer.desktop.ui -> taypeer.desktop.workspace 'События навигации и представления'
+  taypeer.desktop.workspace -> taypeer.desktop.exchange 'Команды обмена и событие сохранённого файла'
+  taypeer.desktop.workspace -> taypeer.desktop.preferences 'Настройки устройства через узкий контракт'
+  taypeer.desktop.exchange -> taypeer.desktop.preferences 'Relay и имя устройства; сериализованная запись'
+  taypeer.desktop.workspace -> taypeer.desktop.platform 'Типизированные события отзыва доступа'
+  taypeer.desktop.ui -> taypeer.desktop.platform 'Сборка адаптера и пути профиля'
+  taypeer.desktop.workspace -> taypeer.desktop.catalog 'Обновить представления актуального поколения'
+  taypeer.desktop.workspace -> taypeer.desktop.editor 'Ввод, подтверждение и отмена'
+  taypeer.desktop.workspace -> taypeer.desktop.runtime 'Типизированные команды и ответы'
+  taypeer.desktop.runtime -> taypeer.secretWorker 'Приватный IPC; отдельный процесс для БД'
+  taypeer.desktop.runtime -> taypeer.sessionGuard 'Активность, наблюдение и блокировка'
+  taypeer.desktop.ui -> taypeer.desktop.exchange 'Поделиться, получить БД, устройства и обмен'
+  taypeer.desktop.exchange -> taypeer.desktop.runtime 'Типизированные фоновые сетевые операции'
+  taypeer.desktop.runtime -> taypeer.sync 'Сеть и отменяемые попытки; без ключей чтения'
+  taypeer.desktop.runtime -> taypeer.coordinator 'Проверенные устройства, запросы и события ciphertext'
+  taypeer.desktop.ui -> taypeer.desktop.preferences 'Настройки и подписка на оформление'
+  taypeer.desktop.presentation -> taypeer.theme 'Семантические палитры'
+  taypeer.desktop.preferences -> taypeer.local 'Несекретные настройки устройства и оформления'
 }
 views 'macOS UI' {
   view macosUi {
     title 'Компоненты и состояние macOS UI'
     description 'Подключение компонентов к общему runtime; UI не владеет открытым документом.'
-    include taypeer.mac.*, taypeer.secretWorker, taypeer.sessionGuard, taypeer.theme, taypeer.local, taypeer.sync, taypeer.coordinator
+    include taypeer.desktop.*, taypeer.secretWorker, taypeer.sessionGuard, taypeer.theme, taypeer.local, taypeer.sync, taypeer.coordinator
     autoLayout LeftRight
   }
   dynamic view uiEdit {
     title 'Подтверждение правок macOS UI'
-    taypeer.mac.ui -> taypeer.mac.workspace 'Открыть запись'
-    taypeer.mac.workspace -> taypeer.mac.runtime 'Начать сервисный черновик'
-    taypeer.mac.workspace -> taypeer.mac.editor 'Создать общий черновик вкладок'
-    taypeer.mac.ui -> taypeer.mac.editor 'Изменить поля'
-    taypeer.mac.ui -> taypeer.mac.workspace 'Подтвердить'
-    taypeer.mac.workspace -> taypeer.mac.editor 'Дождаться доставки ввода и заморозить редактор'
-    taypeer.mac.workspace -> taypeer.mac.runtime 'Доставить ввод и подтвердить надёжное сохранение'
-    taypeer.mac.runtime -> taypeer.secretWorker 'Команды текущего поколения'
-    taypeer.mac.workspace -> taypeer.mac.catalog 'Обновить после подтверждения'
-    taypeer.mac.ui <- taypeer.mac.workspace 'Показать актуальное состояние'
+    taypeer.desktop.ui -> taypeer.desktop.workspace 'Открыть запись'
+    taypeer.desktop.workspace -> taypeer.desktop.runtime 'Начать сервисный черновик'
+    taypeer.desktop.workspace -> taypeer.desktop.editor 'Создать общий черновик вкладок'
+    taypeer.desktop.ui -> taypeer.desktop.editor 'Изменить поля'
+    taypeer.desktop.ui -> taypeer.desktop.workspace 'Подтвердить'
+    taypeer.desktop.workspace -> taypeer.desktop.editor 'Дождаться доставки ввода и заморозить редактор'
+    taypeer.desktop.workspace -> taypeer.desktop.runtime 'Доставить ввод и подтвердить надёжное сохранение'
+    taypeer.desktop.runtime -> taypeer.secretWorker 'Команды текущего поколения'
+    taypeer.desktop.workspace -> taypeer.desktop.catalog 'Обновить после подтверждения'
+    taypeer.desktop.ui <- taypeer.desktop.workspace 'Показать актуальное состояние'
   }
   dynamic view macosJoin {
     title 'Подключение БД в macOS'
-    taypeer.mac.ui -> taypeer.mac.exchange 'Вставить приглашение и выбрать новый файл'
-    taypeer.mac.exchange -> taypeer.mac.runtime 'Предъявить приглашение; затем продолжать по ID запроса'
-    taypeer.mac.runtime -> taypeer.sync 'Запросить допуск и получить ciphertext'
+    taypeer.desktop.ui -> taypeer.desktop.exchange 'Вставить приглашение и выбрать новый файл'
+    taypeer.desktop.exchange -> taypeer.desktop.runtime 'Предъявить приглашение; затем продолжать по ID запроса'
+    taypeer.desktop.runtime -> taypeer.sync 'Запросить допуск и получить ciphertext'
     taypeer.sync -> taypeer.coordinator 'Проверить и надёжно сохранить'
-    taypeer.mac.runtime -> taypeer.mac.exchange 'Файл сохранён; БД ещё заблокирована'
-    taypeer.mac.ui -> taypeer.mac.workspace 'Открыть экран мастер-пароля'
-    taypeer.mac.workspace -> taypeer.mac.runtime 'Разблокировать отдельный worker'
-    taypeer.mac.runtime -> taypeer.secretWorker 'Проверить и применить полученные данные'
+    taypeer.desktop.runtime -> taypeer.desktop.exchange 'Файл сохранён; БД ещё заблокирована'
+    taypeer.desktop.ui -> taypeer.desktop.workspace 'Открыть экран мастер-пароля'
+    taypeer.desktop.workspace -> taypeer.desktop.runtime 'Разблокировать отдельный worker'
+    taypeer.desktop.runtime -> taypeer.secretWorker 'Проверить и применить полученные данные'
   }
 }

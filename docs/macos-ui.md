@@ -1,4 +1,4 @@
-# macOS UI и Rust runtime
+# Desktop UI и Rust runtime
 
 Обычный запуск открывает UI по [макетам](../wireframes/README.md) на GPUI Kit.
 Файловые операции выполняются общими Rust-сервисами через отдельный процесс для
@@ -6,22 +6,53 @@
 Футер автоматически выбирает единицу размера файла от байтов до ЭБ (шаг 1000,
 как в macOS), показывает до одного десятичного знака и учитывает язык интерфейса.
 
+## Границы crates
+
+Код desktop-приложения остаётся в `apps/taypeer`. Корневой пакет `taypeer`
+собирает окно, единственный `Root`, действия и владельцев возможностей.
+Зависимости локальных crates объявлены через workspace; feature-crates не импортируют
+оболочку. GPUI Kit закреплён прежним полным `rev`.
+
+| Crate | Публичная граница |
+| --- | --- |
+| `taypeer-database-ui` | Сессии БД, каталог, навигация, поиск, редактор, история и формы |
+| `taypeer-sync-ui` | `SyncState`, представление сети, приглашения и событие `ReceivedDatabase` |
+| `taypeer-settings-ui` | `DeviceSettingsState`, оформление и сериализованное сохранение настроек |
+| `taypeer-runtime-client` | Фоновые команды, `Connection` и `Ticket`; без GPUI |
+| `taypeer-desktop-platform` | Lifecycle, защищённый буфер, путь профиля; приватный macOS helper |
+| `taypeer-ui` | Тема, локализация, assets, формы и файловые диалоги GPUI |
+
+Database передаёт settings собственный слот настроек БД. Settings и sync получают
+узкие `SettingsHost`/`SyncHost` с намерениями пользователя, а не доступ к внутренним
+полям соседнего экрана. Владельцы состояния устройства и сети живут независимо от
+разблокированной БД; получение ciphertext не означает применения после unlock.
+Общая презентация не зависит от feature views. Ошибки форм переводятся через общий
+runtime-client; этот слой не запускает команды из render.
+
 ## Владельцы состояния
 
 | Владелец | Ответственность |
 | --- | --- |
-| [AppView](../apps/taypeer/src/macos/ui/mod.rs) | Композиция окна, время жизни экранов, фокус |
-| [WorkspaceStore](../apps/taypeer/src/macos/ui/workspace.rs) | Открытые файлы, навигация, поиск, приём результатов, Save/Discard/Stay |
-| [Backend](../apps/taypeer/src/backend.rs) | Фоновый `RuntimeHost`, последовательная очередь команд каждого `Worker`, типизированные ответы |
-| [NavigationState](../apps/taypeer/src/ui_state/navigation.rs) | Выбор по стабильным core ID, сортировка, возврат к поиску |
-| [CatalogStore](../apps/taypeer/src/ui_state/catalog.rs) | Маскированные строки и выбранные детали сервиса; без бизнес-команд и полного документа |
-| [EditorStore](../apps/taypeer/src/ui_state/draft.rs) | Ввод трёх вкладок, адресные изменения, доставка команд, ошибки и версия отображения |
+| [AppView](../apps/taypeer/src/desktop/ui/mod.rs) | Композиция окна, время жизни экранов, фокус |
+| [WorkspaceStore](../apps/taypeer/crates/taypeer-database-ui/src/ui/workspace.rs) | Открытые файлы, навигация, поиск, приём результатов, Save/Discard/Stay |
+| [Backend](../apps/taypeer/crates/taypeer-runtime-client/src/lib.rs) | Фоновый `RuntimeHost`, последовательная очередь команд каждого `Worker`, типизированные ответы |
+| [NavigationState](../apps/taypeer/crates/taypeer-database-ui/src/ui_state/navigation.rs) | Выбор по стабильным core ID, сортировка, возврат к поиску |
+| [CatalogStore](../apps/taypeer/crates/taypeer-database-ui/src/ui_state/catalog.rs) | Маскированные строки и выбранные детали сервиса; без бизнес-команд и полного документа |
+| [EditorStore](../apps/taypeer/crates/taypeer-database-ui/src/ui_state/draft.rs) | Ввод трёх вкладок, адресные изменения, доставка команд, ошибки и версия отображения |
 | `DatabaseService` внутри worker | Черновик, правила, версии, права, бинарное содержимое и надёжное сохранение |
-| [PreferencesStore](../apps/taypeer/src/macos/ui/appearance.rs) | Прежний `preferences.toml`: язык, тема, текст, размеры панелей |
-| [LocalSettings](../apps/taypeer/src/local_settings.rs) | Отдельный `device-ui.json`: имя устройства, relay, таймер буфера, последние пути и ID; без секретов |
-| [Platform](../apps/taypeer/src/macos/platform.rs) | Безоконный AppKit helper: события ОС, запись чувствительного буфера и очистка по владению |
+| [PreferencesStore](../apps/taypeer/crates/taypeer-settings-ui/src/appearance.rs) | Прежний `preferences.toml`: язык, тема, текст, размеры панелей |
+| [LocalSettings](../apps/taypeer/crates/taypeer-settings-ui/src/local_settings.rs) | Отдельный `device-ui.json`: имя устройства, relay, таймер буфера, последние пути и ID; без секретов |
+| [Platform](../apps/taypeer/crates/taypeer-desktop-platform/src/macos.rs) | Безоконный AppKit helper: события ОС, запись чувствительного буфера и очистка по владению |
 | `header`, `sidebar`, `entries`, `inspector`, `editor`, `session`, `settings` | Отображение, ввод и подписки по времени жизни экрана |
-| [Формы](../apps/taypeer/src/macos/ui/forms/mod.rs) | Общий ввод и ожидание результата; сценарии файлов, групп, атрибутов и бинарных объектов в отдельных модулях |
+| [Формы](../apps/taypeer/crates/taypeer-database-ui/src/ui/forms/mod.rs) | Общий ввод и ожидание результата; сценарии файлов, групп, атрибутов и бинарных объектов в отдельных модулях |
+
+`DeviceSettingsState` владеет загрузкой и записью device settings; повторные
+отправки блокируются до результата, новые recent files ожидают свою очередь.
+`PreferencesStore` загружает небольшой startup snapshot один раз, затем сохраняет
+изменения в фоне одним writer. Изменения во время записи объединяются в следующий
+snapshot, повреждённый файл не заменяется. Ошибка записи видна в UI.
+Quit hook завершает текущую запись перед последним snapshot в пределах
+штатного grace period GPUI; аварийное завершение не обещает сохранения настроек.
 
 Сторы UI представлены `Entity<T>`. Переносимое состояние не импортирует GPUI.
 LikeC4: `macosUi` и `uiEdit` в [модели](../architecture/macos-ui.c4).
@@ -123,7 +154,7 @@ AppKit helper сообщает о сне и неактивной пользов�
 
 ## Синхронизация и приглашения
 
-[SyncStore](../apps/taypeer/src/ui_state/sync.rs) владеет сетевыми задачами отдельно
+[SyncStore](../apps/taypeer/crates/taypeer-sync-ui/src/model.rs) владеет сетевыми задачами отдельно
 от сессии открытого документа. UI вызывает API общего `RuntimeHost`, а не CLI-процесс.
 После успешного открытия/создания БД или явного входа в подключение запускается
 автоматический обмен. Приветственный экран сам сеть и Keychain не запускает.
@@ -152,7 +183,8 @@ Relay выбирается локально: публичные серверы �
 или прямые соединения без relay. При ошибке изменения возвращается прежняя настройка
 и предпринимается восстановление endpoint. Ошибка восстановления видна как остановленная
 сеть. Изменение не переносится между устройствами.
-`taypeer --profile PATH` позволяет проверять UI с изолированным нативным профилем.
+`taypeer --profile PATH` позволяет проверять UI с изолированным нативным профилем, включая
+его собственный `preferences.toml`.
 
 ## Ограничения и проверка
 
@@ -168,3 +200,35 @@ Touch ID отключён с объяснением. Корзина, отзыв 
 она не закрывает полную проверку безопасности.
 Нативные уведомления/буфер, IME, macOS 15 и Android требуют отдельной приёмки.
 [Общий статус](roadmap.md) и [методика](testing.md) сохраняют эти открытые проверки.
+
+## Жизненный цикл и масштаб
+
+Inspector, SessionView, дерево групп и inputs создаются при построении или
+наблюдаемом переходе состояния, а не в render. Подписки и задачи удерживает их
+владелец. Render читает проекции; пользовательские команды выполняются в обработчиках.
+Секретные inputs удаляются и очищаются при смене записи, поколения или блокировке.
+
+Строки и ячейки таблицы получают ID из database ID, entry ID и ключа колонки;
+группы — из database ID и group ID. Сортировка и вставка не меняют их идентичность.
+Виртуализированная таблица хранит ширины в rem и обновляет геометрию при смене
+базового шрифта. Resizable state пересоздаётся при изменении ширины viewport,
+масштаба или состава панелей. Сохранённые ширины остаются в прежней шкале 16 px.
+
+Тема принадлежит `taypeer-ui::theme`; после проекции вызывается `Theme::sync_base`.
+Обычная геометрия использует rem. Намеренные исключения: геометрия нативного окна
+и traffic lights, измеренные размеры resizable/QR canvas, пиксельный якорь шрифта.
+RGBA полей записи — пользовательские данные; чёрный/белый QR — данные сканируемого
+кода. Они не заменяют семантические цвета интерфейса.
+
+## Будущие Linux и Windows
+
+Общий shell находится в `src/desktop`; текущий GUI по-прежнему включён только
+для macOS. Это подготовка границ, а не готовые порты. Не требуется переносить GPUI
+на Android: Android остаётся отдельным Compose/UniFFI клиентом.
+
+Перед включением каждой desktop-платформы нужны реализация lifecycle и защищённого
+буфера за `taypeer-desktop-platform`, native shortcuts/decorations и profile paths,
+проверка credential store и worker IPC общего runtime, файловой атомарности,
+системных диалогов, fonts, accessibility и упаковки. Неподдержанная capability
+не должна молча разрешать работу с секретами. Общий runtime/storage этим
+рефакторингом не менялись; их переносимость требует отдельной задачи.

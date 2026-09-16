@@ -12,6 +12,23 @@ mod macos {
     use std::path::Path;
     use taypeer::testing::Session;
 
+    fn title_cell(
+        window: &gpui_kit::Window,
+    ) -> Option<gpui_kit::base::test_support::ElementSnapshot> {
+        gpui_kit::base::test_support::snapshots(window).into_iter().find(|e| {
+            e.path().last().is_some_and(|id| matches!(id,
+                gpui_kit::ElementId::Name(name) if name.starts_with("entry-cell-") && name.ends_with("-name")))
+        })
+    }
+
+    fn click_title(app: &mut Session) {
+        app.update(|window, cx| {
+            let cell = title_cell(window).expect("entry title cell");
+            window.click(cell.path().last().unwrap().clone(), cx);
+        });
+        app.pump();
+    }
+
     const PASSWORD: &str = "PUBLIC-UI-password-42";
     fn start(directory: &Path, scenario: &'static str) -> Session {
         Session::new(
@@ -86,10 +103,13 @@ mod macos {
         fill(app, "field-password", "PUBLIC secret");
         click(app, "save-entry");
         app.wait("entry saved", |window, _| {
-            window.try_find("edit-entry").is_some() && window.try_find("entry-cell-0-0").is_some()
+            window.try_find("edit-entry").is_some() && title_cell(window).is_some()
         });
         app.update(|window, _| {
-            assert_eq!(window.find("entry-cell-0-0").label(), Some("PUBLIC entry"))
+            assert_eq!(
+                title_cell(window).expect("entry title cell").label(),
+                Some("PUBLIC entry")
+            )
         });
     }
     fn creation_and_editing_survive_reopening() {
@@ -122,19 +142,15 @@ mod macos {
         });
         click(&mut app, "save-entry");
         app.wait("edited entry saved", |window, _| {
-            window
-                .try_find("entry-cell-0-0")
-                .is_some_and(|e| e.label() == Some("PUBLIC edited"))
+            title_cell(window).is_some_and(|e| e.label() == Some("PUBLIC edited"))
         });
         drop(app);
         let mut reopened = start(directory.path(), "editing");
         open(&mut reopened, &path);
         reopened.wait("reopened saved entry", |window, _| {
-            window
-                .try_find("entry-cell-0-0")
-                .is_some_and(|e| e.label() == Some("PUBLIC edited"))
+            title_cell(window).is_some_and(|e| e.label() == Some("PUBLIC edited"))
         });
-        click(&mut reopened, "entry-cell-0-0");
+        click_title(&mut reopened);
         reopened.wait("saved details", |window, _| {
             window
                 .try_find("read-None-Username")
@@ -207,9 +223,7 @@ mod macos {
         });
         click(&mut app, "save-entry");
         app.wait("restored draft saved", |window, _| {
-            window
-                .try_find("entry-cell-0-0")
-                .is_some_and(|e| e.label() == Some("PUBLIC draft"))
+            title_cell(window).is_some_and(|e| e.label() == Some("PUBLIC draft"))
         });
     }
 
@@ -257,32 +271,24 @@ mod macos {
         assert!(b.worker_controls().is_empty());
         unlock(&mut b);
         b.wait("received entry applied", |window, _| {
-            window
-                .try_find("entry-cell-0-0")
-                .is_some_and(|e| e.label() == Some("PUBLIC entry"))
+            title_cell(window).is_some_and(|e| e.label() == Some("PUBLIC entry"))
         });
         a.update(|window, cx| window.press("escape", cx));
         a.wait("clipboard confirmation cleared", |window, _| {
             window.try_find("notification").is_none()
         });
         a.pump();
-        a.update(|window, cx| window.click(("group", 0usize), cx));
-        a.wait("sender workspace", |window, _| {
-            window.try_find("entry-cell-0-0").is_some()
-        });
+        a.update(|window, cx| { let group = gpui_kit::base::test_support::snapshots(window).into_iter().find(|e| e.path().last().is_some_and(|id| matches!(id, gpui_kit::ElementId::Name(name) if name.starts_with("group-node-")))).expect("database group"); window.click(group.path().last().unwrap().clone(), cx); });
+        a.wait("sender workspace", |window, _| title_cell(window).is_some());
         rename_entry(&mut a, "PUBLIC from A");
         b.wait("A edit observed by B", |window, _| {
             a.pump();
-            window
-                .try_find("entry-cell-0-0")
-                .is_some_and(|e| e.label() == Some("PUBLIC from A"))
+            title_cell(window).is_some_and(|e| e.label() == Some("PUBLIC from A"))
         });
         rename_entry(&mut b, "PUBLIC from B");
         a.wait("B edit observed by A", |window, _| {
             b.pump();
-            window
-                .try_find("entry-cell-0-0")
-                .is_some_and(|e| e.label() == Some("PUBLIC from B"))
+            title_cell(window).is_some_and(|e| e.label() == Some("PUBLIC from B"))
         });
         let controls = b.worker_controls();
         b.system_lock();
@@ -299,17 +305,15 @@ mod macos {
             window.try_find("unlock").is_some() && std::fs::read(&received).unwrap() != before
         });
         assert!(controls.iter().all(|control| !control.is_open()));
-        b.update(|window, _| assert!(window.try_find("entry-cell-0-0").is_none()));
+        b.update(|window, _| assert!(title_cell(window).is_none()));
         unlock(&mut b);
         b.wait("received ciphertext applied on unlock", |window, _| {
-            window
-                .try_find("entry-cell-0-0")
-                .is_some_and(|e| e.label() == Some("PUBLIC while locked"))
+            title_cell(window).is_some_and(|e| e.label() == Some("PUBLIC while locked"))
         });
     }
 
     fn rename_entry(app: &mut Session, title: &str) {
-        click(app, "entry-cell-0-0");
+        click_title(app);
         app.wait("entry details ready", |window, _| {
             window.try_find("read-None-Title").is_some()
         });
@@ -320,9 +324,80 @@ mod macos {
         fill(app, "field-name", title);
         click(app, "save-entry");
         app.wait("local edit persisted", |window, _| {
-            window
-                .try_find("entry-cell-0-0")
-                .is_some_and(|e| e.label() == Some(title))
+            title_cell(window).is_some_and(|e| e.label() == Some(title))
+        });
+    }
+
+    fn zoom_and_edit_preserve_entry_identity() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut app = start(directory.path(), "zoom");
+        create(&mut app, &directory.path().join("PUBLIC.taypeer"));
+        create_entry(&mut app);
+        let identity =
+            app.update(|window, _| title_cell(window).unwrap().path().last().unwrap().clone());
+        rename_entry(&mut app, "PUBLIC renamed");
+        app.update(|window, _| {
+            assert_eq!(title_cell(window).unwrap().path().last(), Some(&identity))
+        });
+        app.update(|window, cx| window.press("cmd-,", cx));
+        app.wait("settings opened", |window, _| {
+            window.try_find("font-size").is_some()
+        });
+        click(&mut app, "font-size");
+        app.update(|window, cx| {
+            window.press("up", cx);
+            window.press("enter", cx);
+        });
+        app.wait("zoom applied", |window, _| {
+            f32::from(window.rem_size()) == 18.
+        });
+        app.wait("zoom persisted", |_, _| {
+            std::fs::read_to_string(directory.path().join("preferences.toml"))
+                .is_ok_and(|text| text.contains("font_size = 18"))
+        });
+        app.update(|window, cx| window.press("escape", cx));
+        app.wait("zoomed workspace", |window, _| title_cell(window).is_some());
+        app.update(|window, cx| {
+            assert_eq!(title_cell(window).unwrap().path().last(), Some(&identity));
+            window.press("cmd-f", cx);
+        });
+        app.pump();
+        app.update(|window, _| assert_eq!(window.find("search").focused(), Some(true)));
+    }
+
+    fn inspector_reveal_can_be_hidden_and_revoked() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut app = start(directory.path(), "inspector-reveal");
+        create(&mut app, &directory.path().join("PUBLIC.taypeer"));
+        create_entry(&mut app);
+        for _ in 0..2 {
+            app.update(|window, cx| window.hover("value-None-Password", cx));
+            app.pump();
+            click(&mut app, "show-None-Password");
+            app.wait("inspector password revealed", |window, _| {
+                window
+                    .try_find("read-None-Password")
+                    .is_some_and(|e| e.label() == Some("PUBLIC secret"))
+            });
+            click(&mut app, "show-None-Password");
+            app.wait("inspector password hidden", |window, _| {
+                window.try_find("read-None-Password").is_none()
+            });
+        }
+        // Revocation between the request and its completion must discard the value.
+        app.update(|window, cx| window.click("show-None-Password", cx));
+        app.system_lock();
+        app.wait("pending inspector reveal revoked", |window, _| {
+            window.try_find("unlock").is_some() && window.try_find("read-None-Password").is_none()
+        });
+        unlock(&mut app);
+        app.wait("unlocked rows loaded", |window, _| {
+            title_cell(window).is_some()
+        });
+        click_title(&mut app);
+        app.wait("reopened inspector stays masked", |window, _| {
+            window.try_find("show-None-Password").is_some()
+                && window.try_find("read-None-Password").is_none()
         });
     }
 
@@ -331,7 +406,15 @@ mod macos {
             .skip(1)
             .filter(|arg| !arg.starts_with("--"))
             .collect();
-        let scenarios: [(&str, fn()); 3] = [
+        let scenarios: [(&str, fn()); 5] = [
+            (
+                "inspector_reveal_can_be_hidden_and_revoked",
+                inspector_reveal_can_be_hidden_and_revoked,
+            ),
+            (
+                "zoom_and_edit_preserve_entry_identity",
+                zoom_and_edit_preserve_entry_identity,
+            ),
             (
                 "creation_and_editing_survive_reopening",
                 creation_and_editing_survive_reopening,

@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/taypeer-core", "crates/taypeer-document", "crates/taypeer-services", "crates/taypeer-storage", "crates/taypeer-runtime", "crates/taypeer-trust", "crates/taypeer-sync", "apps/taypeer", "apps/taypeer-cli"]
+members = ["crates/taypeer-core", "crates/taypeer-document", "crates/taypeer-services", "crates/taypeer-storage", "crates/taypeer-runtime", "crates/taypeer-trust", "crates/taypeer-sync", "apps/taypeer", "apps/taypeer/crates/taypeer-database-ui", "apps/taypeer/crates/taypeer-sync-ui", "apps/taypeer/crates/taypeer-settings-ui", "apps/taypeer/crates/taypeer-runtime-client", "apps/taypeer/crates/taypeer-desktop-platform", "apps/taypeer/crates/taypeer-ui", "apps/taypeer-cli"]
 default-members = ["apps/taypeer"]
 resolver = "3"
 
@@ -10,6 +10,13 @@ rust-version = "1.97.1"
 publish = false
 
 [workspace.dependencies]
+taypeer-database-ui = { path = "apps/taypeer/crates/taypeer-database-ui" }
+taypeer-sync-ui = { path = "apps/taypeer/crates/taypeer-sync-ui" }
+taypeer-settings-ui = { path = "apps/taypeer/crates/taypeer-settings-ui" }
+taypeer-runtime-client = { path = "apps/taypeer/crates/taypeer-runtime-client" }
+taypeer-desktop-platform = { path = "apps/taypeer/crates/taypeer-desktop-platform" }
+taypeer-ui = { path = "apps/taypeer/crates/taypeer-ui" }
+
 qrcode = { version = "=0.14.1", default-features = false }
 taypeer-trust = { path = "crates/taypeer-trust" }
 ed25519-dalek = { version = "=2.2.0", features = ["rand_core", "zeroize"] }

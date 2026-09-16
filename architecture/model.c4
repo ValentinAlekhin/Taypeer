@@ -18,11 +18,11 @@ model {
     description 'Архитектура первой версии. Статусы и evidence относятся к разным видам доказательств.'
     metadata { contract 'spec.md' }
 
-    mac = app 'Приложение macOS' {
+    desktop = app 'Desktop-приложение' {
       #partial
       technology 'Rust + GPUI + GPUI Kit'
       style { color blue; border solid }
-      description 'Компонентный macOS UI подключается к общему runtime через типизированный адаптер и процессы БД. Headless smoke остаётся отдельной проверкой сервиса.'
+      description 'Общий GPUI-клиент; текущая реализация macOS. Подключается к общему runtime через типизированный адаптер и процессы БД. Headless smoke остаётся отдельной проверкой сервиса.'
       metadata {
         source 'apps/taypeer/src/main.rs'
         evidence 'spikes/gpui-android/MACOS-2026-09-09.md'
@@ -155,7 +155,7 @@ model {
       style { border solid }
       technology 'Rust + Swift / AppKit'
       description 'Credentials runtime, файловые диалоги GPUI и безоконный AppKit helper: lifecycle, защищённое копирование целого значения или выделения, подтверждение записи и очистка по владению. Биометрия пока недоступна.'
-      metadata { source 'apps/taypeer/src/macos/platform.rs'; contract 'docs/architecture.md' }
+      metadata { source 'apps/taypeer/crates/taypeer-desktop-platform/src/macos.rs'; contract 'docs/architecture.md' }
     }
     androidPlatform = component 'Адаптеры Android' {
       #planned
@@ -183,7 +183,7 @@ model {
 
   }
 
-  owner -> taypeer.mac 'Работает с БД'
+  owner -> taypeer.desktop 'Работает с БД'
   owner -> taypeer.android 'Работает с БД'
   owner -> taypeer.cli 'Команды и интерактивная сессия'
   taypeer.cli -> taypeer.secretWorker 'Ограниченные команды через приватные каналы'
@@ -193,7 +193,7 @@ model {
   taypeer.sessionGuard -> taypeer.local 'Несекретная настройка таймера'
   taypeer.coordinator -> taypeer.sessionGuard 'Инвалидировать сессию при изменении доверия'
   taypeer.cli -> taypeer.generator 'Явная генерация секрета'
-  taypeer.mac -> taypeer.generator 'Явная генерация секрета'
+  taypeer.desktop -> taypeer.generator 'Явная генерация секрета'
   taypeer.cli -> taypeer.macPlatform 'Защищённое локальное состояние и события ОС'
   taypeer.cli -> taypeer.sync 'Запуск и остановка обмена'
   taypeer.cli -> taypeer.coordinator 'Время жизни зарегистрированных рабочих копий'
@@ -205,8 +205,8 @@ model {
   taypeer.secretWorker -> taypeer.document 'Открытый документ и адресные изменения'
   taypeer.secretWorker -> taypeer.crypto 'Ключи чтения и защита кандидатов'
   taypeer.secretWorker -> taypeer.macPlatform 'Авторский credential после проверки пароля'
-  taypeer.mac -> taypeer.sessions 'Переносимый headless smoke'
-  taypeer.mac -> taypeer.coordinator 'Жизненный цикл рабочих файлов через runtime'
+  taypeer.desktop -> taypeer.sessions 'Переносимый headless smoke'
+  taypeer.desktop -> taypeer.coordinator 'Жизненный цикл рабочих файлов через runtime'
   taypeer.android -> taypeer.ffi 'Команды и события'
   taypeer.ffi -> taypeer.sessions 'Сценарии Rust'
   taypeer.sessions -> taypeer.core 'Правила предметной области'
@@ -238,7 +238,7 @@ model {
   taypeer.kdbx -> taypeer.core 'Представимые данные'
   taypeer.kdbx -> files 'Отдельный импорт или экспорт'
   taypeer.iconLoader -> websites 'Запрос по действию пользователя'
-  taypeer.mac -> taypeer.macPlatform 'Файловые диалоги, буфер и события ОС'
+  taypeer.desktop -> taypeer.macPlatform 'Файловые диалоги, буфер и события ОС'
   taypeer.android -> taypeer.androidPlatform 'Платформенные действия'
   taypeer.macPlatform -> macos 'API ОС'
   taypeer.androidPlatform -> androidos 'API ОС'
@@ -248,7 +248,7 @@ model {
   taypeer.androidPlatform -> taypeer.ffi 'Lifecycle и блокировка'
   taypeer.ffi -> taypeer.sync 'Фоновое получение'
   taypeer.macPlatform -> taypeer.sync 'Фоновое получение'
-  taypeer.mac -> taypeer.theme 'Палитра GPUI Kit'
+  taypeer.desktop -> taypeer.theme 'Палитра GPUI Kit'
   taypeer.android -> taypeer.theme 'Палитра Compose'
   taypeer.theme -> taypeer.local 'Выбор темы устройства'
   taypeer.sync -> peer 'Обмен зашифрованными данными' { technology 'Iroh direct' }

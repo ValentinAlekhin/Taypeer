@@ -1,0 +1,23 @@
+[package]
+name = "taypeer-runtime-client"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[features]
+ui-test-support = ["taypeer-runtime/ui-test-support"]
+
+[dependencies]
+taypeer-storage.workspace = true
+taypeer-core.workspace = true
+taypeer-runtime.workspace = true
+taypeer-services.workspace = true
+taypeer-trust.workspace = true
+taypeer-sync.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+zeroize.workspace = true
+
+[lints]
+workspace = true

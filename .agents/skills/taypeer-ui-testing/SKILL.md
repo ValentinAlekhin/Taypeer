@@ -7,7 +7,7 @@ description: Develop and verify Taypeer macOS UI behavior with readable Rust sce
 
 Use the repository architecture and Rust skills. Read [testing documentation](../../../docs/testing.md)
 for commands, supported configurations and remaining acceptance gaps, then inspect
-[the session](../../../apps/taypeer/src/macos/testing.rs) and
+[the session](../../../apps/taypeer/src/desktop/testing.rs) and
 [scenarios](../../../apps/taypeer/tests/ui.rs).
 
 Before experimenting, state the expected user-visible behavior and durable outcome.

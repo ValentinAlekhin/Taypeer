@@ -1,0 +1,27 @@
+[package]
+name = "taypeer-ui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[features]
+ui-test-support = ["taypeer-desktop-platform/ui-test-support", "taypeer-runtime-client/ui-test-support", "gpui-kit/test-support"]
+
+[dependencies]
+toml.workspace = true
+taypeer-desktop-platform.workspace = true
+taypeer-runtime-client.workspace = true
+taypeer-core.workspace = true
+taypeer-runtime.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+zeroize.workspace = true
+rust-i18n.workspace = true
+chrono.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+gpui-kit.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,25 @@
+[package]
+name = "taypeer-sync-ui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+[features]
+ui-test-support = ["taypeer-ui/ui-test-support", "taypeer-settings-ui/ui-test-support", "gpui-kit/test-support"]
+[dependencies]
+taypeer-services.workspace = true
+taypeer-runtime-client.workspace = true
+taypeer-settings-ui.workspace = true
+taypeer-desktop-platform.workspace = true
+taypeer-ui.workspace = true
+taypeer-core.workspace = true
+taypeer-runtime.workspace = true
+taypeer-trust.workspace = true
+taypeer-sync.workspace = true
+zeroize.workspace = true
+serde_json.workspace = true
+qrcode.workspace = true
+[target.'cfg(target_os = "macos")'.dependencies]
+gpui-kit.workspace = true
+[lints]
+workspace = true

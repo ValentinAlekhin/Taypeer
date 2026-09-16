@@ -90,7 +90,7 @@ description: Write, change, refactor and review maintainable Rust in Taypeer. Re
   TOML. Строковые ключи ресурса, подпись и предметное значение — разные понятия.
   Эталонные литералы в тестах совместимости остаются независимыми от констант кода.
 
-Пример в репозитории — [типы настроек](../../../apps/taypeer/src/preferences/options.rs).
+Пример в репозитории — [типы настроек](../../../apps/taypeer/crates/taypeer-settings-ui/src/preferences/options.rs).
 
 ## Владение и время жизни ресурсов
 

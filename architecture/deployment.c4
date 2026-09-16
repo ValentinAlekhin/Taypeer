@@ -2,7 +2,7 @@ deployment {
   mac = device 'Mac владельца' {
     technology 'macOS 15+; Apple Silicon'
     description 'Локальная dev-сборка подписывается постоянным пользовательским сертификатом для сохранения идентичности доступа к Keychain; не подпись выпуска.'
-    ui = instanceOf taypeer.mac
+    ui = instanceOf taypeer.desktop
     sessions = instanceOf taypeer.sessions
     core = instanceOf taypeer.core
     document = instanceOf taypeer.document
@@ -13,6 +13,14 @@ deployment {
     platform = instanceOf taypeer.macPlatform
     vault = instanceOf taypeer.vault
     local = instanceOf taypeer.local
+  }
+  linux = device 'Linux — после v1' {
+    technology 'Linux; planned'
+    ui = instanceOf taypeer.desktop
+  }
+  windows = device 'Windows — после v1' {
+    technology 'Windows; planned'
+    ui = instanceOf taypeer.desktop
   }
   android = device 'Телефон владельца' {
     technology 'Android 12+; ARM64'
@@ -51,5 +59,14 @@ views 'Развёртывание' {
       android.sync,
       android.vault
     autoLayout TopBottom
+  }
+}
+
+views 'Развёртывание' {
+  deployment view desktopTargets {
+    title 'Общий desktop UI — текущая и будущие платформы'
+    description 'macOS реализован частично; Linux/Windows показывают намерение, не готовые порты.'
+    include mac, linux, windows, mac.ui, linux.ui, windows.ui
+    autoLayout LeftRight
   }
 }

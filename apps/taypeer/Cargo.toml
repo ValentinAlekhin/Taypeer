@@ -1,14 +1,14 @@
 [package]
 name = "taypeer"
 default-run = "taypeer"
-description = "Taypeer macOS client"
+description = "Taypeer desktop shell (macOS adapter)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
 [features]
-ui-test-support = ["gpui-kit/test-support", "taypeer-runtime/ui-test-support"]
+ui-test-support = ["taypeer-database-ui/ui-test-support", "taypeer-sync-ui/ui-test-support", "taypeer-settings-ui/ui-test-support", "taypeer-runtime-client/ui-test-support", "taypeer-desktop-platform/ui-test-support", "taypeer-ui/ui-test-support", "gpui-kit/test-support", "taypeer-runtime/ui-test-support"]
 
 [[bin]]
 name = "taypeer-ui-worker"
@@ -21,25 +21,22 @@ harness = false
 required-features = ["ui-test-support"]
 
 [dependencies]
-taypeer-sync.workspace = true
-qrcode.workspace = true
+taypeer-database-ui.workspace = true
+taypeer-sync-ui.workspace = true
+taypeer-settings-ui.workspace = true
+taypeer-runtime-client.workspace = true
+taypeer-desktop-platform.workspace = true
+taypeer-ui.workspace = true
+
 taypeer-services.workspace = true
-taypeer-core.workspace = true
 taypeer-runtime.workspace = true
-taypeer-trust.workspace = true
-taypeer-storage.workspace = true
-zeroize.workspace = true
-serde.workspace = true
 serde_json.workspace = true
-chrono.workspace = true
 tempfile.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 gpui-kit.workspace = true
 rust-i18n.workspace = true
-serde.workspace = true
 serde_json.workspace = true
-toml.workspace = true
 
 [lints]
 workspace = true

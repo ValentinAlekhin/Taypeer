@@ -4,23 +4,23 @@ views 'Сценарии' {
   dynamic view demoEdit {
     title 'Демонстрационное подтверждение в памяти'
     description 'Headless --smoke-test, без GUI. Только искусственные данные сервиса; этот путь не заменяет надёжное сохранение файла.'
-    taypeer.mac -> taypeer.sessions 'Команда с поколением сессии и черновиком'
+    taypeer.desktop -> taypeer.sessions 'Команда с поколением сессии и черновиком'
     taypeer.sessions -> taypeer.core 'Проверка предметных правил'
     taypeer.sessions -> taypeer.document 'Адресные правки и одна версия от исходных heads'
     taypeer.sessions -> taypeer.demo 'Заменить подготовленное состояние в памяти'
-    taypeer.mac <- taypeer.sessions 'Подтверждено только в памяти; актуальное поколение'
+    taypeer.desktop <- taypeer.sessions 'Подтверждено только в памяти; актуальное поколение'
   }
   dynamic view save {
     title 'Подтверждение записи'
     description 'Планируемая интеграция macOS UI; Android вызывает те же сценарии через UniFFI. При ошибке записи форма остаётся доступной.'
-    taypeer.mac -> taypeer.sessions 'Подтвердить черновик'
+    taypeer.desktop -> taypeer.sessions 'Подтвердить черновик'
     taypeer.sessions -> taypeer.core 'Проверить команду'
     taypeer.sessions -> taypeer.document 'Подготовить изменение'
     taypeer.sessions -> taypeer.crypto 'Зашифровать'
     taypeer.sessions -> taypeer.storage 'Зафиксировать'
     taypeer.storage -> taypeer.vault 'Надёжно сохранить'
     taypeer.sessions <- taypeer.storage 'Запись завершена'
-    taypeer.mac <- taypeer.sessions 'Показать сохранённую версию'
+    taypeer.desktop <- taypeer.sessions 'Показать сохранённую версию'
   }
   dynamic view lock {
     title 'Блокировка с черновиком'
@@ -47,7 +47,7 @@ views 'Сценарии' {
   dynamic view unlockApply {
     title 'Открытие и применение после разблокировки'
     description 'Создание/выбор файла предшествуют этому пути. На Android используется внутренняя рабочая копия. Получение не означает применения.'
-    taypeer.mac -> taypeer.sessions 'Открыть рабочую копию'
+    taypeer.desktop -> taypeer.sessions 'Открыть рабочую копию'
     taypeer.sessions -> taypeer.storage 'Прочитать контейнер и очередь'
     taypeer.sessions -> taypeer.compatibility 'Проверить возможности чтения и записи'
     taypeer.sessions -> taypeer.crypto 'Разблокировать и проверить содержимое'
@@ -55,12 +55,12 @@ views 'Сценарии' {
     taypeer.sessions -> taypeer.document 'Применить допустимые изменения'
     taypeer.document -> taypeer.core 'Получить конфликты и представления'
     taypeer.sessions -> taypeer.storage 'Зафиксировать результат'
-    taypeer.mac <- taypeer.sessions 'Данные, конфликты и ожидающие источники'
+    taypeer.desktop <- taypeer.sessions 'Данные, конфликты и ожидающие источники'
   }
   dynamic view admission {
     title 'Подключение устройства'
     description 'Со стороны управляющего устройства. Приглашение одноразовое; пароль для чтения передаётся отдельно.'
-    taypeer.mac -> taypeer.sessions 'Подтвердить подключение'
+    taypeer.desktop -> taypeer.sessions 'Подтвердить подключение'
     taypeer.sessions -> taypeer.trust 'Проверить приглашение и получателя'
     taypeer.trust -> taypeer.storage 'Надёжно зафиксировать новый допуск'
     taypeer.sync -> taypeer.trust 'Проверить допуск получателя'
@@ -70,7 +70,7 @@ views 'Сценарии' {
   dynamic view trustChange {
     title 'Ротация или отзыв устройства'
     description 'После отзыва требуется новый пароль. Офлайн-пиры узнают переход при следующем обмене; это не удалённое стирание.'
-    taypeer.mac -> taypeer.sessions 'Подтвердить операцию управления'
+    taypeer.desktop -> taypeer.sessions 'Подтвердить операцию управления'
     taypeer.sessions -> taypeer.trust 'Проверить управляющего'
     taypeer.sessions -> taypeer.crypto 'Подготовить новую эпоху'
     taypeer.sessions -> taypeer.trust 'Подготовить переход'
@@ -80,23 +80,23 @@ views 'Сценарии' {
   dynamic view migrate {
     title 'Миграция схемы'
     description 'Явная команда управляющего после разблокировки. Преобразование поздних источников следует контракту совместимости.'
-    taypeer.mac -> taypeer.sessions 'Начать миграцию'
+    taypeer.desktop -> taypeer.sessions 'Начать миграцию'
     taypeer.sessions -> taypeer.evolution 'Подготовить переход'
     taypeer.evolution -> taypeer.trust 'Проверить полномочия'
     taypeer.evolution -> taypeer.document 'Преобразовать представление'
     taypeer.sessions -> taypeer.storage 'Атомарно записать результат и отметки'
-    taypeer.mac <- taypeer.sessions 'Показать завершение'
+    taypeer.desktop <- taypeer.sessions 'Показать завершение'
   }
   dynamic view recover {
     title 'Восстановление выбранных данных'
     description 'Отложенный сценарий. Снимок становится источником новых изменений текущей БД. Восстановление доверенного набора — отдельное действие.'
-    taypeer.mac -> taypeer.sessions 'Подтвердить выбранный снимок'
+    taypeer.desktop -> taypeer.sessions 'Подтвердить выбранный снимок'
     taypeer.sessions -> taypeer.storage 'Прочитать выбранный источник'
     taypeer.sessions -> taypeer.crypto 'Проверить и расшифровать источник'
     taypeer.sessions -> taypeer.evolution 'Подготовить выбранные данные'
     taypeer.evolution -> taypeer.document 'Новые изменения с происхождением'
     taypeer.sessions -> taypeer.storage 'Зафиксировать данные и отметку обработки'
-    taypeer.mac <- taypeer.sessions 'Восстановление завершено'
+    taypeer.desktop <- taypeer.sessions 'Восстановление завершено'
   }
 }
 
@@ -145,11 +145,11 @@ views 'Локальный файл' {
   dynamic view fileSave {
     title 'Подтверждение записи в локальном файле'
     description 'Целевой сценарий подключения UI к сервису; в текущем UI используются только образцы в памяти.'
-    taypeer.mac -> taypeer.sessions 'Передать команду фоновому исполнителю'
+    taypeer.desktop -> taypeer.sessions 'Передать команду фоновому исполнителю'
     taypeer.sessions -> taypeer.document 'Подготовить кандидат с историей'
     taypeer.sessions -> taypeer.crypto 'Зашифровать документ'
     taypeer.sessions -> taypeer.storage 'Сохранить снимок и атомарно заменить файл'
-    taypeer.mac <- taypeer.sessions 'Подтвердить после sync или показать ошибку'
+    taypeer.desktop <- taypeer.sessions 'Подтвердить после sync или показать ошибку'
   }
 }
 

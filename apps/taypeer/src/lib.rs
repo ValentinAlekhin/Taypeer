@@ -1,24 +1,15 @@
 //! Taypeer UI prototype and portable headless service smoke.
 
-mod backend;
+#[cfg(target_os = "macos")]
+use taypeer_runtime_client as backend;
 mod launch;
-mod local_settings;
+#[cfg(all(target_os = "macos", feature = "ui-test-support"))]
+use taypeer_settings_ui::local_settings;
 #[cfg(target_os = "macos")]
-mod macos;
-#[cfg(target_os = "macos")]
-mod preferences;
+mod desktop;
 mod smoke;
 #[cfg(all(target_os = "macos", feature = "ui-test-support"))]
-pub use macos::testing;
-#[cfg(any(target_os = "macos", test))]
-#[cfg_attr(
-    not(target_os = "macos"),
-    allow(
-        dead_code,
-        reason = "UI state is exercised by portable tests; rendering is macOS-only"
-    )
-)]
-mod ui_state;
+pub use desktop::testing;
 #[cfg(target_os = "macos")]
 rust_i18n::i18n!("locales", fallback = "en");
 
@@ -26,7 +17,7 @@ rust_i18n::i18n!("locales", fallback = "en");
 pub fn run() {
     #[cfg(target_os = "macos")]
     if std::env::args().skip(1).eq(["__platform-helper"]) {
-        println!("{}", env!("TAYPEER_PLATFORM_HELPER"));
+        println!("{}", taypeer_desktop_platform::helper_path());
         return;
     }
     if std::env::args().skip(1).eq(["__worker"]) {
@@ -48,7 +39,7 @@ pub fn run() {
     #[cfg(target_os = "macos")]
     match mode {
         launch::LaunchMode::Ui => {
-            macos::run(launch::profile(&args).expect("validated UI arguments"))
+            desktop::run(launch::profile(&args).expect("validated UI arguments"))
         }
         launch::LaunchMode::Smoke => unreachable!("smoke mode returned above"),
     }
