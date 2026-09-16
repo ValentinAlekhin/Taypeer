@@ -99,6 +99,10 @@ impl AppView {
     #[cfg(feature = "ui-test-support")]
     pub(super) fn test_capture_allowed(&self, cx: &App) -> bool {
         !self.editing
+            && self
+                .session
+                .as_ref()
+                .is_none_or(|session| session.read(cx).test_capture_allowed(cx))
             && !self.store.read(cx).sync(cx).has_invitation()
             && !self
                 .inspector

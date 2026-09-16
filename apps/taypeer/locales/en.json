@@ -27,7 +27,7 @@
   "overview": "Overview",
   "attributes": "Attributes",
   "history": "History",
-  "ui.recent_databases": "Recent databases",
+  "ui.recent_databases": "Recent",
   "add_attribute": "Add attribute",
   "remove": "Remove",
   "protected": "Protected",
@@ -280,5 +280,11 @@
   "sync.pending_review": "Some changes need review or additional data",
   "sync.apply_failed": "Changes could not be applied",
   "sync.automatic": "Automatic exchange enabled",
-  "ui.back": "Back"
+  "ui.back": "Back",
+  "ui.welcome_open": "Open database…",
+  "ui.welcome_create": "Create…",
+  "ui.welcome_receive": "Receive database…",
+  "ui.welcome_import": "Import KDBX…",
+  "ui.import_unavailable": "KDBX import is not available yet",
+  "ui.master_password": "Master password"
 }

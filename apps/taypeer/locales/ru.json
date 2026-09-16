@@ -27,7 +27,7 @@
   "overview": "Обзор",
   "attributes": "Атрибуты",
   "history": "История",
-  "ui.recent_databases": "Недавние базы данных",
+  "ui.recent_databases": "Недавние",
   "add_attribute": "Добавить атрибут",
   "remove": "Удалить",
   "protected": "Защищённый",
@@ -280,5 +280,11 @@
   "sync.pending_review": "Часть изменений требует разбора или дополнительных данных",
   "sync.apply_failed": "Не удалось применить изменения",
   "sync.automatic": "Автоматический обмен включён",
-  "ui.back": "Назад"
+  "ui.back": "Назад",
+  "ui.welcome_open": "Открыть базу…",
+  "ui.welcome_create": "Создать…",
+  "ui.welcome_receive": "Получить базу…",
+  "ui.welcome_import": "Импорт KDBX…",
+  "ui.import_unavailable": "Импорт KDBX пока недоступен",
+  "ui.master_password": "Мастер-пароль"
 }

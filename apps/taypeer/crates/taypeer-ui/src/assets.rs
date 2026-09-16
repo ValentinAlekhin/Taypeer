@@ -84,6 +84,12 @@ fn ui_icon(name: &str) -> gpui_kit::Result<Option<std::borrow::Cow<'static, [u8]
         )),
         "laptop" => Some(include_bytes!("../../../../../resources/lucide/laptop.svg")),
         "lock" => Some(include_bytes!("../../../../../resources/lucide/lock.svg")),
+        "lock-keyhole" => Some(include_bytes!(
+            "../../../../../resources/lucide/lock-keyhole.svg"
+        )),
+        "fingerprint" => Some(include_bytes!(
+            "../../../../../resources/lucide/fingerprint.svg"
+        )),
         "mail" => Some(include_bytes!("../../../../../resources/lucide/mail.svg")),
         "server" => Some(include_bytes!("../../../../../resources/lucide/server.svg")),
         "shield" => Some(include_bytes!("../../../../../resources/lucide/shield.svg")),

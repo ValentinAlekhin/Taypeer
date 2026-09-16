@@ -177,6 +177,20 @@ impl Session {
             eprintln!("UI failure diagnostics could not be saved");
         }
     }
+    /// Verify that the screen retains no sensitive input or revealed values.
+    pub fn assert_capture_safe(&mut self) {
+        let view = self.view.clone();
+        self.update(|_, cx| {
+            assert!(
+                view.upgrade()
+                    .expect("AppView")
+                    .read(cx)
+                    .test_capture_allowed(cx),
+                "screen must not retain sensitive input or revealed values"
+            );
+        });
+    }
+
     fn save_png(&mut self) {
         if !self.png {
             return;
@@ -187,14 +201,9 @@ impl Session {
                 self.view
                     .upgrade()
                     .is_some_and(|view| view.read(cx).test_capture_allowed(cx))
-                    && [
-                        "dialog-confirm",
-                        "invitation-code",
-                        "unlock-password",
-                        "field-password",
-                    ]
-                    .iter()
-                    .all(|id| window.try_find(*id).is_none())
+                    && ["dialog-confirm", "invitation-code", "field-password"]
+                        .iter()
+                        .all(|id| window.try_find(*id).is_none())
             })
             .unwrap_or(false);
         if !allowed {

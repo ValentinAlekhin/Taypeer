@@ -2,6 +2,8 @@
 
 Original SVG files from [lucide-icons/lucide](https://github.com/lucide-icons/lucide/tree/c2c28580b3009b8de62224c1fec6f78abb3e37d8/icons),
 revision `c2c28580b3009b8de62224c1fec6f78abb3e37d8`.
+The UI-only `fingerprint.svg` comes from the
+[0.468.0 release](https://github.com/lucide-icons/lucide/blob/0.468.0/icons/fingerprint.svg).
 
 Files are unmodified. Stable Taypeer key `home` maps to upstream `house.svg`;
 `file-key-2` maps to `file-key.svg`; UI action key `trash-2` maps to `trash.svg`.

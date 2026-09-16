@@ -129,6 +129,11 @@ mod macos {
         let settings = LocalSettings::load(&profile).unwrap();
         assert_eq!(settings.recent.len(), 1);
         let id = format!("recent-database-{}", settings.recent[0].database.as_str());
+        std::fs::write(
+            directory.path().join("preferences.toml"),
+            "language = \"ru\"\ntheme = \"dark\"\nfont_size = 16\ngroup_width = 224\nentry_width = 480\n",
+        )
+        .unwrap();
         let mut welcome = start(directory.path(), "recent-databases-welcome");
         welcome.wait("saved recent database shown on welcome", |window, _| {
             window
@@ -137,7 +142,37 @@ mod macos {
                 && window.try_find("welcome-open").is_some()
                 && window.try_find("unlock").is_none()
         });
+        welcome.update(|window, _| {
+            let open = window.find("welcome-open").bounds();
+            let create = window.find("welcome-create").bounds();
+            let recent = window.find(id.clone()).bounds();
+            let receive = window.find("welcome-receive").bounds();
+            assert_eq!(open.origin.y, create.origin.y);
+            assert!(open.origin.x < create.origin.x);
+            assert!(recent.origin.y > open.origin.y + open.size.height);
+            assert!(receive.origin.y > recent.origin.y + recent.size.height);
+            assert!(window.find("welcome-import").visible());
+        });
         drop(welcome);
+        let mut locked = start(directory.path(), "unlock-layout");
+        locked.wait("recent file ready for unlock layout", |window, _| {
+            window.try_find(id.clone()).is_some()
+        });
+        locked.update(|window, cx| window.click(id.clone(), cx));
+        locked.wait("unlock layout shown", |window, _| {
+            window.try_find("unlock-back").is_some()
+        });
+        locked.update(|window, _| {
+            let input = window.find("unlock-password").bounds();
+            let back = window.find("unlock-back").bounds();
+            let unlock = window.find("unlock").bounds();
+            assert_eq!(window.find("unlock-password").focused(), Some(true));
+            assert!(window.find("unlock-touch-id").visible());
+            assert!(back.origin.y > input.origin.y + input.size.height);
+            assert_eq!(back.origin.y, unlock.origin.y);
+            assert!(back.origin.x < unlock.origin.x);
+        });
+        drop(locked);
         let mut reopened = start(directory.path(), "recent-databases");
         reopened.wait("recent database visible after restart", |window, _| {
             window
@@ -160,6 +195,16 @@ mod macos {
             window.try_find("unlock").is_some()
         });
         assert!(reopened.worker_controls().is_empty());
+        fill(&mut reopened, "unlock-password", "PUBLIC discarded input");
+        click(&mut reopened, "unlock-back");
+        reopened.wait("back returns to recent files", |window, _| {
+            window.try_find("welcome-open").is_some()
+        });
+        reopened.update(|window, cx| window.click(id.clone(), cx));
+        reopened.wait("fresh unlock input after back", |window, _| {
+            window.try_find("unlock-password").is_some()
+        });
+        reopened.assert_capture_safe();
         unlock(&mut reopened);
         reopened.wait("recent database opened", |window, _| {
             window.try_find("empty-add-group").is_some()
