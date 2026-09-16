@@ -11,6 +11,7 @@ mod header;
 mod icons;
 mod images;
 mod inspector;
+mod read_value;
 mod session;
 mod settings;
 mod sidebar;
@@ -34,7 +35,8 @@ actions!(
         OpenDatabase,
         CreateDatabase,
         ShowSettings,
-        CloseWindow
+        CloseWindow,
+        Quit
     ]
 );
 pub(super) fn bind(cx: &mut App) {
@@ -45,8 +47,16 @@ pub(super) fn bind(cx: &mut App) {
         KeyBinding::new("cmd-shift-n", CreateDatabase, Some("Taypeer")),
         KeyBinding::new("cmd-,", ShowSettings, Some("Taypeer")),
         KeyBinding::new("cmd-w", CloseWindow, Some("Taypeer")),
-        KeyBinding::new("cmd-q", CloseWindow, Some("Taypeer")),
+        KeyBinding::new("cmd-q", Quit, None),
     ]);
+}
+
+pub(super) fn app_menu(cx: &mut App) {
+    cx.set_menus(vec![Menu {
+        name: "Taypeer".into(),
+        items: vec![MenuItem::action(tr("ui.quit"), Quit)],
+        disabled: false,
+    }]);
 }
 
 pub(super) struct AppView {
@@ -59,6 +69,7 @@ pub(super) struct AppView {
     session: Option<Entity<session::SessionView>>,
     settings: Entity<settings::SettingsView>,
     focus: FocusHandle,
+    layout: Option<((Pixels, u8, bool), Entity<ResizableState>)>,
     editing: bool,
     unlocked: bool,
     _subscriptions: Vec<Subscription>,
@@ -115,6 +126,25 @@ impl AppView {
                     .update(cx, |prefs, cx| prefs.apply(window, cx))
             }),
         ];
+        let quit_store = store.downgrade();
+        let quit_window = window.window_handle();
+        App::on_action(cx, move |_: &Quit, cx| {
+            let store = quit_store.clone();
+            // Global actions run while the dispatching window is borrowed by GPUI.
+            // Re-enter it only after dispatch has returned the window to the app.
+            cx.defer(move |cx| {
+                let result = quit_window.update(cx, |_, window, cx| {
+                    if let Some(store) = store.upgrade() {
+                        forms::request_quit(store, window, cx);
+                    } else {
+                        cx.quit();
+                    }
+                });
+                if result.is_err() && cx.windows().is_empty() {
+                    cx.quit();
+                }
+            });
+        });
         let weak = store.downgrade();
         window.on_window_should_close(cx, move |window, cx| {
             if window.has_active_dialog(cx) {
@@ -142,6 +172,7 @@ impl AppView {
             session: None,
             settings,
             focus,
+            layout: None,
             editing: false,
             unlocked: false,
             _subscriptions: subscriptions,
@@ -158,26 +189,6 @@ impl AppView {
             self.inspector = None;
         }
         if route == Route::Settings {
-            if unlocked {
-                let prefs = self.preferences.read(cx).values();
-                return h_flex()
-                    .size_full()
-                    .child(
-                        div()
-                            .w(px(prefs.group_width * prefs.font_size as f32 / 16.))
-                            .h_full()
-                            .flex_shrink_0()
-                            .child(self.sidebar.clone()),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .h_full()
-                            .child(self.settings.clone()),
-                    )
-                    .into_any_element();
-            }
             return self.settings.clone().into_any_element();
         }
         if route == Route::Welcome || !unlocked {
@@ -194,35 +205,55 @@ impl AppView {
         }
         self.session = None;
         if show_inspector && self.inspector.is_none() {
-            self.inspector = Some(cx.new(|cx| inspector::Inspector::new(self.store.clone(), cx)));
+            self.inspector =
+                Some(cx.new(|cx| inspector::Inspector::new(self.store.clone(), window, cx)));
         }
         if !show_inspector {
             self.inspector = None;
         }
-        let prefs = self.preferences.read(cx).values();
+        let prefs = self.preferences.read(cx).values().clone();
         let scale = prefs.font_size as f32 / 16.;
         let preferences = self.preferences.clone();
+        let layout_key = (
+            window.viewport_size().width,
+            prefs.font_size,
+            show_inspector,
+        );
+        if self
+            .layout
+            .as_ref()
+            .is_none_or(|(key, _)| *key != layout_key)
+        {
+            self.layout = Some((layout_key, cx.new(|_| ResizableState::default())));
+        }
+        let layout = self.layout.as_ref().expect("layout initialized").1.clone();
+        let inspector_width = (prefs.inspector_width * scale).min(
+            (f32::from(window.viewport_size().width) - prefs.group_width * scale - 330.).max(380.),
+        );
         let mut panes = h_resizable(if show_inspector {
             "workspace-three"
         } else {
             "workspace-two"
         })
+        .with_state(&layout)
         .child(
             resizable_panel()
                 .size(px(prefs.group_width * scale))
+                .flex_none()
                 .size_range(px(180.)..px(280. * scale))
                 .child(self.sidebar.clone()),
         )
         .child(
             resizable_panel()
-                .size(px(prefs.entry_width * scale))
-                .size_range(px(330.)..px(if show_inspector { 560. * scale } else { 10000. }))
+                .size_range(px(330.)..Pixels::MAX)
                 .child(self.entries.clone()),
         );
         if let Some(inspector) = self.inspector.as_ref() {
             panes = panes.child(
                 resizable_panel()
-                    .size_range(px(450.)..px(10000.))
+                    .size(px(inspector_width))
+                    .flex_none()
+                    .size_range(px(380.)..Pixels::MAX)
                     .child(inspector.clone()),
             );
         }
@@ -231,7 +262,7 @@ impl AppView {
             if let Some(group) = sizes.first() {
                 let group = f32::from(*group) / scale;
                 let entry = show_inspector
-                    .then(|| sizes.get(1).map(|v| f32::from(*v) / scale))
+                    .then(|| sizes.get(2).map(|v| f32::from(*v) / scale))
                     .flatten();
                 preferences.update(cx, |prefs, cx| prefs.resize(group, entry, cx));
             }

@@ -116,6 +116,7 @@ impl EditorStore {
                 .attributes
                 .into_iter()
                 .map(|a| Attribute {
+                    has_value: !a.value.is_empty(),
                     id: a.id,
                     key: a.name,
                     value: a.value,
@@ -375,7 +376,7 @@ impl EditorStore {
         if self.content.foreground != old.foreground || self.content.background != old.background {
             let color = |value: Option<u32>| {
                 value
-                    .map(|v| taypeer_core::Color([(v >> 16) as u8, (v >> 8) as u8, v as u8, 255]))
+                    .map(|v| taypeer_core::Color(v.to_be_bytes()))
                     .map_or(FieldUpdate::Clear, FieldUpdate::Set)
             };
             self.binary(BinaryEdit::Appearance {

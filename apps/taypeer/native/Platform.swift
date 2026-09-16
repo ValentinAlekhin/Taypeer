@@ -21,6 +21,7 @@ DispatchQueue.global(qos: .userInitiated).async {
     while let line = readLine() {
         guard let data = line.data(using: .utf8),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let id = object["id"] as? UInt64,
               let text = object["text"] as? String,
               let secret = object["secret"] as? Bool else { continue }
         let timeout = object["seconds"] as? Double ?? 0
@@ -30,7 +31,8 @@ DispatchQueue.global(qos: .userInitiated).async {
             var types: [NSPasteboard.PasteboardType] = [.string]
             if secret { types += [NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType"), NSPasteboard.PasteboardType("org.nspasteboard.TransientType")] }
             board.declareTypes(types, owner: nil)
-            guard board.setString(text, forType: .string) else { event("clipboard_error"); return }
+            guard board.setString(text, forType: .string) else { event("clipboard_error:\(id)"); return }
+            event("clipboard_ok:\(id)")
             let generation = board.changeCount
             timedSecretGeneration = secret && timeout > 0 ? generation : nil
             if secret && timeout > 0 {

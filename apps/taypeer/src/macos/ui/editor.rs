@@ -18,6 +18,8 @@ pub(super) struct EditorView {
     editor: Entity<EditorStore>,
     fields: Vec<(EntryField, Entity<InputState>)>,
     notes: Entity<TextareaState>,
+    foreground: Entity<color_picker::ColorPickerState>,
+    background: Entity<color_picker::ColorPickerState>,
     _subscriptions: Vec<Subscription>,
 }
 impl EditorView {
@@ -83,10 +85,16 @@ impl EditorView {
                 }
             }
         }));
-        if let Some((_, input)) = fields.first() {
+        if store.read(cx).state().tab == EntryTab::Overview
+            && let Some((_, input)) = fields.first()
+        {
             input.update(cx, |input, cx| input.focus(window, cx));
         }
+        let foreground = Self::color_picker(&editor, false, window, cx, &mut subscriptions);
+        let background = Self::color_picker(&editor, true, window, cx, &mut subscriptions);
         Self {
+            foreground,
+            background,
             store,
             editor,
             fields,
@@ -169,11 +177,17 @@ impl EditorView {
                         })),
                 );
             }
-            result = result.child(row(entry_field.key(), control, cx));
+            result = result.child(input_row(
+                entry_field.key(),
+                input.focus_handle(cx),
+                control,
+                cx,
+            ));
         }
         result
-            .child(row(
+            .child(input_row(
                 "notes",
+                self.notes.focus_handle(cx),
                 Textarea::new(&self.notes)
                     .disabled(!self.editor.read(cx).editable())
                     .aria_label(tr("notes"))
@@ -342,6 +356,108 @@ impl EditorView {
             )
             .into_any_element()
     }
+    fn color_picker(
+        editor: &Entity<EditorStore>,
+        background: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        subscriptions: &mut Vec<Subscription>,
+    ) -> Entity<color_picker::ColorPickerState> {
+        let initial = if background {
+            editor.read(cx).content().background
+        } else {
+            editor.read(cx).content().foreground
+        };
+        let state = cx.new(|cx| {
+            let state = color_picker::ColorPickerState::new(window, cx);
+            if let Some(color) = initial {
+                state.default_value(rgba(color))
+            } else {
+                state
+            }
+        });
+        let editor = editor.clone();
+        subscriptions.push(cx.subscribe(
+            &state,
+            move |_, _, event: &color_picker::ColorPickerEvent, cx| {
+                let color_picker::ColorPickerEvent::Change(color) = event;
+                if !editor.read(cx).editable() {
+                    return;
+                }
+                let value = color.map(|c| {
+                    let c = c.to_rgb();
+                    u32::from_be_bytes(
+                        [c.r, c.g, c.b, c.a].map(|v| (v.clamp(0., 1.) * 255.).round() as u8),
+                    )
+                });
+                editor.update(cx, |editor, cx| {
+                    editor.edit(|content| {
+                        if background {
+                            content.background = value;
+                        } else {
+                            content.foreground = value;
+                        }
+                    });
+                    cx.notify();
+                });
+            },
+        ));
+        state
+    }
+
+    fn color_control(&self, background: bool, cx: &Context<Self>) -> AnyElement {
+        let state = if background {
+            &self.background
+        } else {
+            &self.foreground
+        };
+        let picker = state.clone();
+        let editor = self.editor.clone();
+        let value = if background {
+            self.editor.read(cx).content().background
+        } else {
+            self.editor.read(cx).content().foreground
+        };
+        h_flex()
+            .gap_2()
+            .child(
+                color_picker::ColorPicker::new(state)
+                    .label(color_text(value))
+                    .accessibility_label(tr(if background {
+                        "ui.background_color"
+                    } else {
+                        "ui.foreground_color"
+                    })),
+            )
+            .when(value.is_some(), |el| {
+                el.child(
+                    icon_button(
+                        if background {
+                            "reset-background"
+                        } else {
+                            "reset-foreground"
+                        },
+                        "x",
+                        "ui.clear_value",
+                    )
+                    .disabled(!self.editor.read(cx).editable())
+                    .on_click(move |_, window, cx| {
+                        picker.update(cx, |picker, cx| picker.clear_value(window, cx));
+                        editor.update(cx, |editor, cx| {
+                            editor.edit(|content| {
+                                if background {
+                                    content.background = None;
+                                } else {
+                                    content.foreground = None;
+                                }
+                            });
+                            cx.notify();
+                        });
+                    }),
+                )
+            })
+            .into_any_element()
+    }
     fn appearance(&self, cx: &mut Context<Self>) -> AnyElement {
         let content = self.editor.read(cx).content();
         v_flex()
@@ -394,32 +510,10 @@ impl EditorView {
             ))
             .child(row(
                 "ui.foreground_color",
-                Button::new("foreground")
-                    .label(
-                        content
-                            .foreground
-                            .map(|c| format!("#{c:06X}"))
-                            .unwrap_or_else(|| tr("ui.default_color").to_string()),
-                    )
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        forms::color(this.editor.clone(), false, window, cx)
-                    })),
+                self.color_control(false, cx),
                 cx,
             ))
-            .child(row(
-                "ui.background_color",
-                Button::new("background")
-                    .label(
-                        content
-                            .background
-                            .map(|c| format!("#{c:06X}"))
-                            .unwrap_or_else(|| tr("ui.default_color").to_string()),
-                    )
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        forms::color(this.editor.clone(), true, window, cx)
-                    })),
-                cx,
-            ))
+            .child(row("ui.background_color", self.color_control(true, cx), cx))
             .child(section("ui.preview"))
             .child(
                 div()
@@ -428,12 +522,12 @@ impl EditorView {
                     .rounded_sm()
                     .bg(content
                         .background
-                        .map(|c| rgb(c).into())
+                        .map(|c| rgba(c).into())
                         .unwrap_or(cx.theme().background))
                     .text_color(
                         content
                             .foreground
-                            .map(|c| rgb(c).into())
+                            .map(|c| rgba(c).into())
                             .unwrap_or(cx.theme().foreground),
                     )
                     .child(

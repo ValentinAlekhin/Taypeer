@@ -1,17 +1,20 @@
 //! Private native helper for lifecycle notifications and owned pasteboard writes.
 use gpui_kit::Global;
 use std::{
+    collections::BTreeMap,
     io::{BufRead, BufReader, Write},
     process::{Child, Command, Stdio},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc,
     },
 };
 use zeroize::Zeroize;
 pub(super) struct Platform {
     child: Option<Child>,
+    next_copy: AtomicU64,
+    pending_copies: Mutex<BTreeMap<u64, bool>>,
     send: mpsc::SyncSender<zeroize::Zeroizing<Vec<u8>>>,
     event_sender: mpsc::Sender<String>,
     sessions: Arc<Mutex<Option<taypeer_runtime::session::SessionController>>>,
@@ -96,6 +99,8 @@ impl Platform {
         });
         Ok(Self {
             child: Some(child),
+            next_copy: AtomicU64::new(1),
+            pending_copies: Mutex::new(BTreeMap::new()),
             event_sender,
             sessions,
             available,
@@ -112,14 +117,20 @@ impl Platform {
     pub fn available(&self) -> bool {
         self.available.load(Ordering::Acquire)
     }
-    pub fn copy(&self, mut text: String, secret: bool) {
+    pub fn copy(&self, mut text: String, secret: bool, notify: bool) {
         #[derive(serde::Serialize)]
         struct Copy<'a> {
+            id: u64,
             text: &'a str,
             secret: bool,
             seconds: u32,
         }
+        let id = self.next_copy.fetch_add(1, Ordering::Relaxed);
+        if let Ok(mut pending) = self.pending_copies.lock() {
+            pending.insert(id, notify);
+        }
         let encoded = serde_json::to_vec(&Copy {
+            id,
             text: &text,
             secret,
             seconds: self.clipboard_seconds.unwrap_or(0),
@@ -129,8 +140,19 @@ impl Platform {
             .map(zeroize::Zeroizing::new)
             .map_or(true, |bytes| self.send.try_send(bytes).is_err())
         {
-            let _ = self.event_sender.send("clipboard_error".into());
+            let _ = self.event_sender.send(format!("clipboard_error:{id}"));
         }
+    }
+    pub fn copy_result(&self, event: &str) -> Option<(bool, bool)> {
+        let (kind, id) = event.split_once(':')?;
+        let success = match kind {
+            "clipboard_ok" => true,
+            "clipboard_error" => false,
+            _ => return None,
+        };
+        let id = id.parse::<u64>().ok()?;
+        let notify = self.pending_copies.lock().ok()?.remove(&id)?;
+        Some((success, notify))
     }
     pub fn drain(&self) -> Vec<String> {
         self.events

@@ -11,10 +11,19 @@ use std::collections::BTreeMap;
 use taypeer_runtime::Command;
 use zeroize::Zeroizing;
 
+#[derive(Default)]
+struct ValueSource {
+    attribute: Option<taypeer_core::AttributeId>,
+    revision: Option<RevisionId>,
+}
+
 pub(super) struct Inspector {
     store: Entity<WorkspaceStore>,
     fields: Option<(EntityId, Entity<EditorView>)>,
     identity: Option<(DatabaseId, EntryId)>,
+    values: BTreeMap<String, super::read_value::ReadValue>,
+    reveal_epoch: u64,
+    tab: EntryTab,
     revealed: BTreeMap<String, Zeroizing<String>>,
     revision: Option<RevisionId>,
     snapshot: Option<RevisionId>,
@@ -23,17 +32,19 @@ pub(super) struct Inspector {
     _subscription: Subscription,
 }
 impl Inspector {
-    pub fn new(store: Entity<WorkspaceStore>, cx: &mut Context<Self>) -> Self {
+    pub fn new(store: Entity<WorkspaceStore>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         Self {
-            _subscription: cx.observe(&store, |this, store, cx| {
+            _subscription: cx.observe_in(&store, window, |this, store, window, cx| {
                 let state = store.read(cx).state();
                 if !state.is_unlocked()
+                    || state.route != Route::Workspace
+                    || state.tab != this.tab
                     || this.identity.as_ref().is_some_and(|(db, entry)| {
                         Some(db) != state.database.as_ref()
                             || Some(entry) != state.selected.as_ref()
                     })
                 {
-                    this.revealed.clear();
+                    this.clear_values(window, cx);
                     this.fields = None;
                 }
                 cx.notify();
@@ -41,6 +52,9 @@ impl Inspector {
             store,
             fields: None,
             identity: None,
+            values: BTreeMap::new(),
+            reveal_epoch: 0,
+            tab: EntryTab::Overview,
             revealed: BTreeMap::new(),
             revision: None,
             snapshot: None,
@@ -48,32 +62,62 @@ impl Inspector {
             scroll: ScrollHandle::new(),
         }
     }
+    fn clear_values(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        for value in self.values.values() {
+            value.clear(window, cx);
+        }
+        self.values.clear();
+        self.revealed.clear();
+        self.reveal_epoch += 1;
+    }
     fn value(
-        &self,
+        &mut self,
         key: String,
         value: &str,
         secret: bool,
-        attribute: Option<taypeer_core::AttributeId>,
-        revision: Option<RevisionId>,
+        source: ValueSource,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let revealed = self.revealed.get(&key);
-        let shown = revealed.is_some();
+        let ValueSource {
+            attribute,
+            revision,
+        } = source;
+        let shown = self.revealed.contains_key(&key);
         let text = if secret {
-            revealed
-                .map(|v| v.to_string())
-                .unwrap_or_else(|| "••••••••••••".into())
+            self.revealed.get(&key).map(|v| v.to_string())
         } else if value.is_empty() {
-            tr("absent").to_string()
+            None
         } else {
-            value.to_owned()
+            Some(value.to_owned())
         };
+        let body = if let Some(text) = &text {
+            let input = self
+                .values
+                .entry(key.clone())
+                .or_insert_with(|| super::read_value::ReadValue::new(text, window, cx));
+            input.sync(text, window, cx);
+            input.render(secret, self.store.clone(), self.identity.clone())
+        } else {
+            if let Some(input) = self.values.remove(&key) {
+                input.clear(window, cx);
+            }
+            div()
+                .child(if secret {
+                    "••••••••••••"
+                } else {
+                    "—"
+                })
+                .into_any_element()
+        };
+        let present = secret || !value.is_empty();
         let ordinary = value.to_owned();
         let reveal_key = key.clone();
         let copy_key = key.clone();
         let copy_attribute = attribute.clone();
         let copy_revision = revision.clone();
         h_flex()
+            .group("entry-value")
             .gap_2()
             .min_w_0()
             .child(
@@ -81,51 +125,71 @@ impl Inspector {
                     .flex_1()
                     .min_w_0()
                     .when(secret, |el| el.font_family("Menlo"))
-                    .child(text),
+                    .child(body),
             )
-            .when(secret, |el| {
+            .when(present, |el| {
                 el.child(
-                    icon_button(
-                        SharedString::from(format!("show-{key}")),
-                        if shown { "eye-off" } else { "eye" },
-                        if shown { "hide" } else { "show" },
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if this.revealed.remove(&reveal_key).is_none() {
-                            this.reveal(
-                                reveal_key.clone(),
-                                attribute.clone(),
-                                revision.clone(),
-                                false,
-                                cx,
-                            );
-                        }
-                        cx.notify();
-                    })),
+                    h_flex()
+                        .gap_1()
+                        .invisible()
+                        .group_hover("entry-value", |style| style.visible())
+                        .when(secret, |el| {
+                            el.child(
+                                icon_button(
+                                    SharedString::from(format!("show-{key}")),
+                                    if shown { "eye-off" } else { "eye" },
+                                    if shown { "hide" } else { "show" },
+                                )
+                                .on_click(cx.listener(
+                                    move |this, _, window, cx| {
+                                        if this.revealed.remove(&reveal_key).is_none() {
+                                            this.reveal(
+                                                reveal_key.clone(),
+                                                attribute.clone(),
+                                                revision.clone(),
+                                                false,
+                                                cx,
+                                            );
+                                        } else {
+                                            this.reveal_epoch += 1;
+                                            if let Some(input) = this.values.remove(&reveal_key) {
+                                                input.clear(window, cx);
+                                            }
+                                        }
+                                        cx.notify();
+                                    },
+                                )),
+                            )
+                        })
+                        .child(
+                            icon_button(
+                                SharedString::from(format!("copy-{key}")),
+                                "copy",
+                                "ui.copy",
+                            )
+                            .on_click(cx.listener(
+                                move |this, _, _, cx| {
+                                    if secret {
+                                        this.reveal(
+                                            copy_key.clone(),
+                                            copy_attribute.clone(),
+                                            copy_revision.clone(),
+                                            true,
+                                            cx,
+                                        );
+                                    } else if this
+                                        .store
+                                        .read(cx)
+                                        .connection()
+                                        .is_some_and(|c| c.control.is_open())
+                                    {
+                                        super::clipboard::copy(ordinary.clone(), false, cx);
+                                    }
+                                },
+                            )),
+                        ),
                 )
             })
-            .child(
-                icon_button(SharedString::from(format!("copy-{key}")), "copy", "ui.copy")
-                    .disabled(!secret && value.is_empty())
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if secret {
-                            this.reveal(
-                                copy_key.clone(),
-                                copy_attribute.clone(),
-                                copy_revision.clone(),
-                                true,
-                                cx,
-                            );
-                        } else if this
-                            .store
-                            .read(cx)
-                            .connection()
-                            .is_some_and(|c| c.control.is_open())
-                        {
-                            super::clipboard::copy(ordinary.clone(), false, cx);
-                        }
-                    })),
-            )
             .into_any_element()
     }
     fn reveal(
@@ -156,6 +220,7 @@ impl Inspector {
         let ticket = connection.command::<Zeroizing<String>>(command);
         let target = cx.entity().downgrade();
         let identity = self.identity.clone();
+        let epoch = self.reveal_epoch;
         let control = connection.control.clone();
         self.store.update(cx, |store, _| {
             store.watch(ticket, move |store, result, _, cx| {
@@ -165,7 +230,8 @@ impl Inspector {
                 match result {
                     Ok(value) => {
                         let _ = target.update(cx, |this, cx| {
-                            if this.identity == identity
+                            if this.reveal_epoch == epoch
+                                && this.identity == identity
                                 && this.identity.as_ref().is_some_and(|(id, _)| id == &db)
                             {
                                 if copy {
@@ -183,9 +249,10 @@ impl Inspector {
         });
     }
     fn overview(
-        &self,
+        &mut self,
         content: &EntryContent,
         revision: Option<RevisionId>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         v_flex()
@@ -196,8 +263,11 @@ impl Inspector {
                         format!("{revision:?}-{field:?}"),
                         field.value(content),
                         field == EntryField::Password && content.has_password,
-                        None,
-                        revision.clone(),
+                        ValueSource {
+                            attribute: None,
+                            revision: revision.clone(),
+                        },
+                        window,
                         cx,
                     ),
                     cx,
@@ -206,9 +276,10 @@ impl Inspector {
             .into_any_element()
     }
     fn advanced(
-        &self,
+        &mut self,
         content: &EntryContent,
         revision: Option<RevisionId>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let mut result = v_flex().child(section("attributes"));
@@ -218,9 +289,12 @@ impl Inspector {
                 self.value(
                     format!("{revision:?}-{:?}", attribute.id),
                     &attribute.value,
-                    attribute.protected,
-                    attribute.id.clone(),
-                    revision.clone(),
+                    attribute.protected && attribute.has_value,
+                    ValueSource {
+                        attribute: attribute.id.clone(),
+                        revision: revision.clone(),
+                    },
+                    window,
                     cx,
                 ),
                 cx,
@@ -259,7 +333,13 @@ impl Inspector {
         }
         result.into_any_element()
     }
-    fn appearance(&self, content: &EntryContent, cx: &mut Context<Self>) -> AnyElement {
+    fn appearance(
+        &mut self,
+        content: &EntryContent,
+        revision: Option<RevisionId>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         v_flex()
             .child(row(
                 "ui.icon",
@@ -268,18 +348,32 @@ impl Inspector {
             ))
             .child(row(
                 "ui.foreground_color",
-                content
-                    .foreground
-                    .map(|c| format!("#{c:06X}"))
-                    .unwrap_or_else(|| tr("ui.default_color").to_string()),
+                self.value(
+                    format!("foreground-{revision:?}"),
+                    &content
+                        .foreground
+                        .map(|_| color_text(content.foreground))
+                        .unwrap_or_default(),
+                    false,
+                    ValueSource::default(),
+                    window,
+                    cx,
+                ),
                 cx,
             ))
             .child(row(
                 "ui.background_color",
-                content
-                    .background
-                    .map(|c| format!("#{c:06X}"))
-                    .unwrap_or_else(|| tr("ui.default_color").to_string()),
+                self.value(
+                    format!("background-{revision:?}"),
+                    &content
+                        .background
+                        .map(|_| color_text(content.background))
+                        .unwrap_or_default(),
+                    false,
+                    ValueSource::default(),
+                    window,
+                    cx,
+                ),
                 cx,
             ))
             .child(section("ui.preview"))
@@ -289,19 +383,24 @@ impl Inspector {
                     .p_4()
                     .bg(content
                         .background
-                        .map(|c| rgb(c).into())
+                        .map(|c| rgba(c).into())
                         .unwrap_or(cx.theme().background))
                     .text_color(
                         content
                             .foreground
-                            .map(|c| rgb(c).into())
+                            .map(|c| rgba(c).into())
                             .unwrap_or(cx.theme().foreground),
                     )
                     .child(content.title.clone()),
             )
             .into_any_element()
     }
-    fn history(&self, entry: &Entry, cx: &mut Context<Self>) -> AnyElement {
+    fn history(
+        &mut self,
+        entry: &Entry,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let mut result = v_flex().child(
             h_flex()
                 .px_6()
@@ -326,10 +425,10 @@ impl Inspector {
                     .h(rems(2.75))
                     .selected(self.revision.as_ref() == Some(&id))
                     .label(format!("{}  {}", stamp(version.saved_at), version.title))
-                    .on_click(cx.listener(move |this, _, _, cx| {
+                    .on_click(cx.listener(move |this, _, window, cx| {
                         this.revision = Some(id.clone());
                         this.compare = false;
-                        this.revealed.clear();
+                        this.clear_values(window, cx);
                         this.store
                             .update(cx, |s, cx| s.load_revision(id.clone(), cx));
                         cx.notify();
@@ -346,9 +445,9 @@ impl Inspector {
                     Button::new("view-version")
                         .label(tr("ui.view_revision"))
                         .disabled(selected.is_none())
-                        .on_click(cx.listener(|this, _, _, cx| {
+                        .on_click(cx.listener(|this, _, window, cx| {
                             this.snapshot = this.revision.clone();
-                            this.revealed.clear();
+                            this.clear_values(window, cx);
                             this.store
                                 .update(cx, |s, cx| s.select_tab(EntryTab::Overview, cx));
                         })),
@@ -357,9 +456,9 @@ impl Inspector {
                     Button::new("compare")
                         .label(tr("ui.compare"))
                         .disabled(selected.is_none())
-                        .on_click(cx.listener(|this, _, _, cx| {
+                        .on_click(cx.listener(|this, _, window, cx| {
                             this.compare = !this.compare;
-                            this.revealed.clear();
+                            this.clear_values(window, cx);
                             cx.notify();
                         })),
                 )
@@ -385,13 +484,13 @@ impl Inspector {
             if let Some(old) = &version.content {
                 result = result
                     .child(section("ui.previous"))
-                    .child(self.overview(old, Some(version.sequence.clone()), cx))
-                    .child(self.advanced(old, Some(version.sequence.clone()), cx))
-                    .child(self.appearance(old, cx))
+                    .child(self.overview(old, Some(version.sequence.clone()), window, cx))
+                    .child(self.advanced(old, Some(version.sequence.clone()), window, cx))
+                    .child(self.appearance(old, Some(version.sequence.clone()), window, cx))
                     .child(section("ui.current"))
-                    .child(self.overview(&entry.content, None, cx))
-                    .child(self.advanced(&entry.content, None, cx))
-                    .child(self.appearance(&entry.content, cx));
+                    .child(self.overview(&entry.content, None, window, cx))
+                    .child(self.advanced(&entry.content, None, window, cx))
+                    .child(self.appearance(&entry.content, None, window, cx));
             } else {
                 result = result.child(empty("ui.loading", cx));
             }
@@ -411,14 +510,14 @@ impl Render for Inspector {
             .database
             .clone()
             .zip(store.state().selected.clone());
+        let editor = store.editor().cloned();
         if self.identity != identity {
             self.identity = identity.clone();
-            self.revealed.clear();
+            self.clear_values(window, cx);
             self.snapshot = None;
             self.revision = None;
             self.compare = false;
         }
-        let editor = store.editor().cloned();
         if let Some(editor) = &editor {
             if self
                 .fields
@@ -430,7 +529,7 @@ impl Render for Inspector {
                     cx.new(|cx| EditorView::new(self.store.clone(), editor.clone(), window, cx)),
                 ));
                 self.snapshot = None;
-                self.revealed.clear();
+                self.clear_values(window, cx);
             }
         } else {
             self.fields = None;
@@ -441,6 +540,7 @@ impl Render for Inspector {
             .and_then(|(db, id)| store.catalog().read(cx).entry(db, id))
             .cloned();
         let tab = store.state().tab;
+        self.tab = tab;
         let writable = store.writable(cx);
         let busy = store.busy();
         if self.revision.as_ref().is_some_and(|id| {
@@ -450,7 +550,7 @@ impl Render for Inspector {
         }) {
             self.revision = None;
             self.snapshot = None;
-            self.revealed.clear();
+            self.clear_values(window, cx);
         }
         let editing = editor.is_some();
         let title = entry
@@ -478,18 +578,55 @@ impl Render for Inspector {
                 None => Some(&entry.content),
             };
             match tab {
-                EntryTab::History => self.history(entry, cx),
+                EntryTab::History => self.history(entry, window, cx),
                 EntryTab::Properties => v_flex()
-                    .child(row("ui.created", stamp(entry.created), cx))
-                    .child(row("ui.modified", stamp(entry.modified), cx))
-                    .child(row("ui.id", entry.id.as_str().to_owned(), cx))
+                    .child(row(
+                        "ui.created",
+                        self.value(
+                            "created".into(),
+                            &stamp(entry.created),
+                            false,
+                            ValueSource::default(),
+                            window,
+                            cx,
+                        ),
+                        cx,
+                    ))
+                    .child(row(
+                        "ui.modified",
+                        self.value(
+                            "modified".into(),
+                            &stamp(entry.modified),
+                            false,
+                            ValueSource::default(),
+                            window,
+                            cx,
+                        ),
+                        cx,
+                    ))
+                    .child(row(
+                        "ui.id",
+                        self.value(
+                            "id".into(),
+                            entry.id.as_str(),
+                            false,
+                            ValueSource::default(),
+                            window,
+                            cx,
+                        ),
+                        cx,
+                    ))
                     .into_any_element(),
                 _ => match shown {
                     None => empty("ui.loading", cx),
                     Some(content) => match tab {
-                        EntryTab::Overview => self.overview(content, self.snapshot.clone(), cx),
-                        EntryTab::Advanced => self.advanced(content, self.snapshot.clone(), cx),
-                        _ => self.appearance(content, cx),
+                        EntryTab::Overview => {
+                            self.overview(content, self.snapshot.clone(), window, cx)
+                        }
+                        EntryTab::Advanced => {
+                            self.advanced(content, self.snapshot.clone(), window, cx)
+                        }
+                        _ => self.appearance(content, self.snapshot.clone(), window, cx),
                     },
                 },
             }
@@ -547,9 +684,9 @@ impl Render for Inspector {
                     Button::new("current-entry")
                         .ghost()
                         .label(tr("back"))
-                        .on_click(cx.listener(|this, _, _, cx| {
+                        .on_click(cx.listener(|this, _, window, cx| {
                             this.snapshot = None;
-                            this.revealed.clear();
+                            this.clear_values(window, cx);
                             cx.notify();
                         })),
                 )
@@ -558,29 +695,20 @@ impl Render for Inspector {
                 el.child(empty("ui.conflict", cx))
             })
             .child(
-                h_flex()
-                    .h(rems(2.375))
-                    .border_b_1()
-                    .border_color(cx.theme().border)
-                    .children(EntryTab::ALL.map(|tab| {
-                        let selected = self.store.read(cx).state().tab == tab;
-                        Button::new(tab.key())
-                            .ghost()
-                            .compact()
-                            .rounded_none()
-                            .h_full()
-                            .flex_1()
-                            .min_w_0()
-                            .text_sm()
-                            .label(tr(tab.key()))
-                            .tooltip(tr(tab.key()))
-                            .when(selected, |el| {
-                                el.border_b_2().border_color(cx.theme().foreground)
-                            })
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.store.update(cx, |s, cx| s.select_tab(tab, cx))
-                            }))
-                    })),
+                tabs(
+                    "entry-tabs",
+                    &EntryTab::ALL.map(EntryTab::key),
+                    EntryTab::ALL
+                        .iter()
+                        .position(|candidate| *candidate == tab)
+                        .unwrap_or(0),
+                    cx,
+                )
+                .on_click(cx.listener(|this, index, _, cx| {
+                    if let Some(tab) = EntryTab::ALL.get(*index) {
+                        this.store.update(cx, |s, cx| s.select_tab(*tab, cx));
+                    }
+                })),
             )
             .child(
                 div()

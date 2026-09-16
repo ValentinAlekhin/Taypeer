@@ -2,7 +2,13 @@
 use gpui_kit::*;
 pub(super) fn copy(value: String, sensitive: bool, cx: &mut App) {
     if let Some(platform) = cx.try_global::<crate::macos::platform::Platform>() {
-        platform.copy(value, sensitive);
+        platform.copy(value, sensitive, true);
+    }
+}
+
+pub(super) fn copy_selection(value: String, sensitive: bool, cx: &mut App) {
+    if let Some(platform) = cx.try_global::<crate::macos::platform::Platform>() {
+        platform.copy(value, sensitive, false);
     }
 }
 
@@ -26,7 +32,7 @@ pub(super) fn secret_field(
             el.capture_action(move |_: &Copy, _, cx| {
                 let text = copy.read(cx).selected_value().to_string();
                 if !text.is_empty() {
-                    self::copy(text, true, cx);
+                    self::copy_selection(text, true, cx);
                 }
                 cx.stop_propagation();
             })

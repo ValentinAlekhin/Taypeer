@@ -36,24 +36,21 @@ impl Render for Header {
             .unwrap_or_else(|| "Taypeer".into());
         let menu_store = self.store.clone();
         TitleBar::new()
-            .h(rems(2.75))
+            .h(px(34.))
+            .pl_0()
             .border_b_1()
             .border_color(cx.theme().border)
             .child(
                 h_flex()
                     .size_full()
-                    .pl_20()
-                    .pr_2()
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(cx.theme().muted_foreground)
-                            .child("Taypeer"),
-                    )
-                    .child(div().flex_1())
+                    .relative()
+                    .px(px(80.))
+                    .justify_center()
                     .child(
                         Button::new("database-switcher")
                             .ghost()
+                            .compact()
+                            .h(px(28.))
                             .icon(icon("file-key-2"))
                             .label(title)
                             .child(icon("chevron-down"))
@@ -130,14 +127,13 @@ impl Render for Header {
                                     .item(PopupMenuItem::new(tr("ui.share")).disabled(true))
                             }),
                     )
-                    .child(div().flex_1())
-                    .child(
+                    .child(div().absolute().right(px(8.)).top(px(1.)).child(
                         icon_button("settings", "sliders-horizontal", "settings").on_click(
                             cx.listener(|this, _, _, cx| {
                                 this.store.update(cx, |store, cx| store.settings(cx))
                             }),
                         ),
-                    ),
+                    )),
             )
     }
 }

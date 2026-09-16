@@ -23,6 +23,7 @@ pub(super) struct WorkspaceStore {
     pending: Vec<Pending>,
     notice: Option<&'static str>,
     saving: bool,
+    quit_requested: bool,
     opening: bool,
     save_requested: bool,
     operation: u64,
@@ -55,6 +56,7 @@ impl WorkspaceStore {
             pending: Vec::new(),
             notice,
             saving: false,
+            quit_requested: false,
             opening: false,
             save_requested: false,
             operation: 0,
@@ -282,6 +284,10 @@ impl WorkspaceStore {
         }
         cx.notify();
     }
+    pub fn move_column(&mut self, from: usize, to: usize, cx: &mut Context<Self>) {
+        self.state.move_column(from, to);
+        cx.notify();
+    }
     pub fn watch<T: 'static>(
         &mut self,
         ticket: Ticket<T>,
@@ -313,9 +319,50 @@ impl WorkspaceStore {
         });
     }
     /// Polling does not renew activity and never blocks on a worker.
+    pub fn request_quit(&mut self, cx: &mut Context<Self>) {
+        self.quit_requested = true;
+        cx.notify();
+    }
     pub fn poll(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(platform) = cx.try_global::<crate::macos::platform::Platform>() {
-            for event in platform.drain() {
+        if self.quit_requested && !self.busy() && self.state.pending.is_none() {
+            self.quit_requested = false;
+            self.navigate(Destination::Quit, window, cx);
+        }
+        let events = cx
+            .try_global::<crate::macos::platform::Platform>()
+            .map(|platform| {
+                platform
+                    .drain()
+                    .into_iter()
+                    .map(|event| {
+                        let result = platform.copy_result(&event);
+                        (event, result)
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        {
+            for (event, result) in events {
+                if let Some((success, notify)) = result {
+                    if notify || !success {
+                        use gpui_kit::component::notification::{Notification, NotificationType};
+                        window.push_notification(
+                            Notification::new()
+                                .with_type(if success {
+                                    NotificationType::Success
+                                } else {
+                                    NotificationType::Error
+                                })
+                                .message(super::style::tr(if success {
+                                    "ui.copied"
+                                } else {
+                                    "ui.clipboard_error"
+                                })),
+                            cx,
+                        );
+                    }
+                    continue;
+                }
                 match event.as_str() {
                     "sleep" | "locked" | "platform_closed" => {
                         self.secret_epoch += 1;
@@ -662,6 +709,7 @@ impl WorkspaceStore {
                 self.state.bookmark = None;
             }
             Destination::Entry(db, id) => self.state.select_entry(db, id, self.catalog.read(cx)),
+            Destination::ClearEntry => self.state.selected = None,
             Destination::GroupForm { id, parent } => {
                 let store = cx.entity();
                 window.defer(cx, move |window, cx| {
@@ -730,13 +778,14 @@ impl WorkspaceStore {
                 if let Some(backend) = &self.backend {
                     backend.sessions.lock_all(LockReason::HostExited);
                 }
-                window.remove_window();
+                cx.quit();
                 return;
             }
         }
         self.refresh(cx);
     }
     fn start_editor(&mut self, command: Command, cx: &mut Context<Self>) {
+        let preserve_tab = matches!(&command, Command::BeginEdit(_));
         let Some(connection) = self.connection().cloned() else {
             return;
         };
@@ -763,7 +812,9 @@ impl WorkspaceStore {
                                 this.state.selected = view.entry.clone();
                                 this.editor =
                                     Some(cx.new(|_| EditorStore::from_view(connection, view)));
-                                this.state.tab = EntryTab::Overview;
+                                if !preserve_tab {
+                                    this.state.tab = EntryTab::Overview;
+                                }
                             }
                             Err(error) => this.notice = Some(error_key(&error)),
                         }

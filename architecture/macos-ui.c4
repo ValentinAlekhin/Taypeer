@@ -18,7 +18,7 @@ model {
     }
     catalog = store 'Загруженные представления UI' {
       #partial
-      description 'Каталог путей, маскированные строки и выбранные детали. Не содержит полный документ и секреты закрытых сессий.'
+      description 'Каталог путей, маскированные строки и выбранные детали с признаками наличия значений. Не содержит полный документ и секреты закрытых сессий.'
       metadata { source 'apps/taypeer/src/ui_state/catalog.rs'; contract 'docs/macos-ui.md' }
     }
     runtime = component 'Адаптер Rust-команд' {

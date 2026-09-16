@@ -154,7 +154,7 @@ model {
       #partial
       style { border solid }
       technology 'Rust + Swift / AppKit'
-      description 'Credentials runtime, файловые диалоги GPUI и отдельный безоконный AppKit helper для lifecycle и буфера с проверкой владения. Биометрия пока недоступна.'
+      description 'Credentials runtime, файловые диалоги GPUI и безоконный AppKit helper: lifecycle, защищённое копирование целого значения или выделения, подтверждение записи и очистка по владению. Биометрия пока недоступна.'
       metadata { source 'apps/taypeer/src/macos/platform.rs'; contract 'docs/architecture.md' }
     }
     androidPlatform = component 'Адаптеры Android' {

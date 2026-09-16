@@ -4,6 +4,8 @@ use crate::preferences::{Language, Preferences, ThemePreference};
 use gpui_kit::{component::*, *};
 use std::{collections::BTreeMap, sync::LazyLock};
 
+const TABLE_SELECTION_ALPHA: f32 = 0.2;
+
 static PALETTES: LazyLock<BTreeMap<String, BTreeMap<String, u32>>> = LazyLock::new(|| {
     toml::from_str(include_str!("../../../../../resources/theme.toml"))
         .expect("validated embedded theme")
@@ -58,10 +60,10 @@ impl PreferencesStore {
         self.apply(window, cx);
         cx.notify();
     }
-    pub fn resize(&mut self, group: f32, entry: Option<f32>, cx: &mut Context<Self>) {
+    pub fn resize(&mut self, group: f32, inspector: Option<f32>, cx: &mut Context<Self>) {
         self.values.group_width = group.clamp(192., 280.);
-        if let Some(entry) = entry {
-            self.values.entry_width = entry.clamp(380., 560.);
+        if let Some(inspector) = inspector {
+            self.values.inspector_width = inspector.clamp(380., 10000.);
         }
         self.persist();
         cx.notify();
@@ -76,6 +78,7 @@ impl PreferencesStore {
         };
     }
     pub fn apply(&self, window: &mut Window, cx: &mut App) {
+        super::app_menu(cx);
         let dark = self.values.theme.is_dark(matches!(
             window.appearance(),
             WindowAppearance::Dark | WindowAppearance::VibrantDark
@@ -129,6 +132,8 @@ impl PreferencesStore {
         theme.title_bar_border = color("border");
         theme.muted = color("chrome");
         theme.tokens = theme.colors.into();
+        // DataTable paints this token over the row contents, so it must remain translucent.
+        theme.tokens.table_active = color("selection").alpha(TABLE_SELECTION_ALPHA).into();
         theme.font_size = px(self.values.font_size as f32);
         theme.font_family = ".AppleSystemUIFont".into();
         Theme::sync_base(cx);

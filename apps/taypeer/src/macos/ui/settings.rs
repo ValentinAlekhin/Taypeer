@@ -485,30 +485,20 @@ impl Render for SettingsView {
                     ),
             )
             .child(
-                h_flex()
-                    .h(rems(2.375))
-                    .px_4()
-                    .gap_2()
-                    .border_b_1()
-                    .border_color(cx.theme().border)
-                    .children(
-                        [
-                            (SettingsTab::Device, "ui.device"),
-                            (SettingsTab::Database, "ui.database"),
-                        ]
-                        .map(|(tab, label)| {
-                            Button::new(label)
-                                .ghost()
-                                .rounded_none()
-                                .h_full()
-                                .selected(tab == self.tab)
-                                .label(tr(label))
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.tab = tab;
-                                    cx.notify();
-                                }))
-                        }),
-                    ),
+                tabs(
+                    "settings-tabs",
+                    &["ui.device", "ui.database"],
+                    usize::from(self.tab == SettingsTab::Database),
+                    cx,
+                )
+                .on_click(cx.listener(|this, index, _, cx| {
+                    this.tab = if *index == 0 {
+                        SettingsTab::Device
+                    } else {
+                        SettingsTab::Database
+                    };
+                    cx.notify();
+                })),
             )
             .child(
                 div()

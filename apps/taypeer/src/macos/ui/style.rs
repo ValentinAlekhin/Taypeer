@@ -49,6 +49,65 @@ pub(super) fn field(state: &Entity<InputState>, label: &str) -> Input {
         .focus_bordered(true)
         .h(rems(2.))
 }
+/// Shared underline tabs for entry details and settings.
+pub(super) fn tabs(
+    id: &'static str,
+    labels: &[&'static str],
+    selected: usize,
+    cx: &App,
+) -> tab::TabBar {
+    tab::TabBar::new(id)
+        .underline()
+        .selected_index(selected)
+        .h(rems(2.375))
+        .border_b_1()
+        .border_color(cx.theme().border)
+        .children(
+            labels
+                .iter()
+                .map(|key| tab::Tab::new().px(rems(0.75)).label(tr(key))),
+        )
+}
+
+/// A form label focuses its associated control without changing its value.
+pub(super) fn input_row(
+    label: &str,
+    focus: FocusHandle,
+    value: impl IntoElement,
+    cx: &App,
+) -> AnyElement {
+    h_flex()
+        .min_h(rems(2.75))
+        .px(rems(1.5))
+        .gap(rems(1.))
+        .border_b_1()
+        .border_color(cx.theme().border)
+        .child(
+            div()
+                .id(SharedString::from(format!("label-{label}")))
+                .w(rems(9.))
+                .flex_shrink_0()
+                .text_color(cx.theme().muted_foreground)
+                .child(tr(label))
+                .on_click(move |_, window, cx| focus.focus(window, cx)),
+        )
+        .child(div().flex_1().min_w_0().py_1().child(value))
+        .into_any_element()
+}
+
+pub(super) fn color_text(color: Option<u32>) -> String {
+    color.map_or_else(
+        || "—".into(),
+        |color| {
+            if color & 255 == 255 {
+                format!("#{:06X}", color >> 8)
+            } else {
+                format!("#{color:08X}")
+            }
+        },
+    )
+}
+
 pub(super) fn empty(title: &str, cx: &App) -> AnyElement {
     v_flex()
         .flex_1()

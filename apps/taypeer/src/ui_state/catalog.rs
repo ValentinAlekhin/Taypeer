@@ -4,6 +4,7 @@ pub(crate) use taypeer_core::{DatabaseId, EntryId, GroupId, RevisionId};
 
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) struct Attribute {
+    pub has_value: bool,
     pub id: Option<taypeer_core::AttributeId>,
     pub key: String,
     pub value: String,
@@ -82,7 +83,6 @@ pub(crate) enum FormError {
     DuplicateAttribute,
     MissingObject,
     PasswordConfirmation,
-    InvalidColor,
     InvalidNumber,
     Backend,
     Canceled,
@@ -95,7 +95,6 @@ impl FormError {
             Self::DuplicateAttribute => "ui.duplicate_attribute",
             Self::MissingObject => "ui.missing_object",
             Self::PasswordConfirmation => "ui.password_confirmation",
-            Self::InvalidColor => "ui.invalid_color",
             Self::InvalidNumber => "ui.invalid_number",
             Self::Backend => "ui.operation_failed",
             Self::Canceled => "close",
@@ -287,7 +286,7 @@ pub(crate) fn icon_name(icon: &taypeer_core::IconRef) -> String {
     }
 }
 pub(crate) fn color_value(color: Option<taypeer_core::Color>) -> Option<u32> {
-    color.map(|c| (u32::from(c.0[0]) << 16) | (u32::from(c.0[1]) << 8) | u32::from(c.0[2]))
+    color.map(|c| u32::from_be_bytes(c.0))
 }
 pub(crate) fn format_date(time: i64) -> String {
     chrono::DateTime::from_timestamp_millis(time)
@@ -308,6 +307,7 @@ pub(crate) fn content(view: &taypeer_services::EntryView) -> EntryContent {
             .attributes
             .iter()
             .map(|a| Attribute {
+                has_value: a.has_value,
                 id: Some(a.id.clone()),
                 key: a.name.clone(),
                 value: a.value.clone().unwrap_or_default(),

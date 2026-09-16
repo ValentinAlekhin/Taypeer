@@ -101,3 +101,21 @@ fn lock_clears_selection_and_pending_navigation_but_keeps_the_file_open() {
     assert_eq!(nav.route, Route::Welcome);
     assert!(nav.opened.is_empty());
 }
+
+#[test]
+fn visible_columns_can_be_reordered_without_losing_the_title() {
+    let mut nav = NavigationState::default();
+    nav.move_column(2, 0);
+    assert_eq!(
+        nav.columns,
+        vec![Column::Location, Column::Title, Column::Username]
+    );
+
+    nav.move_column(10, 0);
+    nav.move_column(0, 10);
+    assert_eq!(
+        nav.columns,
+        vec![Column::Location, Column::Title, Column::Username]
+    );
+    assert!(nav.columns.contains(&Column::Title));
+}

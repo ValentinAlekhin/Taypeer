@@ -78,6 +78,7 @@ pub(crate) enum Destination {
     Database(DatabaseId),
     Group(GroupId),
     Entry(DatabaseId, EntryId),
+    ClearEntry,
     NewEntry,
     CreateDatabase,
     GroupForm {
@@ -224,6 +225,13 @@ impl NavigationState {
     pub fn sort_by(&mut self, column: Column) {
         self.descending = self.sort == column && !self.descending;
         self.sort = column;
+    }
+    pub fn move_column(&mut self, from: usize, to: usize) {
+        if from == to || from >= self.columns.len() || to >= self.columns.len() {
+            return;
+        }
+        let column = self.columns.remove(from);
+        self.columns.insert(to, column);
     }
     pub fn rows(&self, catalog: &CatalogStore) -> Vec<(DatabaseId, EntryId)> {
         let mut rows = Vec::new();

@@ -12,6 +12,11 @@ pub struct Preferences {
     pub font_size: u8,
     pub group_width: f32,
     pub entry_width: f32,
+    #[serde(default = "default_inspector_width")]
+    pub inspector_width: f32,
+}
+fn default_inspector_width() -> f32 {
+    520.
 }
 impl Default for Preferences {
     fn default() -> Self {
@@ -21,6 +26,7 @@ impl Default for Preferences {
             font_size: 16,
             group_width: 224.,
             entry_width: 480.,
+            inspector_width: default_inspector_width(),
         }
     }
 }
@@ -52,7 +58,9 @@ impl Preferences {
             || !self.group_width.is_finite()
             || !self.entry_width.is_finite()
             || !(192.0..=280.0).contains(&self.group_width)
-            || !(380.0..=560.0).contains(&self.entry_width)
+            || !(330.0..=10000.0).contains(&self.entry_width)
+            || !self.inspector_width.is_finite()
+            || !(380.0..=10000.0).contains(&self.inspector_width)
         {
             Err(())
         } else {
@@ -136,7 +144,7 @@ mod tests {
                 assert_eq!(loaded.language, language);
                 assert_eq!(loaded.theme, theme);
                 loaded.save_to(&path).unwrap();
-                assert_eq!(std::fs::read_to_string(&path).unwrap(), previous);
+                assert_eq!(Preferences::load_from(&path).unwrap().inspector_width, 520.);
             }
         }
     }
@@ -170,6 +178,25 @@ mod tests {
             assert!(Preferences::load_from(&path).is_err());
             assert!(Preferences::default().save_to(&path).is_err());
             assert_eq!(std::fs::read_to_string(&path).unwrap(), contents);
+        }
+    }
+
+    #[test]
+    fn inspector_width_roundtrips_and_invalid_width_does_not_replace_preferences() {
+        let directory = Directory::new();
+        let path = directory.file();
+        let mut prefs = Preferences {
+            inspector_width: 740.,
+            entry_width: 1800.,
+            ..Default::default()
+        };
+        prefs.save_to(&path).unwrap();
+        assert_eq!(Preferences::load_from(&path).unwrap().inspector_width, 740.);
+        let previous = std::fs::read_to_string(&path).unwrap();
+        for invalid in [f32::NAN, f32::INFINITY, 0., 379.] {
+            prefs.inspector_width = invalid;
+            assert!(prefs.save_to(&path).is_err());
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), previous);
         }
     }
 

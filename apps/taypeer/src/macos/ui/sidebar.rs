@@ -19,6 +19,8 @@ pub(super) struct Sidebar {
     store: Entity<WorkspaceStore>,
     tree: Entity<TreeState>,
     source: Option<(DatabaseId, u64)>,
+    database: Option<DatabaseId>,
+    selection: Option<GroupId>,
     expanded: BTreeSet<String>,
     _subscriptions: Vec<Subscription>,
 }
@@ -56,6 +58,8 @@ impl Sidebar {
             store,
             tree,
             source: None,
+            database: None,
+            selection: None,
             expanded: BTreeSet::new(),
             _subscriptions: subscriptions,
         }
@@ -88,7 +92,8 @@ impl Sidebar {
                     })
                     .collect()
             }
-            let initial = self.source.as_ref().is_none_or(|old| old.0 != db);
+            let initial = self.database.as_ref() != Some(&db);
+            self.database = Some(db.clone());
             if initial {
                 self.expanded = database
                     .groups
@@ -101,17 +106,18 @@ impl Sidebar {
             self.source = Some(source);
         }
         let group = self.store.read(cx).state().group.clone();
+        let changed = self.selection != group;
+        self.selection = group.clone();
         if let Some(group) = group {
             let key: SharedString = group.as_str().to_owned().into();
-            if self
-                .tree
-                .read(cx)
-                .selected_item()
-                .is_none_or(|item| item.id != key)
-            {
+            let index = self.tree.read(cx).index_of(&key);
+            if changed && index.is_none() {
                 let item = TreeItem::new(key, "");
                 self.tree
                     .update(cx, |tree, cx| tree.set_selected_item(Some(&item), cx));
+            } else if self.tree.read(cx).selected_index() != index {
+                self.tree
+                    .update(cx, |tree, cx| tree.set_selected_index(index, cx));
             }
         }
     }
@@ -119,6 +125,8 @@ impl Sidebar {
 impl Render for Sidebar {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync(cx);
+        let sidebar = cx.entity();
+        let tree = self.tree.clone();
         let store = self.store.clone();
         let menu_store = self.store.clone();
         let context_store = self.store.clone();
@@ -220,6 +228,9 @@ impl Render for Sidebar {
                 Tree::new(&self.tree, move |ix, entry, selected, _, cx| {
                     let target = Some(GroupId::new(entry.item().id.as_str()));
                     let store_click = store.clone();
+                    let select_tree = tree.clone();
+                    let toggle_sidebar = sidebar.clone();
+                    let toggle_id = entry.item().id.to_string();
                     let state = store.read(cx);
                     let group = state
                         .state()
@@ -236,13 +247,34 @@ impl Render for Sidebar {
                             h_flex()
                                 .gap_2()
                                 .pl(rems(entry.depth() as f32))
-                                .child(div().w_4().flex_shrink_0().when(entry.is_folder(), |el| {
-                                    el.child(icon(if entry.is_expanded() {
-                                        "chevron-down"
-                                    } else {
-                                        "chevron-right"
-                                    }))
-                                }))
+                                .child(
+                                    div()
+                                        .id(("expand-group", ix))
+                                        .w_4()
+                                        .flex_shrink_0()
+                                        .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                            cx.stop_propagation()
+                                        })
+                                        .when(entry.is_folder(), |el| {
+                                            el.on_click(move |_, _, cx| {
+                                                cx.stop_propagation();
+                                                toggle_sidebar.update(cx, |sidebar, cx| {
+                                                    if !sidebar.expanded.remove(&toggle_id) {
+                                                        sidebar.expanded.insert(toggle_id.clone());
+                                                    }
+                                                    sidebar.source = None;
+                                                    cx.notify();
+                                                });
+                                            })
+                                            .child(
+                                                icon(if entry.is_expanded() {
+                                                    "chevron-down"
+                                                } else {
+                                                    "chevron-right"
+                                                }),
+                                            )
+                                        }),
+                                )
                                 .child(super::images::stored_icon(
                                     group.map_or("folder", |g| g.icon.as_str()),
                                     group.and_then(|g| g.icon_blob.as_ref()),
@@ -256,7 +288,9 @@ impl Render for Sidebar {
                                         .child(count.to_string()),
                                 ),
                         )
-                        .on_click(move |_, window, cx| {
+                        .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                            cx.stop_propagation();
+                            select_tree.update(cx, |tree, cx| tree.focus(window, cx));
                             if let Some(group) = &target {
                                 store_click.update(cx, |store, cx| {
                                     store.navigate(Destination::Group(group.clone()), window, cx)
