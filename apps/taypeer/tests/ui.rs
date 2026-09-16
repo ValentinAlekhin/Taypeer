@@ -112,6 +112,60 @@ mod macos {
             )
         });
     }
+    fn recent_databases_survive_restart() {
+        use taypeer_settings_ui::local_settings::LocalSettings;
+
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("PUBLIC-recent.taypeer");
+        let profile = directory.path().join("profile");
+        let mut app = start(directory.path(), "recent-databases");
+        create(&mut app, &path);
+        app.wait("recent database persisted", |_, _| {
+            LocalSettings::load(&profile)
+                .is_ok_and(|settings| settings.recent.iter().any(|item| item.path == path))
+        });
+        drop(app);
+
+        let settings = LocalSettings::load(&profile).unwrap();
+        assert_eq!(settings.recent.len(), 1);
+        let id = format!("recent-database-{}", settings.recent[0].database.as_str());
+        let mut welcome = start(directory.path(), "recent-databases-welcome");
+        welcome.wait("saved recent database shown on welcome", |window, _| {
+            window
+                .try_find(id.clone())
+                .is_some_and(|item| item.visible())
+                && window.try_find("welcome-open").is_some()
+                && window.try_find("unlock").is_none()
+        });
+        drop(welcome);
+        let mut reopened = start(directory.path(), "recent-databases");
+        reopened.wait("recent database visible after restart", |window, _| {
+            window
+                .try_find(id.clone())
+                .is_some_and(|item| item.visible())
+        });
+        assert!(reopened.worker_controls().is_empty());
+        reopened.update(|window, cx| {
+            assert!(window.find("welcome-open").visible());
+            assert!(window.try_find("unlock").is_none());
+            assert_eq!(
+                window.find(id.clone()).label(),
+                Some(path.to_str().unwrap())
+            );
+            // Kit reports no explicit enabled flag; the real click and unlock below
+            // verify that this visible control accepts input.
+            window.click(id.clone(), cx);
+        });
+        reopened.wait("recent database requires password", |window, _| {
+            window.try_find("unlock").is_some()
+        });
+        assert!(reopened.worker_controls().is_empty());
+        unlock(&mut reopened);
+        reopened.wait("recent database opened", |window, _| {
+            window.try_find("empty-add-group").is_some()
+        });
+    }
+
     fn creation_and_editing_survive_reopening() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("PUBLIC.taypeer");
@@ -406,7 +460,11 @@ mod macos {
             .skip(1)
             .filter(|arg| !arg.starts_with("--"))
             .collect();
-        let scenarios: [(&str, fn()); 5] = [
+        let scenarios: [(&str, fn()); 6] = [
+            (
+                "recent_databases_survive_restart",
+                recent_databases_survive_restart,
+            ),
             (
                 "inspector_reveal_can_be_hidden_and_revoked",
                 inspector_reveal_can_be_hidden_and_revoked,

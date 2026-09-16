@@ -81,6 +81,59 @@ impl SessionView {
             store.unlock(self.password.read(cx).value().to_string(), window, cx)
         });
     }
+
+    fn recent_databases(&self, cx: &Context<Self>) -> impl IntoElement {
+        let store = self.store.read(cx);
+        let recent = &store.local(cx).recent;
+        v_flex()
+            .w(rems(30.))
+            .gap_2()
+            .when(!recent.is_empty(), |el| {
+                el.child(
+                    div()
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(tr("ui.recent_databases")),
+                )
+                .child(
+                    v_flex()
+                        .id("recent-databases")
+                        .max_h(rems(16.))
+                        .overflow_y_scroll()
+                        .children(recent.iter().map(|item| {
+                            let path = item.path.clone();
+                            let name = path.file_name().unwrap_or_default().to_string_lossy();
+                            Button::new(format!("recent-database-{}", item.database.as_str()))
+                                .accessibility_label(path.to_string_lossy().into_owned())
+                                .ghost()
+                                .w_full()
+                                .h_auto()
+                                .py_2()
+                                .justify_start()
+                                .icon(icon("database"))
+                                .disabled(store.busy())
+                                .child(
+                                    v_flex()
+                                        .min_w_0()
+                                        .items_start()
+                                        .child(div().truncate().child(name.into_owned()))
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(cx.theme().muted_foreground)
+                                                .truncate()
+                                                .child(path.to_string_lossy().into_owned()),
+                                        ),
+                                )
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.store.update(cx, |store, cx| {
+                                        store.select_path(path.clone(), window, cx)
+                                    });
+                                }))
+                        })),
+                )
+            })
+    }
 }
 impl Render for SessionView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -193,6 +246,7 @@ impl Render for SessionView {
                                 })),
                         ),
                 )
+                .child(self.recent_databases(cx))
             })
     }
 }

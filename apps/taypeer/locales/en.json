@@ -27,6 +27,7 @@
   "overview": "Overview",
   "attributes": "Attributes",
   "history": "History",
+  "ui.recent_databases": "Recent databases",
   "add_attribute": "Add attribute",
   "remove": "Remove",
   "protected": "Protected",

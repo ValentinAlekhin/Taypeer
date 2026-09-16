@@ -27,6 +27,7 @@
   "overview": "Обзор",
   "attributes": "Атрибуты",
   "history": "История",
+  "ui.recent_databases": "Недавние базы данных",
   "add_attribute": "Добавить атрибут",
   "remove": "Удалить",
   "protected": "Защищённый",
