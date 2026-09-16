@@ -21,8 +21,19 @@ pub(super) struct SessionView {
     _subscriptions: Vec<Subscription>,
 }
 impl SessionView {
+    #[cfg(feature = "ui-test-support")]
+    pub(super) fn test_status(&self, cx: &App) -> String {
+        format!(
+            "password_present={}, input_error={}",
+            !self.password.read(cx).value().is_empty(),
+            self.error
+        )
+    }
     pub fn new(store: Entity<WorkspaceStore>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let password = input("", true, window, cx);
+        // The screen can be recreated after a lock. An unrelated later notification
+        // must not mistake that existing generation for a new lock and erase input.
+        let secret_epoch = store.read(cx).secret_epoch();
         let subscriptions = vec![
             cx.observe_in(&store, window, |this, store, window, cx| {
                 let state = store.read(cx);
@@ -52,7 +63,7 @@ impl SessionView {
             store,
             password,
             database: None,
-            secret_epoch: 0,
+            secret_epoch,
             error: false,
             _subscriptions: subscriptions,
         }
@@ -120,6 +131,7 @@ impl Render for SessionView {
                 el.child(
                     div().w(rems(24.)).child(super::clipboard::secret_field(
                         Input::new(&self.password)
+                            .id("unlock-password")
                             .aria_label(tr("password"))
                             .mask_toggle()
                             .bordered(false)

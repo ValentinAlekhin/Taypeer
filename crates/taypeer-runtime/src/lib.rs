@@ -13,6 +13,8 @@ pub use network::{
     NetworkSnapshot, PeerProgress, PendingJoin,
 };
 pub use protocol::{Command, RuntimeError, erase_view};
+#[cfg(feature = "ui-test-support")]
+pub use worker::run_test_worker;
 pub use worker::run_worker;
 
 use host::{Callbacks, HostContext};

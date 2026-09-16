@@ -3,6 +3,7 @@
 mod actions;
 mod assets;
 mod common;
+mod file_picker;
 mod platform;
 mod ui;
 
@@ -11,6 +12,15 @@ use gpui_kit::component::Root;
 use gpui_kit::*;
 
 pub(super) struct LaunchProfile(pub Option<std::path::PathBuf>);
+#[cfg(feature = "ui-test-support")]
+pub(super) struct TestLaunch {
+    pub preferences: std::path::PathBuf,
+    pub worker: std::path::PathBuf,
+}
+#[cfg(feature = "ui-test-support")]
+impl Global for TestLaunch {}
+#[cfg(feature = "ui-test-support")]
+pub mod testing;
 impl Global for LaunchProfile {}
 
 pub fn run(profile: Option<std::path::PathBuf>) {
@@ -18,6 +28,7 @@ pub fn run(profile: Option<std::path::PathBuf>) {
         .with_assets(ProductAssets)
         .run(move |cx| {
             cx.set_global(LaunchProfile(profile));
+            cx.set_global(file_picker::FileDialogs::native());
             gpui_kit::init(cx);
             if let Ok(platform) = platform::Platform::start() {
                 cx.set_global(platform);

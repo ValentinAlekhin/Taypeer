@@ -159,6 +159,20 @@ impl RuntimeHost {
         sessions: crate::session::SessionController,
     ) -> Result<Self, RuntimeError> {
         let lease = NativeProfile::acquire(profile)?;
+        Self::with_lease(lease, sessions)
+    }
+    /// Isolated public-fixture credentials; never used as a native fallback.
+    #[cfg(feature = "ui-test-support")]
+    pub fn with_test_sessions(
+        profile: &Path,
+        sessions: crate::session::SessionController,
+    ) -> Result<Self, RuntimeError> {
+        Self::with_lease(NativeProfile::acquire_test(profile)?, sessions)
+    }
+    fn with_lease(
+        lease: ProfileLease,
+        sessions: crate::session::SessionController,
+    ) -> Result<Self, RuntimeError> {
         let profile = lease.profile().clone();
         let transport = Arc::new(profile.transport()?);
         let coordinator = Arc::new(Coordinator::new(Arc::clone(&transport)));

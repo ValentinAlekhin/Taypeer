@@ -54,17 +54,20 @@ pub(in crate::macos::ui) fn attachment(
             cx,
         );
     } else {
-        let prompt = cx.prompt_for_paths(PathPromptOptions {
-            files: true,
-            directories: false,
-            multiple: false,
-            prompt: None,
-        });
+        let prompt = crate::macos::file_picker::open(
+            cx,
+            PathPromptOptions {
+                files: true,
+                directories: false,
+                multiple: false,
+                prompt: None,
+            },
+        );
         let handle = window.window_handle();
         cx.spawn(async move |cx| {
             let selected = prompt.await;
             let _ = handle.update(cx, |_, _, cx| {
-                if let Ok(Ok(Some(paths))) = selected
+                if let Ok(Some(paths)) = selected
                     && let Some(path) = paths.into_iter().next()
                 {
                     editor.update(cx, |e, cx| {
@@ -150,8 +153,11 @@ pub(in crate::macos::ui) fn export_attachment(
                 return;
             };
             let blob = row.contents[0].id.clone();
-            let prompt = cx
-                .prompt_for_new_path(&std::env::temp_dir(), row.names.first().map(String::as_str));
+            let prompt = crate::macos::file_picker::save(
+                cx,
+                &std::env::temp_dir(),
+                row.names.first().map(String::as_str),
+            );
             let handle = window.window_handle();
             let connection = connection.clone();
             let target = target.clone();
@@ -159,7 +165,7 @@ pub(in crate::macos::ui) fn export_attachment(
             cx.spawn(async move |_, cx| {
                 let selected = prompt.await;
                 let _ = handle.update(cx, |_, _, cx| {
-                    if let Ok(Ok(Some(path))) = selected {
+                    if let Ok(Some(path)) = selected {
                         let _ = weak.update(cx, |store, _| {
                             if !connection.control.is_open() {
                                 return;
@@ -196,17 +202,20 @@ pub(in crate::macos::ui) fn image_file(
     window: &mut Window,
     cx: &mut App,
 ) {
-    let prompt = cx.prompt_for_paths(PathPromptOptions {
-        files: true,
-        directories: false,
-        multiple: false,
-        prompt: None,
-    });
+    let prompt = crate::macos::file_picker::open(
+        cx,
+        PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: None,
+        },
+    );
     let handle = window.window_handle();
     cx.spawn(async move |cx| {
         let selected = prompt.await;
         let _ = handle.update(cx, |_, _, cx| {
-            if let Ok(Ok(Some(paths))) = selected
+            if let Ok(Some(paths)) = selected
                 && let Some(path) = paths.into_iter().next()
             {
                 editor.update(cx, |editor, cx| {

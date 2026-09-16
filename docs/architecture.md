@@ -28,6 +28,7 @@ pnpm arch:build
 | `platform`, `storage` | Платформенные границы, функции, хранение и обмен | [views.c4](../architecture/views.c4) |
 | `domain` | Основные сущности без полей типов | [представление](../architecture/views.c4), [сущности](../architecture/data.c4) |
 | `macosUi`, `uiEdit` | Компоненты UI и подтверждение общего черновика в памяти | [macos-ui.c4](../architecture/macos-ui.c4) |
+| `uiTesting` | Изолированные Rust UI-сценарии и платформенные адаптеры | [ui-testing.c4](../architecture/ui-testing.c4) |
 | `implementation` | Реализованный Rust-срез, файловый CLI и macOS demo | [views.c4](../architecture/views.c4) |
 | `devices` | Экземпляры общих компонентов на двух устройствах | [deployment.c4](../architecture/deployment.c4) |
 | `save`, `lock`, `receive`, `unlockApply`, `demoEdit` | Продуктовые сценарии и отдельное подтверждение в памяти demo | [flows.c4](../architecture/flows.c4) |

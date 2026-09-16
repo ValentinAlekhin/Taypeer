@@ -55,7 +55,23 @@ impl EditorView {
             state
         });
         let mut subscriptions = vec![
-            cx.observe(&editor, |_, _, cx| cx.notify()),
+            cx.observe_in(&editor, window, |this, editor, window, cx| {
+                let content = editor.read(cx).content().clone();
+                for (field, input) in &this.fields {
+                    let value = field.value(&content);
+                    if input.read(cx).value().as_str() != value {
+                        input.update(cx, |input, cx| {
+                            input.set_value(value.to_owned(), window, cx)
+                        });
+                    }
+                }
+                if this.notes.read(cx).value().as_str() != content.notes {
+                    this.notes.update(cx, |input, cx| {
+                        input.set_value(content.notes.clone(), window, cx)
+                    });
+                }
+                cx.notify();
+            }),
             cx.observe(&store, |_, _, cx| cx.notify()),
         ];
         for (field, input) in &fields {
@@ -545,16 +561,7 @@ impl EditorView {
     }
 }
 impl Render for EditorView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let content = self.editor.read(cx).content().clone();
-        for (entry_field, input) in &self.fields {
-            let value = entry_field.value(&content);
-            if input.read(cx).value().as_str() != value {
-                input.update(cx, |input, cx| {
-                    input.set_value(value.to_owned(), window, cx)
-                });
-            }
-        }
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let tab = self.store.read(cx).state().tab;
         let content = match tab {
             EntryTab::Overview => self.overview(cx),

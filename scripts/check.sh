@@ -22,7 +22,11 @@ pnpm arch:check
 cargo fmt --all -- --check
 cargo check-all
 cargo lint
-cargo test-all
+cargo test --workspace --exclude taypeer --all-features --locked
+cargo test -p taypeer --lib --all-features --locked
+if [ "$(uname -s)" = Darwin ]; then
+    cargo test -p taypeer --features ui-test-support --test ui --locked -- --test-threads=1
+fi
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked
 cargo build --workspace --release --locked
 cargo run --locked --quiet -p taypeer -- --smoke-test

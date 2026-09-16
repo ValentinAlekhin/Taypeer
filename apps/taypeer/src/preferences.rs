@@ -41,7 +41,7 @@ impl Preferences {
             Err(()) => (Self::default(), true),
         }
     }
-    fn load_from(path: &Path) -> Result<Self, ()> {
+    pub(crate) fn load_from(path: &Path) -> Result<Self, ()> {
         let text = match std::fs::read_to_string(path) {
             Ok(text) => text,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
@@ -70,7 +70,7 @@ impl Preferences {
     pub fn save(&self) -> Result<(), ()> {
         self.save_to(&Self::path()?)
     }
-    fn save_to(&self, path: &Path) -> Result<(), ()> {
+    pub(crate) fn save_to(&self, path: &Path) -> Result<(), ()> {
         self.validate()?;
         // Never overwrite a newer/invalid file, including one changed since startup.
         Self::load_from(path)?;

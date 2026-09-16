@@ -81,8 +81,42 @@ pub(super) struct AppView {
 }
 
 impl AppView {
+    #[cfg(feature = "ui-test-support")]
+    pub(super) fn test_capture_allowed(&self, cx: &App) -> bool {
+        !self.editing
+            && self.store.read(cx).sync().invitation.is_none()
+            && !self
+                .inspector
+                .as_ref()
+                .is_some_and(|inspector| inspector.read(cx).has_revealed_values())
+    }
+
+    #[cfg(feature = "ui-test-support")]
+    pub(super) fn test_idle(&self, cx: &App) -> bool {
+        self.store.read(cx).test_idle(cx)
+    }
+    #[cfg(feature = "ui-test-support")]
+    pub(super) fn test_controls(&self, cx: &App) -> Vec<taypeer_runtime::WorkerControl> {
+        self.store.read(cx).test_controls()
+    }
+    #[cfg(feature = "ui-test-support")]
+    pub(super) fn test_status(&self, cx: &App) -> String {
+        self.store.read(cx).test_status(cx)
+            + &self
+                .session
+                .as_ref()
+                .map(|view| format!("; {}", view.read(cx).test_status(cx)))
+                .unwrap_or_default()
+    }
+
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let preferences = cx.new(|_| PreferencesStore::load());
+        #[cfg(feature = "ui-test-support")]
+        let path = cx
+            .try_global::<super::TestLaunch>()
+            .map(|config| config.preferences.clone());
+        #[cfg(not(feature = "ui-test-support"))]
+        let path = None;
+        let preferences = cx.new(|_| PreferencesStore::load(path));
         rust_i18n::set_locale(preferences.read(cx).values().language.code());
         preferences.update(cx, |prefs, cx| prefs.apply(window, cx));
         cx.set_global(images::Images::default());
@@ -200,7 +234,13 @@ impl AppView {
             return h_flex()
                 .size_full()
                 .when(route == Route::Devices && unlocked, |el| {
-                    el.child(div().w(px(225.)).child(self.sidebar.clone()))
+                    el.child(
+                        div()
+                            .w(px(225.))
+                            .h_full()
+                            .flex_shrink_0()
+                            .child(self.sidebar.clone()),
+                    )
                 })
                 .child(div().flex_1().min_w_0().child(self.sync.clone()))
                 .into_any_element();

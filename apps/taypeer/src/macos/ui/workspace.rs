@@ -37,8 +37,45 @@ pub(super) struct WorkspaceStore {
     _catalog_subscription: Subscription,
 }
 impl WorkspaceStore {
+    #[cfg(feature = "ui-test-support")]
+    pub fn test_idle(&self, cx: &App) -> bool {
+        !self.busy()
+            && !self.sync.busy()
+            && !self.editor.as_ref().is_some_and(|e| e.read(cx).busy())
+    }
+    #[cfg(feature = "ui-test-support")]
+    pub fn test_controls(&self) -> Vec<taypeer_runtime::WorkerControl> {
+        self.connections
+            .values()
+            .map(|connection| connection.control.clone())
+            .collect()
+    }
+    #[cfg(feature = "ui-test-support")]
+    pub fn test_status(&self, cx: &App) -> String {
+        format!(
+            "unlocked={}, editing={}, busy={}, writable={}, selected={}, notice={:?}",
+            self.state.is_unlocked(),
+            self.editor.is_some(),
+            self.busy() || self.editor.as_ref().is_some_and(|e| e.read(cx).busy()),
+            self.writable(cx),
+            self.state.selected.is_some(),
+            self.notice
+        ) + &format!(
+            ", sync_status={}, sync_error={:?}",
+            self.sync.status, self.sync.error
+        )
+    }
+
     pub fn new(catalog: Entity<CatalogStore>, cx: &mut Context<Self>) -> Self {
-        let backend = Backend::new(cx.global::<crate::macos::LaunchProfile>().0.clone());
+        let profile = cx.global::<crate::macos::LaunchProfile>().0.clone();
+        #[cfg(feature = "ui-test-support")]
+        let backend = if let Some(config) = cx.try_global::<crate::macos::TestLaunch>() {
+            Backend::configured(profile, config.worker.clone(), true)
+        } else {
+            Backend::new(profile)
+        };
+        #[cfg(not(feature = "ui-test-support"))]
+        let backend = Backend::new(profile);
         let notice = if let Some(platform) = cx.try_global::<crate::macos::platform::Platform>() {
             if let Ok(backend) = &backend {
                 platform.attach(backend.sessions.clone());

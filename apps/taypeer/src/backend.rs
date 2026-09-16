@@ -157,6 +157,8 @@ pub(crate) struct Backend {
     pub profile: PathBuf,
     host: Arc<Mutex<Option<Arc<RuntimeHost>>>>,
     closed: Arc<AtomicBool>,
+    pub executable: PathBuf,
+    fixture: bool,
 }
 impl Backend {
     pub fn configure_relay(
@@ -192,6 +194,18 @@ impl Backend {
         })
     }
     pub fn new(profile: Option<PathBuf>) -> Result<Self> {
+        Self::configured(
+            profile,
+            std::env::current_exe().map_err(|_| RuntimeError::Transport)?,
+            false,
+        )
+    }
+    pub fn configured(
+        profile: Option<PathBuf>,
+        executable: PathBuf,
+        fixture: bool,
+    ) -> Result<Self> {
+        let worker_executable = executable.clone();
         let profile = profile
             .map(Ok)
             .unwrap_or_else(RuntimeHost::default_profile_path)?;
@@ -219,12 +233,16 @@ impl Backend {
                             if controller.activity().epoch() != epoch {
                                 return Err(RuntimeError::Closed);
                             }
-                            let host =
-                                acquire_host(&shared_host, &directory, &controller, &host_closed)?;
-                            let executable =
-                                std::env::current_exe().map_err(|_| RuntimeError::Transport)?;
+                            let host = acquire_host(
+                                &shared_host,
+                                &directory,
+                                &controller,
+                                &host_closed,
+                                fixture,
+                            )?;
+                            let executable = &worker_executable;
                             let mut worker = host.open_configured(
-                                &executable,
+                                executable,
                                 &path,
                                 password.to_string(),
                                 form,
@@ -290,6 +308,8 @@ impl Backend {
             profile,
             host,
             closed,
+            executable,
+            fixture,
         })
     }
     pub fn network<T: Send + 'static>(
@@ -304,8 +324,9 @@ impl Backend {
         let cancellation = taypeer_runtime::NetworkCancellation::default();
         let task_cancel = cancellation.clone();
         let closed = Arc::clone(&self.closed);
+        let fixture = self.fixture;
         let ticket = background(move || {
-            let host = acquire_host(&host, &profile, &sessions, &closed)?;
+            let host = acquire_host(&host, &profile, &sessions, &closed, fixture)?;
             work(&host, &task_cancel)
         });
         NetworkTicket {
@@ -344,16 +365,27 @@ fn acquire_host(
     directory: &Path,
     sessions: &SessionController,
     closed: &AtomicBool,
+    fixture: bool,
 ) -> Result<Arc<RuntimeHost>> {
     let mut slot = slot.lock().map_err(|_| RuntimeError::Transport)?;
     if closed.load(Ordering::Acquire) {
         return Err(RuntimeError::Closed);
     }
     if slot.is_none() {
-        *slot = Some(Arc::new(RuntimeHost::with_sessions(
-            directory,
-            sessions.clone(),
-        )?));
+        #[cfg(feature = "ui-test-support")]
+        let host = if fixture {
+            RuntimeHost::with_test_sessions(directory, sessions.clone())?
+        } else {
+            RuntimeHost::with_sessions(directory, sessions.clone())?
+        };
+        #[cfg(not(feature = "ui-test-support"))]
+        let host = {
+            if fixture {
+                return Err(RuntimeError::Protocol);
+            }
+            RuntimeHost::with_sessions(directory, sessions.clone())?
+        };
+        *slot = Some(Arc::new(host));
     }
     slot.as_ref().cloned().ok_or(RuntimeError::Closed)
 }

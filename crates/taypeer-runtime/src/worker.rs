@@ -24,6 +24,30 @@ pub fn run_worker(
     run_with_open(reader, writer, open_native)
 }
 
+type LoadProfile =
+    fn(&std::path::Path) -> Result<crate::profile::NativeProfile, crate::profile::ProfileError>;
+
+/// Serve synthetic UI fixtures with explicitly selected file credentials.
+#[cfg(feature = "ui-test-support")]
+pub fn run_test_worker(
+    reader: impl Read + Send + 'static,
+    writer: impl Write + Send + 'static,
+) -> Result<(), RuntimeError> {
+    run_with_profile(
+        reader,
+        writer,
+        |boot, channel, service| {
+            open_profile(
+                boot,
+                channel,
+                service,
+                crate::profile::NativeProfile::load_test,
+            )
+        },
+        crate::profile::NativeProfile::load_test,
+    )
+}
+
 fn run_with_open(
     reader: impl Read + Send + 'static,
     writer: impl Write + Send + 'static,
@@ -33,6 +57,19 @@ fn run_with_open(
         &mut DatabaseService,
     ) -> Result<SessionToken, RuntimeError>,
 ) -> Result<(), RuntimeError> {
+    run_with_profile(reader, writer, open, crate::profile::NativeProfile::load)
+}
+
+fn run_with_profile(
+    reader: impl Read + Send + 'static,
+    writer: impl Write + Send + 'static,
+    open: impl FnOnce(
+        &mut Boot,
+        &Arc<Mutex<Channel>>,
+        &mut DatabaseService,
+    ) -> Result<SessionToken, RuntimeError>,
+    load: LoadProfile,
+) -> Result<(), RuntimeError> {
     let (reader, _lifetime) = input::Incoming::start(reader);
     let channel = Arc::new(Mutex::new(Channel::new(reader, writer)));
     let mut boot: Boot = channel
@@ -41,7 +78,7 @@ fn run_with_open(
         .read()?;
     if let Some(invitation) = boot.invitation.take() {
         let result = (|| {
-            let profile = crate::profile::NativeProfile::load(&boot.profile)?;
+            let profile = load(&boot.profile)?;
             let author = profile.author()?;
             let identity =
                 taypeer_trust::Identity::new(author.public(), profile.transport_public())
@@ -88,7 +125,7 @@ fn run_with_open(
         .lock()
         .map_err(|_| RuntimeError::Transport)?
         .response(value(&session.database))?;
-    let outcome = serve(&channel, &mut service, &session, &boot);
+    let outcome = serve(&channel, &mut service, &session, &boot, load);
     // EOF and protocol errors also revoke access. A broken parent cannot receive
     // a draft failure, but the process must still stop holding the document.
     let closed = service.lock_all_checked().map_err(RuntimeError::from);
@@ -100,7 +137,15 @@ fn open_native(
     channel: &Arc<Mutex<Channel>>,
     service: &mut DatabaseService,
 ) -> Result<SessionToken, RuntimeError> {
-    let profile = crate::profile::NativeProfile::load(&boot.profile)?;
+    open_profile(boot, channel, service, crate::profile::NativeProfile::load)
+}
+fn open_profile(
+    boot: &mut Boot,
+    channel: &Arc<Mutex<Channel>>,
+    service: &mut DatabaseService,
+    load: LoadProfile,
+) -> Result<SessionToken, RuntimeError> {
+    let profile = load(&boot.profile)?;
     let form = boot.create_form.take().or_else(|| {
         boot.create_name
             .take()
@@ -151,6 +196,7 @@ fn serve(
     service: &mut DatabaseService,
     session: &SessionToken,
     boot: &Boot,
+    load: LoadProfile,
 ) -> Result<(), RuntimeError> {
     loop {
         let command: Command = channel
@@ -163,7 +209,18 @@ fn serve(
                 path,
                 operation,
                 password,
-            } => recover(service, session, channel, boot, &path, operation, &password),
+            } => recover(
+                service,
+                session,
+                channel,
+                boot,
+                Recovery {
+                    path: &path,
+                    operation,
+                    password: &password,
+                },
+                load,
+            ),
             command => dispatch(service, session, command),
         };
         channel
@@ -176,17 +233,26 @@ fn serve(
     }
 }
 
+struct Recovery<'a> {
+    path: &'a std::path::Path,
+    operation: taypeer_trust::Digest,
+    password: &'a [u8],
+}
 fn recover(
     service: &DatabaseService,
     session: &SessionToken,
     channel: &Arc<Mutex<Channel>>,
     boot: &Boot,
-    path: &std::path::Path,
-    operation: taypeer_trust::Digest,
-    password: &[u8],
+    request: Recovery<'_>,
+    load: LoadProfile,
 ) -> Result<Value, RuntimeError> {
+    let Recovery {
+        path,
+        operation,
+        password,
+    } = request;
     use crate::cipher_ipc::{IoRequest, IoValue, Seed, spool_objects};
-    let profile = crate::profile::NativeProfile::load(&boot.profile)?;
+    let profile = load(&boot.profile)?;
     let author = profile.author()?;
     let identity = taypeer_trust::Identity::new(author.public(), profile.transport_public())
         .map_err(|_| RuntimeError::Protocol)?;

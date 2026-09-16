@@ -36,6 +36,14 @@ jobs:
         run: rustup show
       - name: Check architecture, documentation and Rust
         run: sh scripts/check.sh
+      - name: Upload UI failure diagnostics
+        if: failure() && runner.os == 'macOS'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: taypeer-ui-diagnostics
+          path: artifacts/ui/
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Build architecture viewer
         if: runner.os == 'Linux'
         run: pnpm arch:build

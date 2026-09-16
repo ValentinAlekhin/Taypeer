@@ -34,12 +34,17 @@ impl ReadValue {
 
     pub fn render(
         &self,
+        id: SharedString,
+        value: String,
         sensitive: bool,
         store: Entity<WorkspaceStore>,
         identity: Option<(DatabaseId, EntryId)>,
     ) -> AnyElement {
         let input = self.input.clone();
         div()
+            .id(id)
+            .test_support()
+            .aria_label(value)
             .w_full()
             .child(
                 Textarea::new(&self.input)

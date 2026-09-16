@@ -1,0 +1,24 @@
+model {
+  uiTests = app 'Rust UI scenarios' {
+    #partial
+    technology 'Cargo; gpui-kit/test-support'
+    description 'Headless AppView instances with isolated profiles; UI events drive real runtime and worker processes.'
+    metadata { source 'apps/taypeer/src/macos/testing.rs'; contract 'docs/testing.md'; evidence 'apps/taypeer/tests/ui.rs' }
+  }
+  testPlatform = component 'UI test platform adapters' {
+    #partial
+    description 'Explicit feature-gated configuration: temporary credentials, preferences, a file-picker interface, owned clipboard and lock events. Headless resources and optional Metal rendering. Never a Keychain fallback.'
+    metadata { source 'apps/taypeer/src/macos/platform.rs'; contract 'docs/testing.md'; evidence 'apps/taypeer/tests/ui.rs' }
+  }
+  uiTests -> taypeer.mac.ui 'Real components and event handlers'
+  uiTests -> testPlatform 'Explicit isolated test configuration'
+  testPlatform -> taypeer.secretWorker 'Separate test worker; real cryptography and persistence'
+  uiTests -> taypeer.sync 'Two profiles; direct local protocol without public relay'
+}
+views 'macOS UI' {
+  view uiTesting {
+    title 'Headless UI testing boundaries'
+    include uiTests, testPlatform, taypeer.mac.ui, taypeer.secretWorker, taypeer.sync
+    autoLayout LeftRight
+  }
+}

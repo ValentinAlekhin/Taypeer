@@ -6,22 +6,25 @@ pub(in crate::macos::ui) fn choose_file(
     window: &mut Window,
     cx: &mut App,
 ) {
-    let selected = cx.prompt_for_paths(PathPromptOptions {
-        files: true,
-        directories: false,
-        multiple: false,
-        prompt: Some(tr("ui.open_file")),
-    });
+    let selected = crate::macos::file_picker::open(
+        cx,
+        PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some(tr("ui.open_file")),
+        },
+    );
     let handle = window.window_handle();
     cx.spawn(async move |cx| {
         let result = selected.await;
         let _ = handle.update(cx, |_, window, cx| match result {
-            Ok(Ok(Some(paths))) => {
+            Ok(Some(paths)) => {
                 if let Some(path) = paths.into_iter().next() {
                     store.update(cx, |s, cx| s.select_path(path, window, cx));
                 }
             }
-            Ok(Ok(None)) => {}
+            Ok(None) => {}
             _ => store.update(cx, |s, cx| s.set_notice("ui.operation_failed", cx)),
         });
     })
@@ -118,13 +121,16 @@ pub(in crate::macos::ui) fn database(
             let password = zeroize::Zeroizing::new(values[2].clone());
             Ok(Some(Box::new(move |done, window, cx| {
                 let epoch = store.read(cx).secret_epoch();
-                let prompt =
-                    cx.prompt_for_new_path(std::path::Path::new("."), Some("database.taypeer"));
+                let prompt = crate::macos::file_picker::save(
+                    cx,
+                    std::path::Path::new("."),
+                    Some("database.taypeer"),
+                );
                 let handle = window.window_handle();
                 cx.spawn(async move |cx| {
                     let selected = prompt.await;
                     let _ = handle.update(cx, |_, window, cx| match selected {
-                        Ok(Ok(Some(path))) => store.update(cx, |s, cx| {
+                        Ok(Some(path)) => store.update(cx, |s, cx| {
                             if s.secret_epoch() != epoch {
                                 done(Err(FormError::Canceled), window, cx);
                                 return;
@@ -144,7 +150,7 @@ pub(in crate::macos::ui) fn database(
                                 cx,
                             )
                         }),
-                        Ok(Ok(None)) => done(Err(FormError::Canceled), window, cx),
+                        Ok(None) => done(Err(FormError::Canceled), window, cx),
                         _ => done(Err(FormError::Backend), window, cx),
                     });
                 })

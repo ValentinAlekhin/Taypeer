@@ -44,6 +44,7 @@ pub(super) fn row(label: &str, value: impl IntoElement, cx: &App) -> AnyElement 
 }
 pub(super) fn field(state: &Entity<InputState>, label: &str) -> Input {
     Input::new(state)
+        .id(SharedString::from(format!("field-{label}")))
         .aria_label(tr(label))
         .bordered(false)
         .focus_bordered(true)

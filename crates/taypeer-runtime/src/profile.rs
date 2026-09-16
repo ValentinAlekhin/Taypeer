@@ -11,6 +11,9 @@ use taypeer_storage::{Anchor, AnchorStore, ArchiveSnapshot};
 use taypeer_trust::{AuthorKey, Digest, Identity, PublicKey, TransportKey};
 use zeroize::Zeroizing;
 
+mod credentials;
+use credentials::Credentials;
+
 /// Sanitized profile/credential failures; keychain diagnostics never escape this boundary.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProfileError {
@@ -43,6 +46,7 @@ struct PublicProfile {
 pub struct NativeProfile {
     directory: PathBuf,
     public: PublicProfile,
+    credentials: Credentials,
 }
 /// Exclusive host ownership. Worker processes load only `NativeProfile`.
 pub struct ProfileLease {
@@ -72,7 +76,8 @@ impl NativeProfile {
         &self,
         key: &str,
     ) -> Result<Option<T>, ProfileError> {
-        native::get(&self.service(), &format!("state:{key}"))?
+        self.credentials
+            .get(&self.service(), &format!("state:{key}"))?
             .map(|bytes| serde_json::from_slice(&bytes).map_err(|_| ProfileError::Invalid))
             .transpose()
     }
@@ -81,11 +86,26 @@ impl NativeProfile {
         if bytes.len() > 64 * 1024 {
             return Err(ProfileError::Invalid);
         }
-        native::set(&self.service(), &format!("state:{key}"), &bytes)
+        self.credentials
+            .set(&self.service(), &format!("state:{key}"), &bytes)
     }
     /// Open/create a native profile and reserve its endpoint for this host lifetime.
     /// Only the transport role is acquired here; author access belongs to unlocked workers.
     pub fn acquire(directory: &Path) -> Result<ProfileLease, ProfileError> {
+        Self::acquire_with(directory, Credentials::Native)
+    }
+    /// Create an isolated profile for public synthetic UI fixtures only.
+    #[cfg(feature = "ui-test-support")]
+    pub fn acquire_test(directory: &Path) -> Result<ProfileLease, ProfileError> {
+        Self::acquire_with(
+            directory,
+            Credentials::Fixture(directory.join("public-credentials")),
+        )
+    }
+    fn acquire_with(
+        directory: &Path,
+        credentials: Credentials,
+    ) -> Result<ProfileLease, ProfileError> {
         std::fs::create_dir_all(directory).map_err(|_| ProfileError::Io)?;
         let directory = directory.canonicalize().map_err(|_| ProfileError::Io)?;
         let lock = OpenOptions::new()
@@ -98,19 +118,20 @@ impl NativeProfile {
         lock.try_lock().map_err(|_| ProfileError::Busy)?;
         let path = directory.join("profile.json");
         let profile = if path.try_exists().map_err(|_| ProfileError::Io)? {
-            Self::load(&directory)?
+            Self::load_with(&directory, credentials.clone())?
         } else {
             let id = random_id()?;
             let transport = TransportKey::generate().map_err(|_| ProfileError::Credentials)?;
             let profile = Self {
                 directory,
+                credentials,
                 public: PublicProfile {
                     version: 1,
                     id,
                     transport: transport.public(),
                 },
             };
-            native::set(
+            profile.credentials.set(
                 &profile.service(),
                 "transport",
                 transport.secret_seed().as_ref(),
@@ -129,6 +150,17 @@ impl NativeProfile {
     }
     /// Load public configuration only. This is the worker-side operation before authentication.
     pub fn load(directory: &Path) -> Result<Self, ProfileError> {
+        Self::load_with(directory, Credentials::Native)
+    }
+    /// Load only an explicitly selected synthetic fixture profile.
+    #[cfg(feature = "ui-test-support")]
+    pub fn load_test(directory: &Path) -> Result<Self, ProfileError> {
+        Self::load_with(
+            directory,
+            Credentials::Fixture(directory.join("public-credentials")),
+        )
+    }
+    fn load_with(directory: &Path, credentials: Credentials) -> Result<Self, ProfileError> {
         let directory = directory.canonicalize().map_err(|_| ProfileError::Io)?;
         let file = File::open(directory.join("profile.json")).map_err(|_| ProfileError::Io)?;
         if file.metadata().map_err(|_| ProfileError::Io)?.len() > 4096 {
@@ -147,7 +179,11 @@ impl NativeProfile {
             .transport
             .validate()
             .map_err(|_| ProfileError::Invalid)?;
-        Ok(Self { directory, public })
+        Ok(Self {
+            directory,
+            public,
+            credentials,
+        })
     }
     /// Directory contains only public configuration and the host lock.
     pub fn directory(&self) -> &Path {
@@ -159,29 +195,31 @@ impl NativeProfile {
     }
     /// Acquire only the endpoint/manifest credential in the coordinator process.
     pub fn transport(&self) -> Result<TransportKey, ProfileError> {
-        let seed = read_seed(&self.service(), "transport")?.ok_or(ProfileError::Credentials)?;
+        let seed = read_seed(&self.credentials, &self.service(), "transport")?
+            .ok_or(ProfileError::Credentials)?;
         Ok(TransportKey::from_seed(&seed))
     }
     /// Acquire/enroll the independent author role after password authentication or explicit
     /// create/join enrollment. The caller owns its lifetime and must never send it to the host.
     pub fn author(&self) -> Result<AuthorKey, ProfileError> {
-        let author = match read_seed(&self.service(), "author")? {
+        let author = match read_seed(&self.credentials, &self.service(), "author")? {
             Some(seed) => AuthorKey::from_seed(&seed),
             None => {
                 let author = AuthorKey::generate().map_err(|_| ProfileError::Credentials)?;
-                native::set(&self.service(), "author", author.secret_seed().as_ref())?;
+                self.credentials
+                    .set(&self.service(), "author", author.secret_seed().as_ref())?;
                 author
             }
         };
         let identity = Identity::new(author.public(), self.public.transport)
             .map_err(|_| ProfileError::Invalid)?;
         let bytes = serde_json::to_vec(&identity).map_err(|_| ProfileError::Invalid)?;
-        native::set(&self.service(), "identity", &bytes)?;
+        self.credentials.set(&self.service(), "identity", &bytes)?;
         Ok(author)
     }
     /// Read enrolled public roles without acquiring the author seed.
     pub fn identity(&self) -> Result<Option<Identity>, ProfileError> {
-        let Some(bytes) = native::get(&self.service(), "identity")? else {
+        let Some(bytes) = self.credentials.get(&self.service(), "identity")? else {
             return Ok(None);
         };
         let identity: Identity =
@@ -195,7 +233,8 @@ impl NativeProfile {
     /// Find a protected registration for the exact canonical working path.
     pub fn registration(&self, path: &Path) -> Result<Option<Registration>, ProfileError> {
         let account = copy_account(path)?;
-        native::get(&self.service(), &account)?
+        self.credentials
+            .get(&self.service(), &account)?
             .map(|bytes| serde_json::from_slice(&bytes).map_err(|_| ProfileError::Invalid))
             .transpose()
     }
@@ -264,6 +303,7 @@ impl NativeProfile {
     /// Protected per-copy anti-rollback marker, separate from portable content.
     pub fn anchor(&self, registration: &Registration) -> Arc<dyn AnchorStore> {
         Arc::new(NativeAnchor {
+            credentials: self.credentials.clone(),
             service: self.service(),
             account: format!("anchor:{}", registration.working_copy),
         })
@@ -274,19 +314,23 @@ impl NativeProfile {
         registration: &Registration,
     ) -> Result<(), ProfileError> {
         let bytes = serde_json::to_vec(registration).map_err(|_| ProfileError::Invalid)?;
-        native::set(&self.service(), &copy_account(path)?, &bytes)
+        self.credentials
+            .set(&self.service(), &copy_account(path)?, &bytes)
     }
     fn service(&self) -> String {
         format!("org.taypeer.dev4.{}", self.public.id)
     }
 }
 struct NativeAnchor {
+    credentials: Credentials,
     service: String,
     account: String,
 }
 impl AnchorStore for NativeAnchor {
     fn load(&self) -> Result<Option<Anchor>, taypeer_storage::Error> {
-        let bytes = native::get(&self.service, &self.account)
+        let bytes = self
+            .credentials
+            .get(&self.service, &self.account)
             .map_err(|_| taypeer_storage::Error::Io)?
             .ok_or(taypeer_storage::Error::Changed)?;
         Ok(Some(
@@ -295,11 +339,18 @@ impl AnchorStore for NativeAnchor {
     }
     fn save(&self, anchor: &Anchor) -> Result<(), taypeer_storage::Error> {
         let bytes = serde_json::to_vec(anchor).map_err(|_| taypeer_storage::Error::InvalidFile)?;
-        native::set(&self.service, &self.account, &bytes).map_err(|_| taypeer_storage::Error::Io)
+        self.credentials
+            .set(&self.service, &self.account, &bytes)
+            .map_err(|_| taypeer_storage::Error::Io)
     }
 }
-fn read_seed(service: &str, account: &str) -> Result<Option<Zeroizing<[u8; 32]>>, ProfileError> {
-    native::get(service, account)?
+fn read_seed(
+    credentials: &Credentials,
+    service: &str,
+    account: &str,
+) -> Result<Option<Zeroizing<[u8; 32]>>, ProfileError> {
+    credentials
+        .get(service, account)?
         .map(|bytes| {
             let seed: &[u8; 32] = bytes
                 .as_slice()

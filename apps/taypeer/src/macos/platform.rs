@@ -13,6 +13,8 @@ use std::{
 use zeroize::Zeroize;
 pub(super) struct Platform {
     child: Option<Child>,
+    #[cfg(feature = "ui-test-support")]
+    clipboard: Option<Mutex<zeroize::Zeroizing<String>>>,
     next_copy: AtomicU64,
     pending_copies: Mutex<BTreeMap<u64, bool>>,
     send: mpsc::SyncSender<zeroize::Zeroizing<Vec<u8>>>,
@@ -24,6 +26,39 @@ pub(super) struct Platform {
 }
 impl Global for Platform {}
 impl Platform {
+    #[cfg(feature = "ui-test-support")]
+    pub fn fixture() -> Self {
+        let (send, _) = mpsc::sync_channel(8);
+        let (event_sender, events) = mpsc::channel();
+        Self {
+            child: None,
+            clipboard: Some(Mutex::new(zeroize::Zeroizing::new(String::new()))),
+            next_copy: AtomicU64::new(1),
+            pending_copies: Mutex::new(BTreeMap::new()),
+            send,
+            event_sender,
+            sessions: Arc::new(Mutex::new(None)),
+            available: Arc::new(AtomicBool::new(true)),
+            events: Mutex::new(events),
+            clipboard_seconds: Some(30),
+        }
+    }
+    #[cfg(feature = "ui-test-support")]
+    pub fn fixture_clipboard(&self) -> String {
+        self.clipboard
+            .as_ref()
+            .expect("fixture platform")
+            .lock()
+            .expect("fixture clipboard")
+            .to_string()
+    }
+    #[cfg(feature = "ui-test-support")]
+    pub fn fixture_lock(&self) {
+        if let Some(sessions) = self.sessions.lock().expect("fixture sessions").as_ref() {
+            sessions.lock_all(taypeer_runtime::session::LockReason::SystemLocked);
+        }
+        let _ = self.event_sender.send("locked".into());
+    }
     pub fn start() -> std::io::Result<Self> {
         let sibling = std::env::current_exe()?.with_file_name("taypeer-platform");
         let path = if sibling.is_file() {
@@ -99,6 +134,8 @@ impl Platform {
         });
         Ok(Self {
             child: Some(child),
+            #[cfg(feature = "ui-test-support")]
+            clipboard: None,
             next_copy: AtomicU64::new(1),
             pending_copies: Mutex::new(BTreeMap::new()),
             event_sender,
@@ -128,6 +165,12 @@ impl Platform {
         let id = self.next_copy.fetch_add(1, Ordering::Relaxed);
         if let Ok(mut pending) = self.pending_copies.lock() {
             pending.insert(id, notify);
+        }
+        #[cfg(feature = "ui-test-support")]
+        if let Some(clipboard) = &self.clipboard {
+            *clipboard.lock().expect("fixture clipboard") = zeroize::Zeroizing::new(text);
+            let _ = self.event_sender.send(format!("clipboard_ok:{id}"));
+            return;
         }
         let encoded = serde_json::to_vec(&Copy {
             id,

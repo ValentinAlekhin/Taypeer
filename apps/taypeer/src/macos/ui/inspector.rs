@@ -32,6 +32,11 @@ pub(super) struct Inspector {
     _subscription: Subscription,
 }
 impl Inspector {
+    #[cfg(feature = "ui-test-support")]
+    pub(super) fn has_revealed_values(&self) -> bool {
+        !self.revealed.is_empty()
+    }
+
     pub fn new(store: Entity<WorkspaceStore>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         Self {
             _subscription: cx.observe_in(&store, window, |this, store, window, cx| {
@@ -97,7 +102,13 @@ impl Inspector {
                 .entry(key.clone())
                 .or_insert_with(|| super::read_value::ReadValue::new(text, window, cx));
             input.sync(text, window, cx);
-            input.render(secret, self.store.clone(), self.identity.clone())
+            input.render(
+                format!("read-{key}").into(),
+                text.clone(),
+                secret,
+                self.store.clone(),
+                self.identity.clone(),
+            )
         } else {
             if let Some(input) = self.values.remove(&key) {
                 input.clear(window, cx);

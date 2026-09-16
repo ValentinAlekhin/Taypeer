@@ -224,9 +224,10 @@ impl SyncStore {
         self.active = true;
         self.error = None;
         self.status = "sync.connecting";
+        let executable = backend.executable.clone();
         self.operation = Some(backend.network(move |host, cancellation| {
             host.start_network(relay.setting()?)?;
-            let executable = std::env::current_exe().map_err(|_| RuntimeError::Transport)?;
+
             let progress = host.join_cancellable(&executable, code, &path, cancellation)?;
             Ok(Outcome::Joined { path, progress })
         }));

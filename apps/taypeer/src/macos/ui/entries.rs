@@ -275,6 +275,8 @@ impl TableDelegate for EntryTableDelegate {
 
         h_flex()
             .id(SharedString::from(format!("entry-cell-{row_ix}-{col_ix}")))
+            .test_support()
+            .aria_label(value.clone())
             .size_full()
             .min_w_0()
             .gap_2()

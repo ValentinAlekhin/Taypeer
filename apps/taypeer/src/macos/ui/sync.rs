@@ -59,7 +59,11 @@ impl SyncView {
         self.error = None;
         self.selecting = true;
         let epoch = self.epoch;
-        let prompt = cx.prompt_for_new_path(std::path::Path::new("."), Some("received.taypeer"));
+        let prompt = crate::macos::file_picker::save(
+            cx,
+            std::path::Path::new("."),
+            Some("received.taypeer"),
+        );
         cx.spawn_in(window, async move |this, cx| {
             let selected = prompt.await;
             let _ = this.update_in(cx, |this, window, cx| {
@@ -70,13 +74,13 @@ impl SyncView {
                     return;
                 }
                 match selected {
-                    Ok(Ok(Some(path))) => {
+                    Ok(Some(path)) => {
                         this.code
                             .update(cx, |input, cx| input.set_value("", window, cx));
                         this.store
                             .update(cx, |store, cx| store.join_database(code, path, cx));
                     }
-                    Ok(Ok(None)) => {}
+                    Ok(None) => {}
                     _ => this.error = Some("ui.file_error"),
                 }
                 cx.notify();
@@ -118,6 +122,7 @@ impl SyncView {
             .child(
                 div().max_w(px(680.)).child(super::clipboard::secret_field(
                     Input::new(&self.code)
+                        .id("invitation-code")
                         .aria_label(tr("sync.code"))
                         .mask_toggle()
                         .disabled(sync.busy() || self.selecting),

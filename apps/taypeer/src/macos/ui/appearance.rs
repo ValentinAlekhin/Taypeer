@@ -13,14 +13,22 @@ static PALETTES: LazyLock<BTreeMap<String, BTreeMap<String, u32>>> = LazyLock::n
 
 pub(super) struct PreferencesStore {
     values: Preferences,
+    path: Option<std::path::PathBuf>,
     invalid_file: bool,
     error: Option<&'static str>,
 }
 impl PreferencesStore {
-    pub fn load() -> Self {
-        let (values, invalid_file) = Preferences::load();
+    pub fn load(path: Option<std::path::PathBuf>) -> Self {
+        let (values, invalid_file) = match &path {
+            Some(path) => match Preferences::load_from(path) {
+                Ok(values) => (values, false),
+                Err(()) => (Preferences::default(), true),
+            },
+            None => Preferences::load(),
+        };
         Self {
             values,
+            path,
             invalid_file,
             error: invalid_file.then_some("prefs_error"),
         }
@@ -71,7 +79,12 @@ impl PreferencesStore {
     fn persist(&mut self) {
         self.error = if self.invalid_file {
             Some("prefs_error")
-        } else if self.values.save().is_err() {
+        } else if self
+            .path
+            .as_ref()
+            .map_or_else(|| self.values.save(), |path| self.values.save_to(path))
+            .is_err()
+        {
             Some("prefs_write")
         } else {
             None
