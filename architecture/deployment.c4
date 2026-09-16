@@ -1,6 +1,7 @@
 deployment {
   mac = device 'Mac владельца' {
     technology 'macOS 15+; Apple Silicon'
+    description 'Локальная dev-сборка подписывается постоянным пользовательским сертификатом для сохранения идентичности доступа к Keychain; не подпись выпуска.'
     ui = instanceOf taypeer.mac
     sessions = instanceOf taypeer.sessions
     core = instanceOf taypeer.core

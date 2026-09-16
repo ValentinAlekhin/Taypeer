@@ -1,0 +1,14 @@
+# Local code-signing certificate only; not a TLS or distribution certificate.
+[req]
+distinguished_name = subject
+x509_extensions = signing
+prompt = no
+
+[subject]
+CN = Taypeer Local Development
+
+[signing]
+basicConstraints = critical,CA:false
+keyUsage = critical,digitalSignature
+extendedKeyUsage = critical,codeSigning
+subjectKeyIdentifier = hash
