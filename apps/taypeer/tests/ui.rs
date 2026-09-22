@@ -10,6 +10,7 @@ fn main() {
 mod macos {
     use gpui_kit::test::TestWindowExt;
     use std::path::Path;
+    use std::time::{Duration, Instant};
     use taypeer::testing::Session;
 
     fn title_cell(
@@ -37,8 +38,27 @@ mod macos {
             scenario,
         )
     }
+    fn wait_for_stable_control(app: &mut Session, id: &'static str) {
+        let mut previous = None;
+        let mut stable_since = Instant::now();
+        // Kit's click renders between locating the target and mouse-down. Its
+        // dialog animation uses wall time, not Session's virtual executor clock.
+        app.wait(id, |window, _| {
+            let bounds = window
+                .try_find(id)
+                .filter(|item| item.visible())
+                .map(|item| item.bounds());
+            if bounds.is_none() || bounds != previous {
+                previous = bounds;
+                stable_since = Instant::now();
+                return false;
+            }
+            stable_since.elapsed() >= Duration::from_millis(50)
+        });
+    }
     fn click(app: &mut Session, id: &'static str) {
         app.wait_idle();
+        wait_for_stable_control(app, id);
         app.step(id);
         app.update(|window, cx| {
             assert!(window.find(id).visible(), "control must be visible: {id}");
@@ -52,6 +72,7 @@ mod macos {
         app.pump();
     }
     fn fill(app: &mut Session, id: &'static str, value: &str) {
+        wait_for_stable_control(app, id);
         app.step(id);
         app.update(|window, cx| {
             assert_ne!(
@@ -346,8 +367,8 @@ mod macos {
         click(&mut a, "copy-invitation");
         a.transfer_clipboard_to(&mut b);
         click(&mut b, "welcome-receive");
+        click(&mut b, "invitation-code");
         b.update(|window, cx| {
-            window.click("invitation-code", cx);
             window.press("cmd-v", cx);
         });
         b.pump();
