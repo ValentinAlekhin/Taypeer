@@ -541,7 +541,13 @@ impl DatabaseService {
         managed.load_required_blobs(&document, &mut blobs)?;
         // An unsupported writer must not decode/rewrite a possibly newer local draft.
         let draft = if compatibility.write.is_supported() {
-            managed.load_draft(&mut blobs)?
+            match managed.load_draft(&mut blobs)? {
+                Some(draft) if draft.confirmed(&document)? => {
+                    managed.port.discard_draft()?;
+                    None
+                }
+                other => other,
+            }
         } else {
             None
         };
@@ -565,6 +571,7 @@ impl DatabaseService {
                 unlocked: true,
                 draft,
                 draft_deferred: !compatibility.write.is_supported(),
+                write_uncertain: false,
             },
         );
         Ok(SessionToken {
@@ -582,7 +589,8 @@ impl DatabaseService {
     /// Whether this session may author new changes under the latest local authority.
     pub fn can_write(&self, session: &SessionToken) -> Result<bool, ServiceError> {
         let state = self.checked(session)?;
-        Ok(self.compatibility(session)?.value.write.is_supported()
+        Ok(!state.write_uncertain
+            && self.compatibility(session)?.value.write.is_supported()
             && state.managed.as_ref().is_none_or(|m| m.writer().is_ok()))
     }
 }

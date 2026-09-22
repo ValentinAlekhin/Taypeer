@@ -820,7 +820,7 @@ impl WorkspaceStore {
             return;
         }
         self.save_requested = false;
-        if editor.read(cx).error().is_some() {
+        if editor.read(cx).save_blocked() {
             editor.update(cx, |editor, cx| {
                 editor.freeze(false);
                 cx.notify();
@@ -828,11 +828,19 @@ impl WorkspaceStore {
             self.set_notice("ui.operation_failed", cx);
             return;
         }
+        let operation = match editor.update(cx, |editor, _| editor.save_operation()) {
+            Ok(operation) => operation,
+            Err(_) => {
+                editor.update(cx, |editor, _| editor.freeze(false));
+                self.set_notice("ui.operation_failed", cx);
+                return;
+            }
+        };
         let connection = editor.read(cx).connection().clone();
         self.saving = true;
         self.operation += 1;
         self.watch_operation(
-            connection.command::<EntryId>(Command::SaveDraft),
+            connection.command::<EntryId>(Command::SaveDraft { operation }),
             |this, result, window, cx| {
                 this.saving = false;
                 match result {

@@ -63,6 +63,7 @@ pub(in crate::ui) fn database(
             ("ui.kdf_seconds", "1.0".into(), false),
         ]);
     }
+    let attempt = FormAttempt::default();
     text_form(
         if id.is_some() {
             "ui.database_info"
@@ -80,11 +81,13 @@ pub(in crate::ui) fn database(
             };
             let store = store.clone();
             if id.is_some() {
+                let operation = attempt.operation(values)?;
                 let connection = connection.clone().ok_or(FormError::MissingObject)?;
                 return Ok(Some(Box::new(move |done, _, cx| {
                     store.update(cx, |s, _| {
                         s.watch(
                             connection.command::<()>(taypeer_runtime::Command::SetDatabaseInfo {
+                                operation,
                                 name,
                                 description,
                             }),

@@ -25,3 +25,20 @@ pub fn request_quit(store: Entity<WorkspaceStore>, window: &mut Window, cx: &mut
         cx,
     );
 }
+
+/// Owns the identity of one exact metadata-form submission.
+#[derive(Default)]
+struct FormAttempt(std::cell::RefCell<Option<(Vec<String>, taypeer_core::OperationId)>>);
+impl FormAttempt {
+    fn operation(&self, values: &[String]) -> Result<taypeer_core::OperationId, FormError> {
+        let mut attempt = self.0.borrow_mut();
+        if let Some((old, operation)) = &*attempt
+            && old == values
+        {
+            return Ok(operation.clone());
+        }
+        let operation = taypeer_services::new_operation_id().map_err(|_| FormError::Backend)?;
+        *attempt = Some((values.to_vec(), operation.clone()));
+        Ok(operation)
+    }
+}

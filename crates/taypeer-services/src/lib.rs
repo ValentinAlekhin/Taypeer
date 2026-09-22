@@ -35,6 +35,7 @@ pub use taypeer_document::{
     PendingSource, PreparedLifecycle, RecoveryMode, RecoveryRequest, SiblingPosition,
 };
 
+mod commands;
 mod draft;
 use draft::{DraftKind, DraftState};
 
@@ -74,6 +75,8 @@ use views::{attribute_value, entry_summary, entry_view, group_summary, matches_q
 pub enum ServiceError {
     /// Requested database, group, entry, attribute, or revision does not exist.
     NotFound,
+    /// The operation ID is already bound to another exact request.
+    OperationConflict,
     /// The selected database is locked.
     Locked,
     /// A request marker belongs to an earlier session.
@@ -121,6 +124,7 @@ pub enum ServiceError {
 impl fmt::Display for ServiceError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
+            Self::OperationConflict => "the operation ID belongs to another request",
             Self::NotFound => "the requested object does not exist",
             Self::Locked => "the database is locked",
             Self::ExpiredSession => "the request belongs to an expired session",
@@ -177,6 +181,7 @@ struct DatabaseState {
     draft: Option<DraftState>,
     // The on-disk draft was deliberately not decoded by an incompatible writer.
     draft_deferred: bool,
+    write_uncertain: bool,
 }
 
 /// Serialized application scenarios over domain documents and optional encrypted file storage.
@@ -225,7 +230,12 @@ impl DatabaseService {
         let database = service.create_database("Demo / Демонстрация")?;
         let session = service.unlock(&database, DEMO_PASSWORD)?;
         let group = service
-            .create_group(&session, "Examples / Примеры".into(), None)?
+            .create_group(
+                &session,
+                "Examples / Примеры".into(),
+                None,
+                &crate::new_operation_id()?,
+            )?
             .value;
         service.start_create_entry(&session, group.id)?;
         service.update_draft(
@@ -246,7 +256,7 @@ impl DatabaseService {
                 ..EditableEntry::default()
             },
         )?;
-        service.save_draft(&session)?;
+        service.save_draft(&session, &crate::new_operation_id()?)?;
         service.lock(&session)?;
         Ok(service)
     }
@@ -280,6 +290,7 @@ impl DatabaseService {
                 unlocked: false,
                 draft: None,
                 draft_deferred: false,
+                write_uncertain: false,
             },
         );
         Ok(id)
@@ -393,30 +404,35 @@ impl DatabaseService {
         session: &SessionToken,
         name: String,
         parent: Option<GroupId>,
+        operation: &taypeer_core::OperationId,
     ) -> Result<SessionValue<GroupSummary>, ServiceError> {
         let now = (self.clock)();
-        let group = self
-            .checked_mut(session)?
-            .change(|document| Ok(document.create_group(name, parent, now)?))?;
+        let fingerprint = commands::fingerprint(&(name.as_str(), &parent))?;
+        let group = self.checked_mut(session)?.command(
+            operation,
+            "create_group",
+            fingerprint,
+            |doc, receipt| Ok(doc.create_group_command(name, parent, now, Some(receipt))?),
+        )?;
         Ok(stamped(session, group_summary(group)))
     }
 
-    /// Rename a group without changing its parent or the active entry draft.
+    /// Rename a group; retry returns the original summary without reverting later edits.
     pub fn update_group(
         &mut self,
         session: &SessionToken,
         id: &GroupId,
         name: String,
+        operation: &taypeer_core::OperationId,
     ) -> Result<SessionValue<GroupSummary>, ServiceError> {
         let now = (self.clock)();
-        let state = self.checked_mut(session)?;
-        state.change(|document| Ok(document.rename_group(id, name, now)?))?;
-        let group = state
-            .document()
-            .groups()?
-            .into_iter()
-            .find(|group| &group.id == id)
-            .ok_or(ServiceError::NotFound)?;
+        let fingerprint = commands::fingerprint(&(id, &name))?;
+        let group = self.checked_mut(session)?.command(
+            operation,
+            "rename_group",
+            fingerprint,
+            |doc, receipt| Ok(doc.rename_group_command(id, name, now, Some(receipt))?),
+        )?;
         Ok(stamped(session, group_summary(group)))
     }
 
@@ -607,12 +623,11 @@ impl DatabaseService {
         session: &SessionToken,
         fields: EditableEntry,
     ) -> Result<SessionValue<DraftView>, ServiceError> {
-        let draft = self
-            .checked_mut(session)?
-            .draft
-            .as_mut()
-            .ok_or(ServiceError::NoDraft)?;
-        Ok(stamped(session, draft.update(fields)?))
+        let state = self.checked_mut(session)?;
+        let mut draft = state.draft_for_edit()?;
+        let view = draft.update(fields)?;
+        state.draft = Some(draft);
+        Ok(stamped(session, view))
     }
 
     /// Retain invalid platform date input without pretending it is a valid domain timestamp.
@@ -622,22 +637,47 @@ impl DatabaseService {
         session: &SessionToken,
         input: Option<String>,
     ) -> Result<SessionValue<DraftView>, ServiceError> {
-        let draft = self
-            .checked_mut(session)?
-            .draft
-            .as_mut()
-            .ok_or(ServiceError::NoDraft)?;
-        Ok(stamped(session, draft.set_expiry_input(input)?))
+        let state = self.checked_mut(session)?;
+        let mut draft = state.draft_for_edit()?;
+        let view = draft.set_expiry_input(input)?;
+        state.draft = Some(draft);
+        Ok(stamped(session, view))
     }
 
     /// Confirm the form after storage succeeds; errors retain the draft and prior document.
     pub fn save_draft(
         &mut self,
         session: &SessionToken,
+        operation: &taypeer_core::OperationId,
     ) -> Result<SessionValue<EntryId>, ServiceError> {
         let now = (self.clock)();
         let state = self.checked_mut(session)?;
+        if let Some(id) = state.command_result::<EntryId>(operation, "save_draft", None)? {
+            if let Some(draft) = &state.draft
+                && draft
+                    .attempt
+                    .as_ref()
+                    .is_some_and(|(id, _)| id == operation)
+            {
+                if !draft.confirmed(state.document())? {
+                    return Err(ServiceError::OperationConflict);
+                }
+                state.clear_saved_draft()?;
+            }
+            return Ok(stamped(session, id));
+        }
         let draft = state.draft.as_ref().ok_or(ServiceError::NoDraft)?;
+        if draft.has_binary_operation(operation) {
+            return Err(ServiceError::OperationConflict);
+        }
+        let fingerprint = draft.fingerprint()?;
+        if draft
+            .attempt
+            .as_ref()
+            .is_some_and(|(id, old)| id == operation && old != &fingerprint)
+        {
+            return Err(ServiceError::OperationConflict);
+        }
         if draft.adds_binary_content() {
             let mut refs = state.document().blob_references()?.attachments;
             refs.extend(
@@ -653,15 +693,18 @@ impl DatabaseService {
             }
         }
         let mut candidate = state.document().clone();
-        let id = draft.save(&mut candidate, now)?;
+        let receipt = taypeer_document::CommandReceipt {
+            operation,
+            kind: "save_draft",
+            fingerprint: &fingerprint,
+        };
+        let id = draft.save_command(&mut candidate, now, &receipt)?;
+        let mut bound = draft.clone();
+        bound.attempt = Some((operation.clone(), fingerprint));
+        state.persist_binary_draft(&bound, state.blobs()?)?;
+        state.draft = Some(bound);
         state.commit(candidate)?;
-        if let Some(file) = &state.file {
-            file.discard_draft()?;
-        }
-        if let Some(managed) = &state.managed {
-            managed.port.discard_draft()?;
-        }
-        state.draft = None;
+        state.clear_saved_draft()?;
         Ok(stamped(session, id))
     }
 
@@ -808,6 +851,9 @@ impl DatabaseService {
             .get_mut(&session.database)
             .ok_or(ServiceError::NotFound)?;
         check_session(state, session)?;
+        if state.write_uncertain {
+            return Err(StorageError::CommitUncertain.into());
+        }
         if let Some(managed) = &state.managed {
             managed.check_edit_permission()?;
         } else {
@@ -895,7 +941,9 @@ mod tests {
             .fields;
         local.password = Some("PUBLIC local branch".into());
         service.update_draft(&session, local).unwrap();
-        service.save_draft(&session).unwrap();
+        service
+            .save_draft(&session, &crate::new_operation_id().unwrap())
+            .unwrap();
         service
             .databases
             .get_mut(&database)

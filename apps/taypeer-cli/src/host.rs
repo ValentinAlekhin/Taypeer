@@ -196,11 +196,21 @@ impl Host {
                     destination: None,
                 },
                 GroupCommand::List => Command::Groups,
-                GroupCommand::Create { name, parent } => Command::CreateGroup {
+                GroupCommand::Create {
+                    name,
+                    parent,
+                    operation,
+                } => Command::CreateGroup {
+                    operation: self::operation(operation)?,
                     name,
                     parent: parent.map(GroupId::new),
                 },
-                GroupCommand::Rename { id, name } => Command::RenameGroup {
+                GroupCommand::Rename {
+                    id,
+                    name,
+                    operation,
+                } => Command::RenameGroup {
+                    operation: self::operation(operation)?,
                     id: GroupId::new(id),
                     name,
                 },
@@ -227,11 +237,21 @@ impl Host {
                     query,
                 },
                 EntryCommand::Show { id } => Command::Entry(EntryId::new(id)),
-                EntryCommand::Create { group, fields } => Command::CreateEntry {
+                EntryCommand::Create {
+                    group,
+                    fields,
+                    operation,
+                } => Command::CreateEntry {
+                    operation: self::operation(operation)?,
                     group: GroupId::new(group),
                     patch: self.input.fields(fields)?,
                 },
-                EntryCommand::Update { id, fields } => Command::UpdateEntry {
+                EntryCommand::Update {
+                    id,
+                    fields,
+                    operation,
+                } => Command::UpdateEntry {
+                    operation: self::operation(operation)?,
                     id: EntryId::new(id),
                     patch: self.input.fields(fields)?,
                 },
@@ -259,7 +279,9 @@ impl Host {
                 DraftCommand::Edit { id } => Command::BeginEdit(EntryId::new(id)),
                 DraftCommand::Update { fields } => Command::PatchDraft(self.input.fields(fields)?),
                 DraftCommand::Status => Command::DraftStatus,
-                DraftCommand::Save => Command::SaveDraft,
+                DraftCommand::Save { operation } => Command::SaveDraft {
+                    operation: self::operation(operation)?,
+                },
                 DraftCommand::Restore => Command::RestoreDraft,
                 DraftCommand::Discard => Command::DiscardDraft,
             },

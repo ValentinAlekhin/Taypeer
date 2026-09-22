@@ -1,4 +1,6 @@
 //! Child-side dispatch. Only this process constructs a plaintext database service.
+#[cfg(any(test, feature = "ui-test-support"))]
+mod faults;
 mod input;
 #[cfg(test)]
 mod tests;
@@ -42,6 +44,7 @@ pub fn run_test_worker(
                 channel,
                 service,
                 crate::profile::NativeProfile::load_test,
+                |port| Box::new(faults::Persistence(port)),
             )
         },
         crate::profile::NativeProfile::load_test,
@@ -137,13 +140,20 @@ fn open_native(
     channel: &Arc<Mutex<Channel>>,
     service: &mut DatabaseService,
 ) -> Result<SessionToken, RuntimeError> {
-    open_profile(boot, channel, service, crate::profile::NativeProfile::load)
+    open_profile(
+        boot,
+        channel,
+        service,
+        crate::profile::NativeProfile::load,
+        |port| Box::new(port),
+    )
 }
 fn open_profile(
     boot: &mut Boot,
     channel: &Arc<Mutex<Channel>>,
     service: &mut DatabaseService,
     load: LoadProfile,
+    wrap: fn(RemotePersistence) -> Box<dyn taypeer_storage::CipherPersistence>,
 ) -> Result<SessionToken, RuntimeError> {
     let profile = load(&boot.profile)?;
     let form = boot.create_form.take().or_else(|| {
@@ -182,7 +192,7 @@ fn open_profile(
         seed,
     )?;
     service
-        .open_managed(Box::new(port), boot.password.as_bytes(), || {
+        .open_managed(wrap(port), boot.password.as_bytes(), || {
             profile
                 .author()
                 .map(Some)
@@ -458,8 +468,12 @@ fn dispatch(
                 .value,
         )?,
         Command::DatabaseInfo => value(&service.database_info(session)?)?,
-        Command::SetDatabaseInfo { name, description } => {
-            service.update_database_info(session, name, description)?;
+        Command::SetDatabaseInfo {
+            name,
+            description,
+            operation,
+        } => {
+            service.update_database_info(session, name, description, &operation)?;
             Value::Null
         }
         Command::GroupInfo => value(&service.group_info(session)?)?,
@@ -498,26 +512,38 @@ fn dispatch(
             value(&secret.expose())?
         }
         Command::Groups => value(&service.groups(session)?.value)?,
-        Command::CreateGroup { name, parent } => {
-            value(&service.create_group(session, name, parent)?.value)?
-        }
-        Command::RenameGroup { id, name } => {
-            value(&service.update_group(session, &id, name)?.value)?
-        }
+        Command::CreateGroup {
+            name,
+            parent,
+            operation,
+        } => value(
+            &service
+                .create_group(session, name, parent, &operation)?
+                .value,
+        )?,
+        Command::RenameGroup {
+            id,
+            name,
+            operation,
+        } => value(&service.update_group(session, &id, name, &operation)?.value)?,
         Command::Entries { group, query } => {
             value(&service.entries(session, group.as_ref(), &query)?.value)?
         }
         Command::Entry(id) => value(&service.view_entry(session, &id)?.value)?,
-        Command::CreateEntry { group, patch } => {
-            service.start_create_entry(session, group)?;
-            service.patch_draft(session, patch)?;
-            value(&service.save_draft(session)?.value)?
-        }
-        Command::UpdateEntry { id, patch } => {
-            service.start_edit_entry(session, &id)?;
-            service.patch_draft(session, patch)?;
-            value(&service.save_draft(session)?.value)?
-        }
+        Command::CreateEntry {
+            group,
+            patch,
+            operation,
+        } => value(
+            &service
+                .create_entry(session, group, patch, &operation)?
+                .value,
+        )?,
+        Command::UpdateEntry {
+            id,
+            patch,
+            operation,
+        } => value(&service.update_entry(session, &id, patch, &operation)?.value)?,
         Command::BeginCreate(group) => {
             service.start_create_entry(session, group)?;
             Value::Null
@@ -535,7 +561,7 @@ fn dispatch(
             json!({"active": draft.is_some(), "dirty": draft.as_ref().is_some_and(|d| d.dirty),
                 "pending": service.pending_draft(session)?.value})
         }
-        Command::SaveDraft => value(&service.save_draft(session)?.value)?,
+        Command::SaveDraft { operation } => value(&service.save_draft(session, &operation)?.value)?,
         Command::DiscardDraft => {
             service.cancel_draft(session)?;
             Value::Null

@@ -9,6 +9,30 @@ impl From<taypeer_storage::Error> for ServiceError {
 }
 
 impl DatabaseState {
+    pub(super) fn draft_for_edit(&self) -> Result<DraftState, ServiceError> {
+        let draft = self.draft.as_ref().ok_or(ServiceError::NoDraft)?;
+        if draft.confirmed(self.document())? {
+            // A failed sidecar cleanup left an already committed editor on screen.
+            // Its next edit needs a fresh revision context, never the saved revision ID.
+            return Ok(DraftState::new(
+                self.document()
+                    .begin_edit_entry(draft.document()?.entry_id())?,
+                DraftKind::Existing,
+            ));
+        }
+        Ok(draft.clone())
+    }
+
+    pub(super) fn clear_saved_draft(&mut self) -> Result<(), ServiceError> {
+        if let Some(file) = &self.file {
+            file.discard_draft()?;
+        }
+        if let Some(managed) = &self.managed {
+            managed.port.discard_draft()?;
+        }
+        self.draft = None;
+        Ok(())
+    }
     pub(super) fn policy(&self) -> taypeer_core::DatabasePolicy {
         self.managed
             .as_ref()
@@ -35,6 +59,17 @@ impl DatabaseState {
         self.commit_blobs(candidate, self.blobs()?.clone())
     }
     pub(super) fn commit_blobs(
+        &mut self,
+        candidate: Document,
+        blobs: BlobStore,
+    ) -> Result<(), ServiceError> {
+        let result = self.persist_candidate(candidate, blobs);
+        if result == Err(ServiceError::Storage(StorageError::CommitUncertain)) {
+            self.write_uncertain = true;
+        }
+        result
+    }
+    fn persist_candidate(
         &mut self,
         candidate: Document,
         blobs: BlobStore,
@@ -135,7 +170,7 @@ impl DatabaseState {
             return Err(ServiceError::InvalidContext);
         }
         let draft = if compatibility.write.is_supported() {
-            load_draft(file, &key, &mut blobs)?
+            load_draft(file, &key, &mut blobs, &document)?
         } else {
             None
         };
@@ -146,6 +181,7 @@ impl DatabaseState {
         self.draft_deferred = !compatibility.write.is_supported();
         self.generation = generation;
         self.unlocked = true;
+        self.write_uncertain = false;
         Ok(SessionToken {
             database: database.clone(),
             generation,
@@ -238,7 +274,7 @@ impl DatabaseService {
             return Err(StorageError::MissingBlob.into());
         }
         let draft = if compatibility.write.is_supported() {
-            load_draft(&file, &key, &mut blobs)?
+            load_draft(&file, &key, &mut blobs, &document)?
         } else {
             None
         };
@@ -280,6 +316,7 @@ impl DatabaseService {
                 unlocked: true,
                 draft,
                 draft_deferred,
+                write_uncertain: false,
             },
         );
         Ok(SessionToken {
@@ -299,6 +336,7 @@ fn load_draft(
     file: &FileStore,
     key: &ReadKey,
     blobs: &mut BlobStore,
+    document: &Document,
 ) -> Result<Option<DraftState>, ServiceError> {
     match file.load_binary_draft(key)? {
         Some(taypeer_storage::BinaryDraft {
@@ -307,6 +345,10 @@ fn load_draft(
         }) => {
             let draft: DraftState =
                 serde_json::from_slice(&bytes).map_err(|_| ServiceError::InvalidDocument)?;
+            if draft.confirmed(document)? {
+                file.discard_draft()?;
+                return Ok(None);
+            }
             if draft
                 .binary_references()
                 .iter()

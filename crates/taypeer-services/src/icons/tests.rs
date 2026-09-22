@@ -162,12 +162,22 @@ fn group_batch_skips_existing_icons_and_keeps_successful_siblings_on_retry() {
     let database = service.create_database("PUBLIC batch").unwrap();
     let session = service.unlock(&database, crate::DEMO_PASSWORD).unwrap();
     let parent = service
-        .create_group(&session, "PUBLIC parent".into(), None)
+        .create_group(
+            &session,
+            "PUBLIC parent".into(),
+            None,
+            &crate::new_operation_id().unwrap(),
+        )
         .unwrap()
         .value
         .id;
     let child = service
-        .create_group(&session, "PUBLIC child".into(), Some(parent.clone()))
+        .create_group(
+            &session,
+            "PUBLIC child".into(),
+            Some(parent.clone()),
+            &crate::new_operation_id().unwrap(),
+        )
         .unwrap()
         .value
         .id;
@@ -183,7 +193,10 @@ fn group_batch_skips_existing_icons_and_keeps_successful_siblings_on_retry() {
                 },
             )
             .unwrap();
-        let entry = service.save_draft(&session).unwrap().value;
+        let entry = service
+            .save_draft(&session, &crate::new_operation_id().unwrap())
+            .unwrap()
+            .value;
         if index == 2 {
             service
                 .edit_binary(

@@ -19,14 +19,24 @@ fn receipt_revocation_and_kdf_changes_never_manage_backup_paths() {
     let path = directory.path().join("a.taypeer");
     let (mut service, session) = create(&a, path.clone());
     service
-        .create_group(&session, "PUBLIC local group".into(), None)
+        .create_group(
+            &session,
+            "PUBLIC local group".into(),
+            None,
+            &crate::new_operation_id().unwrap(),
+        )
         .unwrap();
     admit(&mut service, &session, &a, &b);
     let peer_path = directory.path().join("b.taypeer");
     copy_to(&a, &session.database, &peer_path);
     let (mut peer, peer_session) = b.open(peer_path, PASSWORD);
-    peer.create_group(&peer_session, "PUBLIC incoming group".into(), None)
-        .unwrap();
+    peer.create_group(
+        &peer_session,
+        "PUBLIC incoming group".into(),
+        None,
+        &crate::new_operation_id().unwrap(),
+    )
+    .unwrap();
     deliver(&b, &a, &session.database);
     service.apply_received(&session).unwrap();
     assert_eq!(service.groups(&session).unwrap().value.len(), 2);
@@ -135,8 +145,13 @@ fn recovery_of_an_incomplete_inventory_preserves_the_collection_hold() {
     let bp = directory.path().join("b.taypeer");
     copy_to(&a, &ta.database, &bp);
     let (mut sb, tb) = b.open(bp, PASSWORD);
-    sb.create_group(&tb, "PUBLIC announced but not delivered".into(), None)
-        .unwrap();
+    sb.create_group(
+        &tb,
+        "PUBLIC announced but not delivered".into(),
+        None,
+        &crate::new_operation_id().unwrap(),
+    )
+    .unwrap();
     let incoming = b.coordinator.snapshot(&ta.database).unwrap();
     let reply = a
         .coordinator
@@ -173,8 +188,13 @@ fn signed_fork_freezes_receivers_and_survives_restart_without_blocking_reads() {
     let receiver = Profile::new(24);
     let witness = Profile::new(25);
     let (mut left, session) = create(&manager, directory.path().join("left.taypeer"));
-    left.create_group(&session, "PUBLIC fork history".into(), None)
-        .unwrap();
+    left.create_group(
+        &session,
+        "PUBLIC fork history".into(),
+        None,
+        &crate::new_operation_id().unwrap(),
+    )
+    .unwrap();
     admit(&mut left, &session, &manager, &receiver);
     admit(&mut left, &session, &manager, &witness);
     let right_path = directory.path().join("right.taypeer");
@@ -225,7 +245,12 @@ fn signed_fork_freezes_receivers_and_survives_restart_without_blocking_reads() {
     );
     assert!(
         received
-            .create_group(&token, "PUBLIC forbidden write".into(), None)
+            .create_group(
+                &token,
+                "PUBLIC forbidden write".into(),
+                None,
+                &crate::new_operation_id().unwrap()
+            )
             .is_err()
     );
     assert_eq!(received.groups(&token).unwrap().value.len(), 1);
@@ -265,8 +290,13 @@ fn handoff_survives_restart_before_successor_delivery_and_rejects_old_manager() 
     let b = Profile::new(22);
     let ap = directory.path().join("a.taypeer");
     let (mut sa, ta) = create(&a, ap.clone());
-    sa.create_group(&ta, "PUBLIC management history".into(), None)
-        .unwrap();
+    sa.create_group(
+        &ta,
+        "PUBLIC management history".into(),
+        None,
+        &crate::new_operation_id().unwrap(),
+    )
+    .unwrap();
     admit(&mut sa, &ta, &a, &b);
     let bp = directory.path().join("b.taypeer");
     copy_to(&a, &ta.database, &bp);
@@ -314,8 +344,13 @@ fn handoff_survives_restart_before_successor_delivery_and_rejects_old_manager() 
     assert_eq!(sb.groups(&tb).unwrap().value.len(), 1);
     deliver(&b, &a, &ta.database);
     assert!(
-        sa.create_group(&ta, "PUBLIC expired session".into(), None)
-            .is_err()
+        sa.create_group(
+            &ta,
+            "PUBLIC expired session".into(),
+            None,
+            &crate::new_operation_id().unwrap()
+        )
+        .is_err()
     );
 }
 
@@ -327,7 +362,12 @@ fn recovery_preserves_original_history_and_pending_sources_without_inheriting_ad
     let c = Profile::new(20);
     let (mut sa, ta) = create(&a, directory.path().join("source.taypeer"));
     let group = sa
-        .create_group(&ta, "PUBLIC preserved group".into(), None)
+        .create_group(
+            &ta,
+            "PUBLIC preserved group".into(),
+            None,
+            &crate::new_operation_id().unwrap(),
+        )
         .unwrap()
         .value
         .id;
@@ -340,7 +380,10 @@ fn recovery_preserves_original_history_and_pending_sources_without_inheriting_ad
         },
     )
     .unwrap();
-    let entry = sa.save_draft(&ta).unwrap().value;
+    let entry = sa
+        .save_draft(&ta, &crate::new_operation_id().unwrap())
+        .unwrap()
+        .value;
     let attachment_path = directory.path().join("PUBLIC recovery attachment");
     std::fs::write(&attachment_path, b"PUBLIC inherited binary").unwrap();
     sa.edit_binary(
@@ -360,8 +403,13 @@ fn recovery_preserves_original_history_and_pending_sources_without_inheriting_ad
     let bp = directory.path().join("b.taypeer");
     copy_to(&a, &ta.database, &bp);
     let (mut sb, tb) = b.open(bp, PASSWORD);
-    sb.create_group(&tb, "PUBLIC not accepted before recovery".into(), None)
-        .unwrap();
+    sb.create_group(
+        &tb,
+        "PUBLIC not accepted before recovery".into(),
+        None,
+        &crate::new_operation_id().unwrap(),
+    )
+    .unwrap();
     deliver(&b, &a, &ta.database);
     let copied = directory.path().join("copy.taypeer");
     copy_to(&a, &ta.database, &copied);
@@ -441,7 +489,12 @@ fn recovery_preserves_original_history_and_pending_sources_without_inheriting_ad
         pending[0].change
     );
     recovered
-        .create_group(&session, "PUBLIC new trust author".into(), None)
+        .create_group(
+            &session,
+            "PUBLIC new trust author".into(),
+            None,
+            &crate::new_operation_id().unwrap(),
+        )
         .unwrap();
     let collection = recovered.collect_received(&session).unwrap().value;
     assert!(!collection.held);
@@ -497,7 +550,12 @@ fn collection_preserves_history_then_releases_purged_binary_contents() {
     let path = directory.path().join("binary.taypeer");
     let (mut service, session) = create(&a, path.clone());
     let group = service
-        .create_group(&session, "PUBLIC group".into(), None)
+        .create_group(
+            &session,
+            "PUBLIC group".into(),
+            None,
+            &crate::new_operation_id().unwrap(),
+        )
         .unwrap()
         .value
         .id;
@@ -511,7 +569,10 @@ fn collection_preserves_history_then_releases_purged_binary_contents() {
             },
         )
         .unwrap();
-    let entry = service.save_draft(&session).unwrap().value;
+    let entry = service
+        .save_draft(&session, &crate::new_operation_id().unwrap())
+        .unwrap()
+        .value;
     let input = directory.path().join("PUBLIC contents");
     std::fs::write(&input, vec![b'P'; 128 * 1024]).unwrap();
     let target = BinaryTarget::Entry(entry.clone());
@@ -628,7 +689,12 @@ fn received_source_inspection_extraction_and_discard_survive_repackaging_and_reo
     let ap = directory.path().join("a.taypeer");
     let (mut sa, ta) = create(&a, ap.clone());
     let group = sa
-        .create_group(&ta, "PUBLIC destination".into(), None)
+        .create_group(
+            &ta,
+            "PUBLIC destination".into(),
+            None,
+            &crate::new_operation_id().unwrap(),
+        )
         .unwrap()
         .value
         .id;
@@ -650,7 +716,10 @@ fn received_source_inspection_extraction_and_discard_survive_repackaging_and_reo
         },
     )
     .unwrap();
-    let original = sb.save_draft(&tb).unwrap().value;
+    let original = sb
+        .save_draft(&tb, &crate::new_operation_id().unwrap())
+        .unwrap()
+        .value;
     deliver(&b, &c, &ta.database);
     sc.apply_received(&tc).unwrap();
     sa.rotate_password(
@@ -746,14 +815,29 @@ fn member_checkpoint_cannot_launder_revoked_sources_or_their_dependencies() {
     copy_to(&a, &ta.database, &cp);
     let (mut sb, tb) = b.open(bp, PASSWORD);
     let (mut sc, tc) = c.open(cp, PASSWORD);
-    sb.create_group(&tb, "PUBLIC revoked source".into(), None)
-        .unwrap();
-    sc.create_group(&tc, "PUBLIC independent source".into(), None)
-        .unwrap();
+    sb.create_group(
+        &tb,
+        "PUBLIC revoked source".into(),
+        None,
+        &crate::new_operation_id().unwrap(),
+    )
+    .unwrap();
+    sc.create_group(
+        &tc,
+        "PUBLIC independent source".into(),
+        None,
+        &crate::new_operation_id().unwrap(),
+    )
+    .unwrap();
     deliver(&b, &c, &ta.database);
     assert_eq!(sc.apply_received(&tc).unwrap().value.applied, 1);
-    sc.create_group(&tc, "PUBLIC dependent source".into(), None)
-        .unwrap();
+    sc.create_group(
+        &tc,
+        "PUBLIC dependent source".into(),
+        None,
+        &crate::new_operation_id().unwrap(),
+    )
+    .unwrap();
     sa.rotate_password(
         &ta,
         Digest::of(b"PUBLIC revoke B"),
@@ -794,7 +878,12 @@ fn managed_reauthentication_keeps_failed_session_locked_and_expires_old_tokens()
     let path = directory.path().join("reauthentication.taypeer");
     let (mut service, original) = create(&profile, path.clone());
     service
-        .create_group(&original, "PUBLIC retained group".into(), None)
+        .create_group(
+            &original,
+            "PUBLIC retained group".into(),
+            None,
+            &crate::new_operation_id().unwrap(),
+        )
         .unwrap();
     service.lock(&original).unwrap();
     let port = || {
@@ -1023,7 +1112,12 @@ fn durable_edits_copied_read_only_and_credentials_only_after_authentication() {
     let path = directory.path().join("a.taypeer");
     let (mut service, session) = create(&a, path.clone());
     let group = service
-        .create_group(&session, "PUBLIC group".into(), None)
+        .create_group(
+            &session,
+            "PUBLIC group".into(),
+            None,
+            &crate::new_operation_id().unwrap(),
+        )
         .unwrap()
         .value;
     service
@@ -1039,7 +1133,10 @@ fn durable_edits_copied_read_only_and_credentials_only_after_authentication() {
             },
         )
         .unwrap();
-    let entry = service.save_draft(&session).unwrap().value;
+    let entry = service
+        .save_draft(&session, &crate::new_operation_id().unwrap())
+        .unwrap()
+        .value;
     let before = a.coordinator.snapshot(&session.database).unwrap();
     let report = service.apply_received(&session).unwrap().value;
     assert_eq!(report.applied, 0);
@@ -1072,7 +1169,12 @@ fn durable_edits_copied_read_only_and_credentials_only_after_authentication() {
         1
     );
     assert!(matches!(
-        reader.create_group(&read_session, "PUBLIC forbidden".into(), None),
+        reader.create_group(
+            &read_session,
+            "PUBLIC forbidden".into(),
+            None,
+            &crate::new_operation_id().unwrap()
+        ),
         Err(ServiceError::ReadOnly)
     ));
     reader.lock(&read_session).unwrap();
@@ -1120,7 +1222,12 @@ fn three_members_merge_offline_history_forward_locked_and_keep_drafts_through_ro
     let c_path = directory.path().join("c.taypeer");
     let (mut sa, ta) = create(&a, a_path);
     let group = sa
-        .create_group(&ta, "PUBLIC group".into(), None)
+        .create_group(
+            &ta,
+            "PUBLIC group".into(),
+            None,
+            &crate::new_operation_id().unwrap(),
+        )
         .unwrap()
         .value;
     sa.start_create_entry(&ta, group.id.clone()).unwrap();
@@ -1133,7 +1240,10 @@ fn three_members_merge_offline_history_forward_locked_and_keep_drafts_through_ro
         },
     )
     .unwrap();
-    let entry = sa.save_draft(&ta).unwrap().value;
+    let entry = sa
+        .save_draft(&ta, &crate::new_operation_id().unwrap())
+        .unwrap()
+        .value;
     admit(&mut sa, &ta, &a, &b);
     admit(&mut sa, &ta, &a, &c);
     copy_to(&a, &ta.database, &b_path);
@@ -1148,8 +1258,10 @@ fn three_members_merge_offline_history_forward_locked_and_keep_drafts_through_ro
     fb.password = Some("PUBLIC offline B".into());
     sa.update_draft(&ta, fa).unwrap();
     sb.update_draft(&tb, fb).unwrap();
-    sa.save_draft(&ta).unwrap();
-    sb.save_draft(&tb).unwrap();
+    sa.save_draft(&ta, &crate::new_operation_id().unwrap())
+        .unwrap();
+    sb.save_draft(&tb, &crate::new_operation_id().unwrap())
+        .unwrap();
     sc.lock(&tc).unwrap();
     deliver(&a, &c, &ta.database);
     deliver(&c, &b, &ta.database);

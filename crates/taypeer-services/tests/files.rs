@@ -21,7 +21,12 @@ fn encrypted_file_survives_restart_with_identity_values_and_history() {
     );
     assert!(service.is_current(&session));
     let group = service
-        .create_group(&session, "PUBLIC hidden group".into(), None)
+        .create_group(
+            &session,
+            "PUBLIC hidden group".into(),
+            None,
+            &taypeer_services::new_operation_id().unwrap(),
+        )
         .unwrap()
         .value
         .id;
@@ -36,7 +41,10 @@ fn encrypted_file_survives_restart_with_identity_values_and_history() {
             },
         )
         .unwrap();
-    let entry = service.save_draft(&session).unwrap().value;
+    let entry = service
+        .save_draft(&session, &taypeer_services::new_operation_id().unwrap())
+        .unwrap()
+        .value;
     let mut form = service
         .start_edit_entry(&session, &entry)
         .unwrap()
@@ -44,7 +52,9 @@ fn encrypted_file_survives_restart_with_identity_values_and_history() {
         .fields;
     form.password = Some("PUBLIC second secret".into());
     service.update_draft(&session, form).unwrap();
-    service.save_draft(&session).unwrap();
+    service
+        .save_draft(&session, &taypeer_services::new_operation_id().unwrap())
+        .unwrap();
     let bytes = fs::read(&path).unwrap();
     for marker in ["PUBLIC", "hidden", "first secret", "second secret"] {
         assert!(
@@ -117,7 +127,12 @@ fn unavailable_working_file_preserves_saved_state_and_retryable_draft() {
     fs::create_dir(&path).unwrap();
     assert_eq!(
         service
-            .create_group(&session, "PUBLIC rejected".into(), None)
+            .create_group(
+                &session,
+                "PUBLIC rejected".into(),
+                None,
+                &taypeer_services::new_operation_id().unwrap()
+            )
             .unwrap_err(),
         ServiceError::Storage(StorageError::Io)
     );
@@ -126,7 +141,12 @@ fn unavailable_working_file_preserves_saved_state_and_retryable_draft() {
     fs::remove_dir(&path).unwrap();
     fs::rename(&displaced, &path).unwrap();
     let group = service
-        .create_group(&session, "PUBLIC group".into(), None)
+        .create_group(
+            &session,
+            "PUBLIC group".into(),
+            None,
+            &taypeer_services::new_operation_id().unwrap(),
+        )
         .unwrap()
         .value
         .id;
@@ -143,7 +163,11 @@ fn unavailable_working_file_preserves_saved_state_and_retryable_draft() {
     let bytes = fs::read(&path).unwrap();
     fs::rename(&path, &displaced).unwrap();
     fs::create_dir(&path).unwrap();
-    assert!(service.save_draft(&session).is_err());
+    assert!(
+        service
+            .save_draft(&session, &taypeer_services::new_operation_id().unwrap())
+            .is_err()
+    );
     assert!(
         service
             .entries(&session, None, "")
@@ -158,7 +182,9 @@ fn unavailable_working_file_preserves_saved_state_and_retryable_draft() {
     assert_eq!(fs::read(&displaced).unwrap(), bytes);
     fs::remove_dir(&path).unwrap();
     fs::rename(&displaced, &path).unwrap();
-    service.save_draft(&session).unwrap();
+    service
+        .save_draft(&session, &taypeer_services::new_operation_id().unwrap())
+        .unwrap();
     assert_eq!(service.entries(&session, None, "").unwrap().value.len(), 1);
 }
 
@@ -171,7 +197,12 @@ fn encrypted_interrupted_draft_survives_restart_and_explicit_discard() {
         .create_file(&path, "PUBLIC".into(), PASSWORD)
         .unwrap();
     let group = service
-        .create_group(&session, "PUBLIC group".into(), None)
+        .create_group(
+            &session,
+            "PUBLIC group".into(),
+            None,
+            &taypeer_services::new_operation_id().unwrap(),
+        )
         .unwrap()
         .value
         .id;
@@ -194,7 +225,9 @@ fn encrypted_interrupted_draft_survives_restart_and_explicit_discard() {
     assert!(service.draft(&session).unwrap().value.is_none());
     assert!(service.pending_draft(&session).unwrap().value.is_some());
     assert_eq!(
-        service.save_draft(&session).unwrap_err(),
+        service
+            .save_draft(&session, &taypeer_services::new_operation_id().unwrap())
+            .unwrap_err(),
         ServiceError::DraftNeedsRestore
     );
     assert_eq!(
@@ -224,7 +257,12 @@ fn draft_storage_failure_still_locks_and_revokes_access() {
         .create_file(&path, "PUBLIC".into(), PASSWORD)
         .unwrap();
     let group = service
-        .create_group(&session, "PUBLIC group".into(), None)
+        .create_group(
+            &session,
+            "PUBLIC group".into(),
+            None,
+            &taypeer_services::new_operation_id().unwrap(),
+        )
         .unwrap()
         .value
         .id;
@@ -256,7 +294,12 @@ fn lifecycle_confirmation_is_durable_masked_and_retryable_after_storage_failure(
         .create_file(&path, "PUBLIC lifecycle".into(), PASSWORD)
         .unwrap();
     let group = service
-        .create_group(&session, "PUBLIC group".into(), None)
+        .create_group(
+            &session,
+            "PUBLIC group".into(),
+            None,
+            &taypeer_services::new_operation_id().unwrap(),
+        )
         .unwrap()
         .value
         .id;
@@ -271,7 +314,10 @@ fn lifecycle_confirmation_is_durable_masked_and_retryable_after_storage_failure(
             },
         )
         .unwrap();
-    let entry = service.save_draft(&session).unwrap().value;
+    let entry = service
+        .save_draft(&session, &taypeer_services::new_operation_id().unwrap())
+        .unwrap()
+        .value;
     let prepared = service
         .prepare_lifecycle(
             &session,

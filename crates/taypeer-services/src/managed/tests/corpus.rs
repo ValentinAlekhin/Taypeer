@@ -96,7 +96,10 @@ fn add_entry(
             },
         )
         .unwrap();
-    service.save_draft(token).unwrap().value
+    service
+        .save_draft(token, &crate::new_operation_id().unwrap())
+        .unwrap()
+        .value
 }
 fn lifecycle(
     service: &mut DatabaseService,
@@ -129,7 +132,12 @@ fn generate_development_corpus() {
         let (mut service, token) = create_case(&profile, &path);
         if case != "empty" {
             let group = service
-                .create_group(&token, "PUBLIC group".into(), None)
+                .create_group(
+                    &token,
+                    "PUBLIC group".into(),
+                    None,
+                    &crate::new_operation_id().unwrap(),
+                )
                 .unwrap()
                 .value
                 .id;
@@ -193,7 +201,8 @@ fn generate_development_corpus() {
                         },
                     )
                     .unwrap();
-                    db.save_draft(session).unwrap();
+                    db.save_draft(session, &crate::new_operation_id().unwrap())
+                        .unwrap();
                 }
                 deliver(&peer, &profile, &token.database);
                 service.apply_received(&token).unwrap();
@@ -206,7 +215,12 @@ fn generate_development_corpus() {
                         .is_empty()
                 );
                 other
-                    .create_group(&other_token, "PUBLIC pending source".into(), None)
+                    .create_group(
+                        &other_token,
+                        "PUBLIC pending source".into(),
+                        None,
+                        &crate::new_operation_id().unwrap(),
+                    )
                     .unwrap();
                 deliver(&peer, &profile, &token.database);
                 // Receipt is intentionally not followed by application.

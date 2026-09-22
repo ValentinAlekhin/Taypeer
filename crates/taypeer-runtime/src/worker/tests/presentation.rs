@@ -38,6 +38,7 @@ fn editor_commands_preserve_masked_fields_and_confirm_all_tabs_once() {
     command::<()>(
         &client,
         Command::SetDatabaseInfo {
+            operation: taypeer_services::new_operation_id().unwrap(),
             name: "PUBLIC renamed database".into(),
             description: Some("PUBLIC exact description\n второй ряд  ".into()),
         },
@@ -194,7 +195,16 @@ fn editor_commands_preserve_masked_fields_and_confirm_all_tabs_once() {
         &client,
         Command::DraftExpiry(Some("PUBLIC unfinished expiration".into())),
     );
-    assert!(client.request(&Command::SaveDraft, false).is_err());
+    assert!(
+        client
+            .request(
+                &Command::SaveDraft {
+                    operation: taypeer_services::new_operation_id().unwrap()
+                },
+                false
+            )
+            .is_err()
+    );
     let draft: EditorView = command(&client, Command::EditorView);
     assert_eq!(
         draft.expiry_input.as_deref(),
@@ -206,7 +216,12 @@ fn editor_commands_preserve_masked_fields_and_confirm_all_tabs_once() {
         Some("  PUBLIC notes\nТочно é  ")
     );
     command::<()>(&client, Command::DraftExpiry(None));
-    let entry: EntryId = command(&client, Command::SaveDraft);
+    let entry: EntryId = command(
+        &client,
+        Command::SaveDraft {
+            operation: taypeer_services::new_operation_id().unwrap(),
+        },
+    );
     let history: Vec<taypeer_services::RevisionSummary> =
         command(&client, Command::History(entry.clone()));
     assert_eq!(history.len(), 1);
@@ -256,7 +271,12 @@ fn editor_commands_preserve_masked_fields_and_confirm_all_tabs_once() {
             ..Default::default()
         }),
     );
-    command::<EntryId>(&client, Command::SaveDraft);
+    command::<EntryId>(
+        &client,
+        Command::SaveDraft {
+            operation: taypeer_services::new_operation_id().unwrap(),
+        },
+    );
     let history: Vec<taypeer_services::RevisionSummary> =
         command(&client, Command::History(entry.clone()));
     assert_eq!(history.len(), 2);
@@ -293,6 +313,7 @@ fn masked_metadata_does_not_grant_a_read_only_copy_write_or_management_access() 
         reader
             .request(
                 &Command::SetDatabaseInfo {
+                    operation: taypeer_services::new_operation_id().unwrap(),
                     name: "PUBLIC forbidden".into(),
                     description: None
                 },
@@ -362,7 +383,12 @@ fn value_presence_is_available_without_revealing_current_or_historical_secrets()
             operation: OperationId::new("PUBLIC translucent color"),
         },
     );
-    let entry: EntryId = command(&client, Command::SaveDraft);
+    let entry: EntryId = command(
+        &client,
+        Command::SaveDraft {
+            operation: taypeer_services::new_operation_id().unwrap(),
+        },
+    );
     let current: taypeer_services::EntryView = command(&client, Command::Entry(entry.clone()));
     let history: Vec<taypeer_services::RevisionSummary> =
         command(&client, Command::History(entry.clone()));

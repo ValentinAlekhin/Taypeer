@@ -52,7 +52,7 @@ pub(in crate::ui) fn group(
     let icon = group
         .map(|g| g.icon.clone())
         .unwrap_or_else(|| "folder".into());
-    let operation = taypeer_services::new_operation_id().ok();
+    let attempt = FormAttempt::default();
     let original_icon_name = icon.clone();
     text_form_with_icon(
         if id.is_some() {
@@ -83,7 +83,7 @@ pub(in crate::ui) fn group(
                     )
                 },
             };
-            let operation = operation.clone().ok_or(FormError::Backend)?;
+            let operation = attempt.operation(values)?;
             let connection = connection.clone().ok_or(FormError::MissingObject)?;
             let store = store.clone();
             Ok(Some(Box::new(move |done, _, cx| {

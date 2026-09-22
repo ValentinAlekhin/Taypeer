@@ -20,6 +20,8 @@ enum DraftStatus {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub(super) struct DraftState {
+    #[serde(default)]
+    pub(super) attempt: Option<(taypeer_core::OperationId, serde_json::Value)>,
     document: EntryDraft,
     baseline: EntryFields,
     kind: DraftKind,
@@ -32,6 +34,7 @@ pub(super) struct DraftState {
 impl DraftState {
     pub(super) fn new(document: EntryDraft, kind: DraftKind) -> Self {
         Self {
+            attempt: None,
             baseline: document.fields().clone(),
             attribute_order: document.fields().attributes.keys().cloned().collect(),
             document,
@@ -42,6 +45,26 @@ impl DraftState {
         }
     }
 
+    pub(super) fn has_binary_operation(&self, operation: &taypeer_core::OperationId) -> bool {
+        self.binary_receipts.contains_key(operation)
+    }
+    pub(super) fn fingerprint(&self) -> Result<serde_json::Value, ServiceError> {
+        super::commands::fingerprint(&(&self.document, &self.expiry_input))
+    }
+    pub(super) fn confirmed(&self, doc: &Document) -> Result<bool, ServiceError> {
+        let Some((operation, fingerprint)) = &self.attempt else {
+            return Ok(false);
+        };
+        let receipt = match doc.command_receipt(operation, "save_draft") {
+            Ok(receipt) => receipt,
+            // A failed attempt did not reserve the document's operation namespace.
+            // A different committed command must not hide this unsaved sidecar.
+            Err(taypeer_document::Error::DuplicateId) => return Ok(false),
+            Err(error) => return Err(error.into()),
+        };
+        Ok(receipt.is_some_and(|(saved, _)| saved == *fingerprint)
+            && self.fingerprint()? == *fingerprint)
+    }
     pub(super) fn document(&self) -> Result<&EntryDraft, ServiceError> {
         self.require_active()?;
         Ok(&self.document)
@@ -191,16 +214,17 @@ impl DraftState {
         Ok(self.view())
     }
 
-    pub(super) fn save(&self, document: &mut Document, now: i64) -> Result<EntryId, ServiceError> {
+    pub(super) fn save_command(
+        &self,
+        document: &mut Document,
+        now: i64,
+        receipt: &taypeer_document::CommandReceipt<'_>,
+    ) -> Result<EntryId, ServiceError> {
         self.require_active()?;
         if self.expiry_input.is_some() {
             return Err(ServiceError::InvalidInput);
         }
-        if self.entry_id().is_some() && !self.is_dirty() {
-            return Ok(self.document.entry_id().clone());
-        }
-        // The editor retains the retry context when document validation fails.
-        Ok(document.save_entry(self.document.clone(), now)?)
+        Ok(document.save_entry_command(self.document.clone(), now, receipt)?)
     }
 
     pub(super) fn view(&self) -> DraftView {

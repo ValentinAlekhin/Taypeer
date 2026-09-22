@@ -17,7 +17,12 @@ fn setup(
         )
         .unwrap();
     let group = service
-        .create_group(&session, "PUBLIC group".into(), None)
+        .create_group(
+            &session,
+            "PUBLIC group".into(),
+            None,
+            &taypeer_services::new_operation_id().unwrap(),
+        )
         .unwrap()
         .value
         .id;
@@ -32,7 +37,10 @@ fn setup(
             },
         )
         .unwrap();
-    let entry = service.save_draft(&session).unwrap().value;
+    let entry = service
+        .save_draft(&session, &taypeer_services::new_operation_id().unwrap())
+        .unwrap()
+        .value;
     (session, group, entry)
 }
 fn edit(
@@ -123,7 +131,9 @@ fn attachment_replacement_history_clone_and_legacy_editor_survive_restart() {
         .fields;
     form.title = "PUBLIC renamed by old frontend".into();
     service.update_draft(&session, form).unwrap();
-    service.save_draft(&session).unwrap();
+    service
+        .save_draft(&session, &taypeer_services::new_operation_id().unwrap())
+        .unwrap();
     assert_eq!(
         service
             .view_entry(&session, &entry)
@@ -252,7 +262,9 @@ fn binary_draft_is_independent_and_cleanup_releases_only_unreachable_working_con
         .export_binary(&session, &BinaryTarget::Draft, &blob, &output, false)
         .unwrap();
     assert_eq!(fs::read(output).unwrap(), content);
-    service.save_draft(&session).unwrap();
+    service
+        .save_draft(&session, &taypeer_services::new_operation_id().unwrap())
+        .unwrap();
     let target = BinaryTarget::Entry(entry.clone());
     edit(
         &mut service,

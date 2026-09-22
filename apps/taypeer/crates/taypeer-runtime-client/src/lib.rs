@@ -623,6 +623,7 @@ pub fn error_key(error: &RuntimeError) -> &'static str {
         RuntimeError::Service(E::Storage(S::Authentication)) => "ui.authentication_failed",
         RuntimeError::Service(E::Storage(S::AlreadyExists)) => "ui.file_exists",
         RuntimeError::Service(E::Storage(S::Busy)) => "ui.file_busy",
+        RuntimeError::Service(E::OperationConflict) => "ui.operation_conflict",
         RuntimeError::Service(E::Storage(S::CommitUncertain | S::Changed)) => "ui.commit_uncertain",
         RuntimeError::Service(E::Storage(S::Io)) => "ui.file_error",
         RuntimeError::Service(

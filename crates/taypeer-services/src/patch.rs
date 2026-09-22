@@ -55,7 +55,7 @@ pub struct EntryPatch {
 }
 
 impl EntryPatch {
-    fn apply(mut self, fields: &mut crate::EditableEntry) -> Result<(), ServiceError> {
+    pub(super) fn apply(mut self, fields: &mut crate::EditableEntry) -> Result<(), ServiceError> {
         match std::mem::take(&mut self.title) {
             FieldUpdate::Keep => {}
             FieldUpdate::Set(title) => fields.title = title,
@@ -156,7 +156,12 @@ mod tests {
         let db = service.create_database("PUBLIC patch").unwrap();
         let session = service.unlock(&db, DEMO_PASSWORD).unwrap();
         let group = service
-            .create_group(&session, "PUBLIC group".into(), None)
+            .create_group(
+                &session,
+                "PUBLIC group".into(),
+                None,
+                &crate::new_operation_id().unwrap(),
+            )
             .unwrap()
             .value;
         service.start_create_entry(&session, group.id).unwrap();

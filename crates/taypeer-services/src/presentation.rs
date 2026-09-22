@@ -110,9 +110,15 @@ impl DatabaseService {
         session: &SessionToken,
         name: String,
         description: Option<String>,
+        operation: &OperationId,
     ) -> Result<(), ServiceError> {
-        self.checked_mut(session)?
-            .change(|doc| Ok(doc.update_metadata(name, description)?))
+        let fingerprint = commands::fingerprint(&(&name, &description))?;
+        self.checked_mut(session)?.command(
+            operation,
+            "database_info",
+            fingerprint,
+            |doc, receipt| Ok(doc.update_metadata_command(name, description, Some(receipt))?),
+        )
     }
     /// Read descriptions without choosing conflicting alternatives.
     pub fn group_info(&self, session: &SessionToken) -> Result<Vec<GroupInfo>, ServiceError> {

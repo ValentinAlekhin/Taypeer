@@ -15,7 +15,12 @@ fn setup() -> (DemoService, SessionToken, GroupId) {
         .unwrap();
     let session = service.unlock(&database, DEMO_PASSWORD).unwrap();
     let group = service
-        .create_group(&session, "Examples".into(), None)
+        .create_group(
+            &session,
+            "Examples".into(),
+            None,
+            &taypeer_services::new_operation_id().unwrap(),
+        )
         .unwrap()
         .value
         .id;
@@ -60,7 +65,10 @@ fn save_example(
         .unwrap()
         .value
         .fields;
-    let entry = service.save_draft(session).unwrap().value;
+    let entry = service
+        .save_draft(session, &taypeer_services::new_operation_id().unwrap())
+        .unwrap()
+        .value;
     (entry, fields)
 }
 
@@ -81,7 +89,12 @@ fn new_database_is_locked_empty_and_requires_a_real_group_from_that_database() {
     let second = service.create_database("Second public database").unwrap();
     let second_session = service.unlock(&second, DEMO_PASSWORD).unwrap();
     let foreign_group = service
-        .create_group(&second_session, "Other group".into(), None)
+        .create_group(
+            &second_session,
+            "Other group".into(),
+            None,
+            &taypeer_services::new_operation_id().unwrap(),
+        )
         .unwrap()
         .value
         .id;
@@ -93,7 +106,12 @@ fn new_database_is_locked_empty_and_requires_a_real_group_from_that_database() {
     );
     assert!(service.draft(&first_session).unwrap().value.is_none());
     let group = service
-        .create_group(&first_session, "Top level".into(), None)
+        .create_group(
+            &first_session,
+            "Top level".into(),
+            None,
+            &taypeer_services::new_operation_id().unwrap(),
+        )
         .unwrap()
         .value;
     assert_eq!(group.parent, None);
@@ -132,7 +150,13 @@ fn save_edit_cancel_and_history_use_real_document_state() {
     changed.title = "Public changed".into();
     changed.password = Some("PUBLIC second password".into());
     service.update_draft(&session, changed).unwrap();
-    assert_eq!(service.save_draft(&session).unwrap().value, entry);
+    assert_eq!(
+        service
+            .save_draft(&session, &taypeer_services::new_operation_id().unwrap())
+            .unwrap()
+            .value,
+        entry
+    );
     assert_eq!(service.history(&session, &entry).unwrap().value.len(), 2);
     let old = service
         .revision(&session, &entry, &original_revision)
@@ -157,7 +181,9 @@ fn save_edit_cancel_and_history_use_real_document_state() {
         "PUBLIC second password"
     );
     service.start_edit_entry(&session, &entry).unwrap();
-    service.save_draft(&session).unwrap();
+    service
+        .save_draft(&session, &taypeer_services::new_operation_id().unwrap())
+        .unwrap();
     assert_eq!(
         service.history(&session, &entry).unwrap().value.len(),
         2,
@@ -200,7 +226,9 @@ fn lock_revokes_responses_and_requires_explicit_draft_restoration() {
         Some(entry.clone())
     );
     assert_eq!(
-        service.save_draft(&reopened).unwrap_err(),
+        service
+            .save_draft(&reopened, &taypeer_services::new_operation_id().unwrap())
+            .unwrap_err(),
         ServiceError::DraftNeedsRestore
     );
     assert_eq!(
@@ -214,7 +242,9 @@ fn lock_revokes_responses_and_requires_explicit_draft_restoration() {
     assert_eq!(service.history(&reopened, &entry).unwrap().value.len(), 1);
     assert!(service.accepts_response(&reopened, &restored.session));
     assert!(!service.accepts_response(&reopened, &revealed.session));
-    service.save_draft(&reopened).unwrap();
+    service
+        .save_draft(&reopened, &taypeer_services::new_operation_id().unwrap())
+        .unwrap();
     assert_eq!(service.history(&reopened, &entry).unwrap().value.len(), 2);
 }
 
@@ -251,7 +281,12 @@ fn rejected_commands_keep_the_previous_saved_and_draft_state() {
     assert!(service.is_current(&session));
     assert_eq!(
         service
-            .update_group(&session, &group, String::new())
+            .update_group(
+                &session,
+                &group,
+                String::new(),
+                &taypeer_services::new_operation_id().unwrap()
+            )
             .unwrap_err(),
         ServiceError::InvalidInput
     );
@@ -264,7 +299,9 @@ fn rejected_commands_keep_the_previous_saved_and_draft_state() {
     fields.title.clear();
     service.update_draft(&session, fields.clone()).unwrap();
     assert_eq!(
-        service.save_draft(&session).unwrap_err(),
+        service
+            .save_draft(&session, &taypeer_services::new_operation_id().unwrap())
+            .unwrap_err(),
         ServiceError::InvalidInput
     );
     assert_eq!(
@@ -309,7 +346,12 @@ fn one_editor_per_database_and_cross_database_identifiers_are_checked() {
     let second_database = service.create_database("Public second database").unwrap();
     let second = service.unlock(&second_database, DEMO_PASSWORD).unwrap();
     let second_group = service
-        .create_group(&second, "Second group".into(), None)
+        .create_group(
+            &second,
+            "Second group".into(),
+            None,
+            &taypeer_services::new_operation_id().unwrap(),
+        )
         .unwrap()
         .value
         .id;
@@ -330,7 +372,12 @@ fn one_editor_per_database_and_cross_database_identifiers_are_checked() {
     );
     assert_eq!(
         service
-            .create_group(&second, "Invalid parent".into(), Some(first_group))
+            .create_group(
+                &second,
+                "Invalid parent".into(),
+                Some(first_group),
+                &taypeer_services::new_operation_id().unwrap()
+            )
             .unwrap_err(),
         ServiceError::NotFound
     );
@@ -347,7 +394,12 @@ fn search_and_masked_views_exclude_secrets_and_respect_search_scope() {
     let (mut service, session, group) = setup();
     let (entry, fields) = save_example(&mut service, &session, &group, "Public English / Русский");
     let second_group = service
-        .create_group(&session, "Another group".into(), None)
+        .create_group(
+            &session,
+            "Another group".into(),
+            None,
+            &taypeer_services::new_operation_id().unwrap(),
+        )
         .unwrap()
         .value
         .id;
@@ -448,7 +500,10 @@ fn attributes_keep_identity_and_atomic_values_while_optional_fields_remain_disti
         "UNPROTECTED-NAME-NOT-SEARCHED"
     );
     let protected_id = draft.fields.attributes[0].id.clone().unwrap();
-    let entry = service.save_draft(&session).unwrap().value;
+    let entry = service
+        .save_draft(&session, &taypeer_services::new_operation_id().unwrap())
+        .unwrap()
+        .value;
     let mut editing = service
         .start_edit_entry(&session, &entry)
         .unwrap()
@@ -466,7 +521,9 @@ fn attributes_keep_identity_and_atomic_values_while_optional_fields_remain_disti
     attribute.value = "Public now visible".into();
     attribute.protected = false;
     service.update_draft(&session, editing).unwrap();
-    service.save_draft(&session).unwrap();
+    service
+        .save_draft(&session, &taypeer_services::new_operation_id().unwrap())
+        .unwrap();
     let view = service.view_entry(&session, &entry).unwrap().value;
     let attribute = view
         .attributes
@@ -490,7 +547,9 @@ fn invalid_expiration_input_survives_lock_and_cannot_be_saved_as_a_timestamp() {
         .set_draft_expiry_input(&session, Some(invalid.into()))
         .unwrap();
     assert_eq!(
-        service.save_draft(&session).unwrap_err(),
+        service
+            .save_draft(&session, &taypeer_services::new_operation_id().unwrap())
+            .unwrap_err(),
         ServiceError::InvalidInput
     );
     service.lock(&session).unwrap();
@@ -500,7 +559,9 @@ fn invalid_expiration_input_survives_lock_and_cannot_be_saved_as_a_timestamp() {
     assert!(restored.dirty);
     assert_eq!(restored.fields.expires_at, Some(2_000_000_000_000));
     service.set_draft_expiry_input(&session, None).unwrap();
-    service.save_draft(&session).unwrap();
+    service
+        .save_draft(&session, &taypeer_services::new_operation_id().unwrap())
+        .unwrap();
     assert_eq!(service.history(&session, &entry).unwrap().value.len(), 1);
 }
 
@@ -575,7 +636,12 @@ fn global_search_retains_each_source_and_excludes_independently_locked_databases
     let second_database = service.create_database("Public second database").unwrap();
     let second = service.unlock(&second_database, DEMO_PASSWORD).unwrap();
     let second_group = service
-        .create_group(&second, "Second group".into(), None)
+        .create_group(
+            &second,
+            "Second group".into(),
+            None,
+            &taypeer_services::new_operation_id().unwrap(),
+        )
         .unwrap()
         .value
         .id;
@@ -636,7 +702,9 @@ fn presentation_order_and_duplicate_tags_do_not_create_unsaved_domain_changes() 
             .collect::<Vec<_>>(),
         expected_order
     );
-    service.save_draft(&session).unwrap();
+    service
+        .save_draft(&session, &taypeer_services::new_operation_id().unwrap())
+        .unwrap();
     assert_eq!(service.history(&session, &entry).unwrap().value.len(), 1);
 
     let original = service

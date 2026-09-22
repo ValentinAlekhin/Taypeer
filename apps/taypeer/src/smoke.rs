@@ -23,10 +23,20 @@ fn exercise() -> Result<(), Box<dyn std::error::Error>> {
         "new database is not empty",
     )?;
     let group = service
-        .create_group(&session, "PUBLIC group / Группа".into(), None)?
+        .create_group(
+            &session,
+            "PUBLIC group / Группа".into(),
+            None,
+            &taypeer_services::new_operation_id()?,
+        )?
         .value;
     let child = service
-        .create_group(&session, "PUBLIC child".into(), Some(group.id.clone()))?
+        .create_group(
+            &session,
+            "PUBLIC child".into(),
+            Some(group.id.clone()),
+            &taypeer_services::new_operation_id()?,
+        )?
         .value;
     ensure(
         child.parent == Some(group.id.clone()),
@@ -51,7 +61,9 @@ fn exercise() -> Result<(), Box<dyn std::error::Error>> {
             ..EditableEntry::default()
         },
     )?;
-    let entry = service.save_draft(&session)?.value;
+    let entry = service
+        .save_draft(&session, &taypeer_services::new_operation_id()?)?
+        .value;
     ensure(
         service.history(&session, &entry)?.value.len() == 1,
         "create did not record one revision",
@@ -83,7 +95,7 @@ fn exercise() -> Result<(), Box<dyn std::error::Error>> {
     let mut draft = service.start_edit_entry(&session, &entry)?.value.fields;
     draft.title = "PUBLIC updated entry".into();
     service.update_draft(&session, draft)?;
-    service.save_draft(&session)?;
+    service.save_draft(&session, &taypeer_services::new_operation_id()?)?;
     ensure(
         service.history(&session, &entry)?.value.len() == 2,
         "edit did not record one revision",

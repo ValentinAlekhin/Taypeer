@@ -40,6 +40,8 @@ pub enum Command {
     DatabaseInfo,
     /// Confirm descriptive fields in a single durable transaction.
     SetDatabaseInfo {
+        /// Stable identity for retries of this exact request.
+        operation: OperationId,
         /// Exact name.
         name: String,
         /// Exact optional description.
@@ -271,6 +273,8 @@ pub enum Command {
     Groups,
     /// Create a group at the end of its parent's children.
     CreateGroup {
+        /// Stable identity for retries of this exact request.
+        operation: OperationId,
         /// Exact name.
         name: String,
         /// Optional parent.
@@ -278,6 +282,8 @@ pub enum Command {
     },
     /// Rename an existing group.
     RenameGroup {
+        /// Stable identity for retries of this exact request.
+        operation: OperationId,
         /// Target.
         id: GroupId,
         /// Exact name.
@@ -294,6 +300,8 @@ pub enum Command {
     Entry(EntryId),
     /// Create and confirm an entry with an addressed initial form.
     CreateEntry {
+        /// Stable identity for retries of this exact request.
+        operation: OperationId,
         /// Destination.
         group: GroupId,
         /// Initial fields.
@@ -301,6 +309,8 @@ pub enum Command {
     },
     /// Edit and confirm addressed fields, preserving omitted values.
     UpdateEntry {
+        /// Stable identity for retries of this exact request.
+        operation: OperationId,
         /// Target.
         id: EntryId,
         /// Changed fields.
@@ -315,7 +325,10 @@ pub enum Command {
     /// Read whether a draft is active or awaiting restoration, without its values.
     DraftStatus,
     /// Confirm the active draft.
-    SaveDraft,
+    SaveDraft {
+        /// Stable identity of this draft confirmation.
+        operation: OperationId,
+    },
     /// Discard an active or interrupted draft.
     DiscardDraft,
     /// Explicitly resume an interrupted draft.
@@ -403,7 +416,9 @@ impl Command {
     /// Erase owned form input after dispatch; retained user copies remain caller-owned.
     pub fn erase_input(&mut self) {
         match self {
-            Self::SetDatabaseInfo { name, description } => {
+            Self::SetDatabaseInfo {
+                name, description, ..
+            } => {
                 name.zeroize();
                 description.zeroize();
             }

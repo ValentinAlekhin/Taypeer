@@ -63,7 +63,14 @@ fn frozen_read_only_database_and_draft_survive_session_revocation() {
         serde_json::to_value(&entry).unwrap()
     );
     writer.request(&Command::RestoreDraft, false).unwrap();
-    let saved = writer.request(&Command::SaveDraft, false).unwrap();
+    let saved = writer
+        .request(
+            &Command::SaveDraft {
+                operation: taypeer_services::new_operation_id().unwrap(),
+            },
+            false,
+        )
+        .unwrap();
     assert_eq!(saved, serde_json::to_value(&entry).unwrap());
     assert_eq!(
         writer.request(&Command::Entry(entry), false).unwrap()["title"],

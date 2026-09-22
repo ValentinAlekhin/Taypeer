@@ -286,5 +286,6 @@
   "ui.welcome_receive": "Receive database…",
   "ui.welcome_import": "Import KDBX…",
   "ui.import_unavailable": "KDBX import is not available yet",
-  "ui.master_password": "Master password"
+  "ui.master_password": "Master password",
+  "ui.operation_conflict": "The form no longer matches this save attempt. Review your changes and try again."
 }

@@ -243,6 +243,16 @@ impl Document {
         parent: Option<GroupId>,
         now: Timestamp,
     ) -> Result<Group, Error> {
+        self.create_group_command(name, parent, now, None)
+    }
+    /// Create a group and optionally bind a command result in the same change.
+    pub fn create_group_command(
+        &mut self,
+        name: String,
+        parent: Option<GroupId>,
+        now: Timestamp,
+        receipt: Option<&CommandReceipt<'_>>,
+    ) -> Result<Group, Error> {
         validate_group_name(&name)?;
         let groups = self.groups()?;
         if parent
@@ -294,6 +304,9 @@ impl Document {
         put_group_name(&mut tx, &object, &group.name, now)?;
         tx.put(&object, "icon", encode(&group.icon)?)?;
         objects::record_event(&mut tx, &address, None)?;
+        if let Some(receipt) = receipt {
+            receipt.write(&mut tx, &group)?;
+        }
         tx.commit();
         Ok(group)
     }
@@ -305,23 +318,46 @@ impl Document {
         name: String,
         now: Timestamp,
     ) -> Result<(), Error> {
+        self.rename_group_command(id, name, now, None).map(|_| ())
+    }
+    /// Rename and retain the original group result in the same change.
+    pub fn rename_group_command(
+        &mut self,
+        id: &GroupId,
+        name: String,
+        now: Timestamp,
+        receipt: Option<&CommandReceipt<'_>>,
+    ) -> Result<Group, Error> {
         validate_group_name(&name)?;
-        let group = self
+        let mut group = self
             .groups()?
             .into_iter()
             .find(|group| &group.id == id)
             .ok_or(Error::NotFound)?;
-        if group.name == name {
-            return Ok(());
+        let changed = group.name != name;
+        if !changed && receipt.is_none() {
+            return Ok(group);
+        }
+        if changed {
+            group.name = name;
         }
         self.prepare_write()?;
         let mut tx = self.doc.transaction();
-        let address = objects::single(&tx, &ObjectId::Group(id.clone()))?;
-        let group_object = objects::generation_object(&tx, &address)?;
-        put_group_name(&mut tx, &group_object, &name, now)?;
-        objects::record_event(&mut tx, &address, None)?;
+        if changed {
+            let address = objects::single(&tx, &ObjectId::Group(id.clone()))?;
+            let group_object = objects::generation_object(&tx, &address)?;
+            put_group_name(&mut tx, &group_object, &group.name, now)?;
+            objects::record_event(&mut tx, &address, None)?;
+        }
+        let group = read_groups(&tx)?
+            .into_iter()
+            .find(|group| &group.id == id)
+            .ok_or(Error::NotFound)?;
+        if let Some(receipt) = receipt {
+            receipt.write(&mut tx, &group)?;
+        }
         tx.commit();
-        Ok(())
+        Ok(group)
     }
 
     /// Lists groups in deterministic parent/order/ID order.
@@ -375,6 +411,25 @@ impl Document {
         kind: Option<RevisionKind>,
         receipt: Option<(&taypeer_core::OperationId, &operations::Intent)>,
     ) -> Result<EntryId, Error> {
+        self.confirm_entry_command(draft, now, kind, receipt, None)
+    }
+    /// Save fields, history and exact command receipt in one CRDT transaction.
+    pub fn save_entry_command(
+        &mut self,
+        draft: EntryDraft,
+        now: Timestamp,
+        command: &CommandReceipt<'_>,
+    ) -> Result<EntryId, Error> {
+        self.confirm_entry_command(draft, now, None, None, Some(command))
+    }
+    fn confirm_entry_command(
+        &mut self,
+        draft: EntryDraft,
+        now: Timestamp,
+        kind: Option<RevisionKind>,
+        receipt: Option<(&taypeer_core::OperationId, &operations::Intent)>,
+        command: Option<&CommandReceipt<'_>>,
+    ) -> Result<EntryId, Error> {
         if draft.database_id != self.database_id {
             return Err(Error::InvalidContext);
         }
@@ -399,6 +454,12 @@ impl Document {
                         .map(ToString::to_string)
                         .collect::<Vec<_>>()
             {
+                if let Some(command) = command {
+                    self.prepare_write()?;
+                    let mut tx = self.doc.transaction();
+                    command.write(&mut tx, &draft.entry_id)?;
+                    tx.commit();
+                }
                 Ok(draft.entry_id)
             } else {
                 Err(Error::DuplicateId)
@@ -418,10 +479,15 @@ impl Document {
             }
         }
         if draft.original.as_ref() == Some(&draft.fields) {
-            if let Some((operation, intent)) = receipt {
+            if receipt.is_some() || command.is_some() {
                 self.prepare_write()?;
                 let mut tx = self.doc.transaction();
-                operations::write_receipt(&mut tx, operation, intent, &draft.entry_id)?;
+                if let Some((operation, intent)) = receipt {
+                    operations::write_receipt(&mut tx, operation, intent, &draft.entry_id)?;
+                }
+                if let Some(command) = command {
+                    command.write(&mut tx, &draft.entry_id)?;
+                }
                 tx.commit();
             }
             return Ok(draft.entry_id);
@@ -507,6 +573,9 @@ impl Document {
         objects::record_event(&mut tx, &address, Some(draft.revision_id.clone()))?;
         if let Some((operation, intent)) = receipt {
             operations::write_receipt(&mut tx, operation, intent, &draft.entry_id)?;
+        }
+        if let Some(command) = command {
+            command.write(&mut tx, &draft.entry_id)?;
         }
         tx.commit();
         // Conflicts are valid results, but malformed known structure is not.
@@ -716,3 +785,6 @@ mod tests;
 
 #[cfg(test)]
 mod binary_tests;
+
+mod command_receipts;
+pub use command_receipts::CommandReceipt;

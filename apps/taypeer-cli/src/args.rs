@@ -160,12 +160,16 @@ pub(crate) enum GroupCommand {
     /// Create a group.
     Create {
         #[arg(long)]
+        operation: Option<String>,
+        #[arg(long)]
         name: String,
         #[arg(long)]
         parent: Option<String>,
     },
     /// Rename a group.
     Rename {
+        #[arg(long)]
+        operation: Option<String>,
         id: String,
         #[arg(long)]
         name: String,
@@ -198,12 +202,16 @@ pub(crate) enum EntryCommand {
     /// Create and save an entry.
     Create {
         #[arg(long)]
+        operation: Option<String>,
+        #[arg(long)]
         group: String,
         #[command(flatten)]
         fields: Fields,
     },
     /// Save addressed changes; omitted fields keep their values.
     Update {
+        #[arg(long)]
+        operation: Option<String>,
         id: String,
         #[command(flatten)]
         fields: Fields,
@@ -240,7 +248,10 @@ pub(crate) enum DraftCommand {
     /// Show draft status without its contents.
     Status,
     /// Confirm the active draft.
-    Save,
+    Save {
+        #[arg(long)]
+        operation: Option<String>,
+    },
     /// Explicitly restore an interrupted draft.
     Restore,
     /// Discard the active or interrupted draft.
@@ -353,4 +364,51 @@ pub(crate) enum GenerateCommand {
         #[arg(long, default_value = "-")]
         separator: String,
     },
+}
+
+#[cfg(test)]
+mod retry_tests {
+    use super::*;
+    #[test]
+    fn ordinary_writes_accept_an_explicit_retry_identity() {
+        for args in [
+            vec!["group", "create", "--name", "PUBLIC group"],
+            vec!["group", "rename", "PUBLIC-id", "--name", "PUBLIC renamed"],
+            vec![
+                "entry",
+                "create",
+                "--group",
+                "PUBLIC-group",
+                "--title",
+                "PUBLIC entry",
+            ],
+            vec![
+                "entry",
+                "update",
+                "PUBLIC-entry",
+                "--title",
+                "PUBLIC updated",
+            ],
+            vec!["draft", "save"],
+        ] {
+            let command = Cli::try_parse_from(
+                std::iter::once("taypeer-cli")
+                    .chain(args)
+                    .chain(["--operation", "PUBLIC-retry"]),
+            )
+            .unwrap()
+            .command;
+            let operation = match command {
+                Action::Group(
+                    GroupCommand::Create { operation, .. } | GroupCommand::Rename { operation, .. },
+                )
+                | Action::Entry(
+                    EntryCommand::Create { operation, .. } | EntryCommand::Update { operation, .. },
+                )
+                | Action::Draft(DraftCommand::Save { operation }) => operation,
+                _ => panic!("expected an ordinary write"),
+            };
+            assert_eq!(operation.as_deref(), Some("PUBLIC-retry"));
+        }
+    }
 }

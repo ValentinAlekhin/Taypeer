@@ -500,12 +500,100 @@ mod macos {
         });
     }
 
+    fn save_failure_can_be_retried_or_edited() {
+        for changed in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("PUBLIC-retry.taypeer");
+            let mut app = start(directory.path(), "save-retry");
+            create(&mut app, &path);
+            create_entry(&mut app);
+            click(&mut app, "edit-entry");
+            app.wait("editor available", |window, _| {
+                window.try_find("field-name").is_some()
+            });
+            fill(&mut app, "field-name", "PUBLIC first attempt");
+            let before = std::fs::read(&path).unwrap();
+            std::fs::write(path.with_extension("fail-before"), b"PUBLIC fault").unwrap();
+            click(&mut app, "save-entry");
+            app.wait_idle();
+            app.update(|window, _| {
+                assert!(window.find("save-entry").visible());
+                assert_ne!(window.find("save-entry").disabled(), Some(true));
+                assert_eq!(
+                    window.find("field-name").value(),
+                    Some("PUBLIC first attempt")
+                );
+            });
+            assert_eq!(std::fs::read(&path).unwrap(), before);
+            std::fs::remove_file(path.with_extension("fail-before")).unwrap();
+            let expected = if changed {
+                fill(&mut app, "field-name", "PUBLIC corrected attempt");
+                "PUBLIC corrected attempt"
+            } else {
+                "PUBLIC first attempt"
+            };
+            click(&mut app, "save-entry");
+            app.wait("retry saved", |window, _| {
+                window.try_find("edit-entry").is_some()
+            });
+            drop(app);
+            let mut reopened = start(directory.path(), "save-retry-reopened");
+            open(&mut reopened, &path);
+            reopened.wait("retry persisted", |window, _| {
+                title_cell(window).is_some_and(|cell| cell.label() == Some(expected))
+            });
+        }
+    }
+    fn lock_during_save_reconciles_the_committed_draft() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("PUBLIC-lock-save.taypeer");
+        let mut app = start(directory.path(), "lock-save");
+        create(&mut app, &path);
+        create_entry(&mut app);
+        click(&mut app, "edit-entry");
+        app.wait("editor available", |window, _| {
+            window.try_find("field-name").is_some()
+        });
+        fill(&mut app, "field-name", "PUBLIC committed during lock");
+        std::fs::write(path.with_extension("hold-after"), b"PUBLIC hold").unwrap();
+        click(&mut app, "save-entry");
+        app.wait("storage committed before response", |_, _| {
+            path.with_extension("committed").exists()
+        });
+        app.system_lock();
+        app.wait("lock clears editor", |window, _| {
+            window.try_find("unlock").is_some() && window.try_find("save-entry").is_none()
+        });
+        app.assert_capture_safe();
+        let committed = std::fs::read(&path).unwrap();
+        drop(app);
+        std::fs::remove_file(path.with_extension("hold-after")).unwrap();
+        let mut reopened = start(directory.path(), "lock-save-reopened");
+        open(&mut reopened, &path);
+        reopened.wait("committed state reopened", |window, _| {
+            title_cell(window)
+                .is_some_and(|cell| cell.label() == Some("PUBLIC committed during lock"))
+        });
+        reopened.update(|window, _| {
+            assert!(window.try_find("restore-draft").is_none());
+        });
+        assert_eq!(std::fs::read(&path).unwrap(), committed);
+    }
+
     pub fn run() {
         let filters: Vec<_> = std::env::args()
             .skip(1)
             .filter(|arg| !arg.starts_with("--"))
             .collect();
-        let scenarios: [(&str, fn()); 6] = [
+        let scenarios: [(&str, fn()); 8] = [
+            (
+                "save_failure_can_be_retried_or_edited",
+                save_failure_can_be_retried_or_edited,
+            ),
+            (
+                "lock_during_save_reconciles_the_committed_draft",
+                lock_during_save_reconciles_the_committed_draft,
+            ),
             (
                 "recent_databases_survive_restart",
                 recent_databases_survive_restart,

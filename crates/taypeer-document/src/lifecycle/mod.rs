@@ -313,6 +313,10 @@ impl Document {
         let Some(value) = unique_optional(&self.doc, &root, operation.as_str())? else {
             return Ok(None);
         };
+        let raw: serde_json::Value = decode(&value)?;
+        if raw["intent"].get("command").is_some() {
+            return Err(Error::DuplicateId);
+        }
         let receipt: ActionReceipt = decode(&value)?;
         let intent = serde_json::to_value(intent).map_err(|_| Error::InvalidDocument)?;
         if receipt.intent != intent {

@@ -35,7 +35,12 @@ fn format_read_only_preserves_file_history_and_encrypted_draft() {
     let path = directory.path().join("PUBLIC-read-only.taypeer");
     let (mut service, token) = create(&profile, path.clone());
     let group = service
-        .create_group(&token, "PUBLIC group".into(), None)
+        .create_group(
+            &token,
+            "PUBLIC group".into(),
+            None,
+            &crate::new_operation_id().unwrap(),
+        )
         .unwrap()
         .value
         .id;
@@ -50,7 +55,10 @@ fn format_read_only_preserves_file_history_and_encrypted_draft() {
             },
         )
         .unwrap();
-    let entry = service.save_draft(&token).unwrap().value;
+    let entry = service
+        .save_draft(&token, &crate::new_operation_id().unwrap())
+        .unwrap()
+        .value;
     service.start_edit_entry(&token, &entry).unwrap();
     service
         .update_draft(
@@ -92,7 +100,12 @@ fn format_read_only_preserves_file_history_and_encrypted_draft() {
     assert!(service.reveal_password(&session, &entry).is_ok());
     assert_eq!(
         service
-            .create_group(&session, "PUBLIC forbidden".into(), None)
+            .create_group(
+                &session,
+                "PUBLIC forbidden".into(),
+                None,
+                &crate::new_operation_id().unwrap()
+            )
             .unwrap_err(),
         ServiceError::WriteCompatibility
     );
@@ -166,7 +179,12 @@ fn ciphertext_waits_for_a_capable_client_without_being_received_twice() {
     receiver.lock(&receiver_token).unwrap();
     drop(receiver);
     sender
-        .create_group(&token, "PUBLIC incoming".into(), None)
+        .create_group(
+            &token,
+            "PUBLIC incoming".into(),
+            None,
+            &crate::new_operation_id().unwrap(),
+        )
         .unwrap();
     let before = std::fs::read(&path).unwrap();
     deliver(&a, &b, &token.database);

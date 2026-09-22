@@ -16,10 +16,19 @@ impl Document {
         name: String,
         description: Option<String>,
     ) -> Result<(), Error> {
+        self.update_metadata_command(name, description, None)
+    }
+    /// Confirm metadata and its retry receipt together.
+    pub fn update_metadata_command(
+        &mut self,
+        name: String,
+        description: Option<String>,
+        receipt: Option<&CommandReceipt<'_>>,
+    ) -> Result<(), Error> {
         validate_group_name(&name)?;
         let name_changed = self.display_name()? != name;
         let description_changed = self.description()? != description;
-        if !name_changed && !description_changed {
+        if !name_changed && !description_changed && receipt.is_none() {
             return Ok(());
         }
         self.prepare_write()?;
@@ -29,6 +38,9 @@ impl Document {
         }
         if description_changed {
             tx.put(ROOT, "description", encode(&description)?)?;
+        }
+        if let Some(receipt) = receipt {
+            receipt.write(&mut tx, &())?;
         }
         tx.commit();
         Ok(())

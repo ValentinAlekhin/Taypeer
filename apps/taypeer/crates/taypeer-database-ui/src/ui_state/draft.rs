@@ -67,6 +67,9 @@ pub(crate) struct EditorStore {
     dirty: bool,
     preview: Option<taypeer_services::IconPreview>,
     error: Option<FormError>,
+    save_error: Option<FormError>,
+    save_operation: Option<taypeer_core::OperationId>,
+    write_uncertain: bool,
     pending: Vec<Ticket<()>>,
     projection: Option<(u64, Ticket<EditorView>)>,
     revision: u64,
@@ -87,6 +90,9 @@ impl EditorStore {
             dirty: view.dirty,
             preview: None,
             error: None,
+            save_error: None,
+            save_operation: None,
+            write_uncertain: false,
             pending: Vec::new(),
             projection: None,
             revision: 0,
@@ -150,12 +156,31 @@ impl EditorStore {
         &self.content
     }
     pub fn editable(&self) -> bool {
-        !self.frozen && self.connection.control.is_open()
+        !self.frozen && !self.write_uncertain && self.connection.control.is_open()
     }
     pub fn fail(&mut self, error: taypeer_runtime::RuntimeError) {
         self.frozen = false;
-        self.error = Some(FormError::Runtime(error));
+        self.write_uncertain = matches!(
+            error,
+            taypeer_runtime::RuntimeError::Service(taypeer_services::ServiceError::Storage(
+                taypeer_services::StorageError::CommitUncertain
+            ))
+        );
+        self.save_error = Some(FormError::Runtime(error));
         self.needs_projection = false;
+    }
+    pub fn save_blocked(&self) -> bool {
+        self.error.is_some() || self.write_uncertain
+    }
+    pub fn save_operation(
+        &mut self,
+    ) -> Result<taypeer_core::OperationId, taypeer_services::ServiceError> {
+        if let Some(id) = &self.save_operation {
+            return Ok(id.clone());
+        }
+        let id = taypeer_services::new_operation_id()?;
+        self.save_operation = Some(id.clone());
+        Ok(id)
     }
     pub fn freeze(&mut self, value: bool) {
         self.frozen = value;
@@ -167,7 +192,7 @@ impl EditorStore {
         self.dirty
     }
     pub fn error(&self) -> Option<FormError> {
-        self.error
+        self.error.or(self.save_error)
     }
     pub fn busy(&self) -> bool {
         !self.pending.is_empty()
@@ -187,6 +212,8 @@ impl EditorStore {
         self.forms_pending = self.forms_pending.saturating_sub(1);
         match result {
             Ok(()) => {
+                self.save_operation = None;
+                self.save_error = None;
                 self.dirty = true;
                 self.needs_projection = true;
                 self.error = None;
@@ -225,8 +252,12 @@ impl EditorStore {
             None => true,
             Some(result) => {
                 changed = true;
-                if let Err(error) = result {
-                    self.error = Some(FormError::Runtime(error));
+                match result {
+                    Err(error) => self.error = Some(FormError::Runtime(error)),
+                    Ok(()) => {
+                        self.save_operation = None;
+                        self.save_error = None;
+                    }
                 }
                 false
             }

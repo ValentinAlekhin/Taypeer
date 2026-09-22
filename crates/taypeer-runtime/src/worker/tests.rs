@@ -1,6 +1,7 @@
 //! PUBLIC-only process fixture: real dispatch, service and dev5 files, no native credentials.
 mod compatibility;
 mod presentation;
+mod retries;
 mod stalled;
 use super::*;
 use crate::{
@@ -79,7 +80,7 @@ fn synthetic_open(
     )
     .map_err(crate::host::sync_error)?;
     Ok(service.open_managed(
-        Box::new(stalled::Persistence(port)),
+        Box::new(super::faults::Persistence(stalled::Persistence(port))),
         boot.password.as_bytes(),
         || Ok((std::env::var_os("TAYPEER_PUBLIC_READ_ONLY").is_none()).then(author)),
     )?)
@@ -212,6 +213,7 @@ fn edit(client: &Client) {
     let group = client
         .request(
             &Command::CreateGroup {
+                operation: taypeer_services::new_operation_id().unwrap(),
                 name: "PUBLIC group".into(),
                 parent: None,
             },
@@ -268,7 +270,14 @@ fn lock_durably_preserves_an_encrypted_draft_for_a_new_process() {
         next.control.status().generation
     );
     next.request(&Command::RestoreDraft, false).unwrap();
-    let saved = next.request(&Command::SaveDraft, false).unwrap();
+    let saved = next
+        .request(
+            &Command::SaveDraft {
+                operation: taypeer_services::new_operation_id().unwrap(),
+            },
+            false,
+        )
+        .unwrap();
     let id: taypeer_core::EntryId = serde_json::from_value(saved).unwrap();
     let entry = next.request(&Command::Entry(id.clone()), false).unwrap();
     assert_eq!(entry["title"], "PUBLIC unsaved title");

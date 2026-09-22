@@ -276,7 +276,7 @@ impl DatabaseService {
                 if request.review.is_some() {
                     return Err(ServiceError::InvalidInput);
                 }
-                let mut draft = state.draft.as_ref().ok_or(ServiceError::NoDraft)?.clone();
+                let mut draft = state.draft_for_edit()?;
                 if draft.binary_receipt(operation, &intent)? {
                     return Ok(stamped(session, ()));
                 }

@@ -80,6 +80,9 @@ impl CliError {
                     taypeer_services::StorageError::MissingBlob,
                 ),
             )) => "missing_blob",
+            Self::Runtime(RuntimeError::Service(
+                taypeer_services::ServiceError::OperationConflict,
+            )) => "operation_conflict",
             Self::Runtime(_) => "runtime_error",
             Self::Input => "input_error",
             Self::PasswordMismatch => "password_mismatch",

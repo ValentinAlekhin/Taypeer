@@ -286,5 +286,6 @@
   "ui.welcome_receive": "Получить базу…",
   "ui.welcome_import": "Импорт KDBX…",
   "ui.import_unavailable": "Импорт KDBX пока недоступен",
-  "ui.master_password": "Мастер-пароль"
+  "ui.master_password": "Мастер-пароль",
+  "ui.operation_conflict": "Форма больше не соответствует этой попытке сохранения. Проверьте изменения и повторите попытку."
 }

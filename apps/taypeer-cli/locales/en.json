@@ -111,5 +111,6 @@
   "help_auto_lock_seconds": "Positive inactivity interval in seconds; default 300",
   "session_closed": "The database session is locked. Unlock it to continue.",
   "operation_interrupted": "The session was locked during the operation. A write may already have committed; the latest draft is not guaranteed to be saved.",
-  "shutdown_unconfirmed": "Access is closed, but process exit is not yet confirmed."
+  "shutdown_unconfirmed": "Access is closed, but process exit is not yet confirmed.",
+  "operation_conflict": "This operation ID belongs to another request. Use a new ID for changed input."
 }
