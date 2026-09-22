@@ -164,10 +164,11 @@ fn open_access(
         .spawn()
         .unwrap();
     let input = child.stdin.take().unwrap();
-    let mut output = BufReader::new(child.stdout.take().unwrap());
+    let mut output =
+        BufReader::new(Box::new(child.stdout.take().unwrap()) as Box<dyn std::io::Read + Send>);
     let (jobs, receive) = mpsc::sync_channel(1);
     let control = Arc::new(ProcessControl::new(
-        child,
+        Box::new(crate::platform::DesktopProcess(Some(child))),
         jobs.clone(),
         sessions.activity(),
     ));
@@ -194,7 +195,7 @@ fn open_access(
         invitation: None,
     };
     let actor = PipeActor {
-        input,
+        input: Box::new(input),
         output,
         callbacks: Box::new(NoIo),
         spool,

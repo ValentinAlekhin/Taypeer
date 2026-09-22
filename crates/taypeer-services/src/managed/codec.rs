@@ -159,6 +159,7 @@ pub(super) fn read_checkpoint(
     metadata.verify(&document, chain, object.envelope().control)?;
     Ok((metadata, document))
 }
+#[allow(clippy::too_many_arguments)] // Allocation policy accompanies the existing authenticated payload inputs.
 pub(super) fn seal_payload(
     chain: &ControlChain,
     author: &AuthorKey,
@@ -167,9 +168,10 @@ pub(super) fn seal_payload(
     key: &ReadKey,
     metadata: &impl Serialize,
     document: &[u8],
+    temporary: taypeer_storage::TemporaryStorage,
 ) -> Result<EncryptedObject, ServiceError> {
     let clear = encode(metadata, document)?;
-    let empty = BlobStore::new()?;
+    let empty = BlobStore::with_temporary_storage(temporary)?;
     seal_bundle(chain, author, kind, header, key, &clear, &empty)
 }
 pub(super) fn seal_bundle(
@@ -183,8 +185,15 @@ pub(super) fn seal_bundle(
 ) -> Result<EncryptedObject, ServiceError> {
     let reader = blobs.bundle(clear)?;
     let length = reader.length();
-    Ok(EncryptedObject::seal(
-        chain, author, kind, header, key, reader, length,
+    Ok(EncryptedObject::seal_in(
+        chain,
+        author,
+        kind,
+        header,
+        key,
+        reader,
+        length,
+        blobs.temporary_storage(),
     )?)
 }
 

@@ -1,0 +1,20 @@
+<resources>
+    <string name="app_name">Taypeer</string>
+    <string name="runtime_stage">Android integration in progress. Database operations are not available in this build.</string>
+    <string name="generator">Password generator</string>
+    <string name="length">Length</string>
+    <string name="generate">Generate</string>
+    <string name="operation_failed">The operation failed. Check the parameters and try again.</string>
+    <string name="hide">Hide</string>
+    <string name="reveal">Reveal</string>
+    <string name="copy">Copy for 30 seconds</string>
+    <string name="passphrase">Passphrase</string>
+    <string name="words">Words</string>
+    <string name="separator">Separator</string>
+    <string name="uppercase">Uppercase letters</string>
+    <string name="lowercase">Lowercase letters</string>
+    <string name="digits">Digits</string>
+    <string name="punctuation">Punctuation</string>
+    <string name="exclude_similar">Exclude similar characters</string>
+    <string name="exclusions">Exclude characters</string>
+</resources>

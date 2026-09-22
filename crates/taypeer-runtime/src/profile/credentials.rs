@@ -4,6 +4,7 @@ use super::*;
 #[derive(Clone)]
 pub(super) enum Credentials {
     Native,
+    Platform(Arc<dyn CredentialStore>),
     #[cfg(feature = "ui-test-support")]
     Fixture(PathBuf),
 }
@@ -15,6 +16,13 @@ impl Credentials {
     ) -> Result<Option<Zeroizing<Vec<u8>>>, ProfileError> {
         match self {
             Self::Native => native::get(service, account),
+            Self::Platform(store) => {
+                let value = store.get(service, account)?;
+                if value.as_ref().is_some_and(|bytes| bytes.len() > 65536) {
+                    return Err(ProfileError::Invalid);
+                }
+                Ok(value)
+            }
             #[cfg(feature = "ui-test-support")]
             Self::Fixture(directory) => {
                 let path = directory
@@ -44,6 +52,12 @@ impl Credentials {
     ) -> Result<(), ProfileError> {
         match self {
             Self::Native => native::set(service, account, bytes),
+            Self::Platform(store) => {
+                if bytes.len() > 65536 {
+                    return Err(ProfileError::Invalid);
+                }
+                store.set(service, account, bytes)
+            }
             #[cfg(feature = "ui-test-support")]
             Self::Fixture(directory) => {
                 std::fs::create_dir_all(directory).map_err(|_| ProfileError::Io)?;

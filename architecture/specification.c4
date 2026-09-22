@@ -7,6 +7,7 @@ specification {
   element external { style { color gray } }
   element entity { style { color green } }
   element namespace { style { color muted } }
+  deploymentNode process
   deploymentNode device
   tag scaffold
   tag partial

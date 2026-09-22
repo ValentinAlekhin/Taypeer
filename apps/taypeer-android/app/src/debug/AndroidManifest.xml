@@ -1,0 +1,9 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <service android:name="dev.taypeer.platform.DescriptorProbeService"
+            android:exported="false" android:isolatedProcess="true"
+            android:process=":descriptor_probe" android:stopWithTask="true"/>
+        <service android:name="dev.taypeer.platform.HostDeathProbeService"
+            android:exported="false" android:process=":test_host"/>
+    </application>
+</manifest>

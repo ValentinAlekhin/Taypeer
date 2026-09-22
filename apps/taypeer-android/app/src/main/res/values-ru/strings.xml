@@ -1,0 +1,20 @@
+<resources>
+    <string name="app_name">Taypeer</string>
+    <string name="runtime_stage">Интеграция Android в работе. Операции с БД в этой сборке пока недоступны.</string>
+    <string name="generator">Генератор паролей</string>
+    <string name="length">Длина</string>
+    <string name="generate">Создать</string>
+    <string name="operation_failed">Операция не выполнена. Проверьте параметры и повторите попытку.</string>
+    <string name="hide">Скрыть</string>
+    <string name="reveal">Показать</string>
+    <string name="copy">Копировать на 30 секунд</string>
+    <string name="passphrase">Парольная фраза</string>
+    <string name="words">Количество слов</string>
+    <string name="separator">Разделитель</string>
+    <string name="uppercase">Заглавные буквы</string>
+    <string name="lowercase">Строчные буквы</string>
+    <string name="digits">Цифры</string>
+    <string name="punctuation">Специальные символы</string>
+    <string name="exclude_similar">Исключить похожие символы</string>
+    <string name="exclusions">Исключить символы</string>
+</resources>

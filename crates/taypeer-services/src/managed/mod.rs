@@ -157,6 +157,7 @@ impl ManagedState {
                 &key,
                 &proof,
                 source.bytes(),
+                self.snapshot.temporary_storage(),
             )?;
             metadata.processed.insert(object.descriptor().digest);
             objects.push(object);
@@ -248,6 +249,7 @@ impl ManagedState {
             &key,
             &metadata,
             &clear,
+            self.snapshot.temporary_storage(),
         )?;
         let checkpoint_id = checkpoint.descriptor().digest;
         objects.push(checkpoint);
@@ -262,6 +264,7 @@ impl ManagedState {
                 &key,
                 &metadata,
                 &clear,
+                self.snapshot.temporary_storage(),
             )?;
             let id = object.descriptor().digest;
             objects.push(object);
@@ -372,6 +375,17 @@ impl DatabaseService {
         identity: Identity,
         now: i64,
     ) -> Result<ArchiveSeed, ServiceError> {
+        Self::prepare_managed_form_in(form, password, author, identity, now, Default::default())
+    }
+    /// Prepare creation with an explicit ciphertext allocator (including isolated workers).
+    pub fn prepare_managed_form_in(
+        form: crate::CreateDatabase,
+        password: &[u8],
+        author: &AuthorKey,
+        identity: Identity,
+        now: i64,
+        temporary: taypeer_storage::TemporaryStorage,
+    ) -> Result<ArchiveSeed, ServiceError> {
         let policy = form.policy;
         if identity.device != author.device_id() {
             return Err(ServiceError::Unauthorized);
@@ -417,6 +431,7 @@ impl DatabaseService {
             &key,
             &metadata,
             &clear,
+            temporary.clone(),
         )?;
         let baseline = codec::seal_payload(
             &chain,
@@ -426,6 +441,7 @@ impl DatabaseService {
             &key,
             &metadata,
             &clear,
+            temporary.clone(),
         )?;
         Ok(ArchiveSeed {
             controls: chain.records().to_vec(),
@@ -524,6 +540,7 @@ impl DatabaseService {
         } else {
             snapshot.metadata().manifest.body.baseline
         };
+        let mut blobs = BlobStore::with_temporary_storage(snapshot.temporary_storage())?;
         let managed = ManagedState {
             port,
             baseline,
@@ -537,7 +554,6 @@ impl DatabaseService {
                 control: selected.envelope().control,
             }),
         };
-        let mut blobs = BlobStore::new()?;
         managed.load_required_blobs(&document, &mut blobs)?;
         // An unsupported writer must not decode/rewrite a possibly newer local draft.
         let draft = if compatibility.write.is_supported() {

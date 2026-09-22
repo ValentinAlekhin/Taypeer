@@ -38,14 +38,14 @@ fn launch_with(
     let output = BufReader::new(child.stdout.take().unwrap());
     let (jobs, receive) = mpsc::sync_channel(1);
     let control = Arc::new(ProcessControl::new(
-        child,
+        Box::new(crate::platform::DesktopProcess(Some(child))),
         jobs.clone(),
         sessions.activity(),
     ));
     control.set_generation(sessions.register(&control).unwrap());
     let actor = PipeActor {
-        input,
-        output,
+        input: Box::new(input),
+        output: BufReader::new(Box::new(output)),
         callbacks,
         spool: tempfile::tempdir().unwrap(),
     };

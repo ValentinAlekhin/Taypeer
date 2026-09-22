@@ -2,6 +2,7 @@
 mod cipher_ipc;
 mod host;
 mod network;
+pub mod platform;
 mod process;
 pub mod profile;
 mod protocol;
@@ -77,7 +78,7 @@ impl Worker {
         result
     }
     pub(crate) fn open(
-        executable: &Path,
+        launcher: &dyn platform::ProcessLauncher,
         path: &Path,
         password: String,
         create_form: Option<taypeer_services::CreateDatabase>,
@@ -100,8 +101,8 @@ impl Worker {
             invitation: None,
         };
         let mut events = context.coordinator.subscribe();
-        let client = Client::spawn(
-            executable,
+        let client = Client::connect(
+            launcher.launch()?,
             sessions,
             Box::new(Callbacks::new(context, path.to_owned(), directory)),
             spool,

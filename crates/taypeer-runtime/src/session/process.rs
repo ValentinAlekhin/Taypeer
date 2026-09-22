@@ -1,15 +1,12 @@
 use super::*;
 use crate::process::Job;
-use std::{
-    process::Child,
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        mpsc::SyncSender,
-    },
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    mpsc::SyncSender,
 };
 
 struct State {
-    child: Option<Child>,
+    child: Option<Box<dyn crate::platform::ProcessHandle>>,
     database: Option<DatabaseId>,
     phase: SessionPhase,
     closing: Option<(LockReason, Instant)>,
@@ -25,17 +22,11 @@ pub(crate) struct ProcessControl {
     pub(crate) activity: ActivityHandle,
 }
 impl ProcessControl {
-    pub(crate) fn take_pipes(
-        &self,
-    ) -> Result<(std::process::ChildStdin, std::process::ChildStdout), RuntimeError> {
-        let mut state = self.state.lock().map_err(|_| RuntimeError::Closed)?;
-        let child = state.child.as_mut().ok_or(RuntimeError::Closed)?;
-        Ok((
-            child.stdin.take().ok_or(RuntimeError::Transport)?,
-            child.stdout.take().ok_or(RuntimeError::Transport)?,
-        ))
-    }
-    pub(crate) fn new(child: Child, jobs: SyncSender<Job>, activity: ActivityHandle) -> Self {
+    pub(crate) fn new(
+        child: Box<dyn crate::platform::ProcessHandle>,
+        jobs: SyncSender<Job>,
+        activity: ActivityHandle,
+    ) -> Self {
         Self {
             state: Mutex::new(State {
                 child: Some(child),
@@ -111,9 +102,9 @@ impl ProcessControl {
             .child
             .as_mut()
             .expect("child retained until control drops")
-            .try_wait()
+            .has_exited()
         {
-            Ok(Some(_)) => {
+            Ok(true) => {
                 let unexpected = state.closing.is_none();
                 let (reason, _) = *state
                     .closing
@@ -164,7 +155,7 @@ impl ProcessControl {
                     .closing
                     .get_or_insert((LockReason::Transport, Instant::now()));
             }
-            Ok(None) => {}
+            Ok(false) => {}
         }
         if let Some((_, since)) = state.closing {
             if !state.sent {
@@ -176,7 +167,7 @@ impl ProcessControl {
                     .child
                     .as_mut()
                     .expect("child retained until control drops")
-                    .kill()
+                    .terminate()
                     .is_ok();
             }
         }
@@ -228,9 +219,10 @@ impl Drop for ProcessControl {
             && let Some(mut child) = state.child.take()
         {
             // Covers registration/spawn failures too. Reaping cannot block the caller.
-            let _ = child.kill();
+            let _ = child.terminate();
             std::thread::spawn(move || {
-                let _ = child.wait();
+                // The adapter owns any platform-specific reaping after its final drop.
+                drop(child);
             });
         }
     }

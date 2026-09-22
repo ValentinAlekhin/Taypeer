@@ -11,8 +11,27 @@ impl ArchiveSnapshot {
     pub fn open(path: &Path, pinned: Option<Digest>) -> Result<Self, Error> {
         Self::read(File::open(path)?, pinned)
     }
-    pub(super) fn read(mut file: File, pinned: Option<Digest>) -> Result<Self, Error> {
-        let length = file.metadata()?.len();
+    pub(super) fn read(file: File, pinned: Option<Digest>) -> Result<Self, Error> {
+        Self::from_file(file, pinned, crate::TemporaryStorage::default())
+    }
+    /// Verify an immutable owned ciphertext descriptor. Future objects use the explicit
+    /// allocation policy; no source pathname or global temporary directory is required.
+    /// The caller must prevent concurrent mutation of the underlying file.
+    pub fn from_file(
+        file: File,
+        pinned: Option<Digest>,
+        temporary: crate::TemporaryStorage,
+    ) -> Result<Self, Error> {
+        Self::from_source(file.into(), pinned, temporary)
+    }
+    /// Verify a platform-owned immutable ciphertext capability with no pathname access.
+    pub fn from_source(
+        mut file: crate::CiphertextFile,
+        pinned: Option<Digest>,
+        temporary: crate::TemporaryStorage,
+    ) -> Result<Self, Error> {
+        file.rewind()?;
+        let length = file.length()?;
         if length < PREFIX as u64 || length > MAX_ARCHIVE {
             return Err(Error::TooLarge);
         }
@@ -67,9 +86,10 @@ impl ArchiveSnapshot {
         if offset != length {
             return Err(Error::InvalidFile);
         }
-        let fingerprint = Digest::from_bytes(file::fingerprint(&mut file)?);
+        let fingerprint = Digest::from_bytes(file::fingerprint_reader(&mut file, length)?);
         Ok(Self {
-            file: Arc::new(file),
+            temporary,
+            file,
             metadata,
             chain,
             offsets,

@@ -4,10 +4,13 @@ mod archive;
 mod blobs;
 mod bundle;
 mod cipher_persistence;
+mod ciphertext_file;
 mod crypto;
 mod encrypted_object;
 mod file;
+mod locking;
 mod stream;
+mod temporary;
 
 pub use archive::{
     Anchor, AnchorStore, ArchiveCandidate, ArchiveJournal, ArchiveMetadata, ArchiveSnapshot,
@@ -21,8 +24,11 @@ pub use encrypted_object::{EncryptedObject, ObjectReader, create_epoch};
 
 pub use blobs::BlobStore;
 pub use bundle::BundleReader;
+pub use ciphertext_file::{CiphertextFile, CiphertextIo};
 pub use crypto::ReadKey;
 pub use file::{BinaryDraft, FileStore};
+pub use locking::try_lock_exclusive;
+pub use temporary::{TemporaryFileProvider, TemporaryStorage};
 
 /// Categorized failures without paths, passwords or parser diagnostics.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -87,3 +93,6 @@ mod tests;
 
 #[cfg(test)]
 mod binary_tests;
+
+#[cfg(test)]
+mod descriptor_tests;

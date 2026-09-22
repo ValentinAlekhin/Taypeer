@@ -1,0 +1,4 @@
+[bindings.kotlin]
+package_name = "dev.taypeer.bridge"
+cdylib_name = "taypeer_android"
+android = true

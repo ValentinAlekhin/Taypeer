@@ -125,6 +125,12 @@ impl BlobStore {
         })
     }
     pub(super) fn read_bundle(mut input: impl Read) -> Result<(Zeroizing<Vec<u8>>, Self), Error> {
+        Self::read_bundle_in(&mut input, crate::TemporaryStorage::default())
+    }
+    pub(super) fn read_bundle_in(
+        mut input: impl Read,
+        temporary: crate::TemporaryStorage,
+    ) -> Result<(Zeroizing<Vec<u8>>, Self), Error> {
         let mut prefix = [0; 16];
         input.read_exact(&mut prefix)?;
         if &prefix[..8] != MAGIC {
@@ -164,7 +170,7 @@ impl BlobStore {
         }
         let mut document = Zeroizing::new(vec![0; catalog.document_length as usize]);
         input.read_exact(&mut document)?;
-        let mut blobs = Self::new()?;
+        let mut blobs = Self::with_temporary_storage(temporary)?;
         for section in catalog.sections {
             blobs.insert_ids(
                 (&mut input).take(section.length),

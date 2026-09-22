@@ -11,7 +11,6 @@ use crate::{
 use serde_json::Value;
 use std::{
     io::{BufReader, Write},
-    process::{ChildStdin, ChildStdout},
     sync::{Arc, mpsc},
 };
 use zeroize::Zeroizing;
@@ -35,26 +34,31 @@ impl Client {
         callbacks: Box<dyn CallbackHandler>,
         spool: tempfile::TempDir,
     ) -> Result<Arc<Self>, RuntimeError> {
-        use std::process::{Command, Stdio};
-        let child = Command::new(executable)
-            .arg("__worker")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|_| RuntimeError::Transport)?;
+        use crate::platform::ProcessLauncher;
+        Self::connect(
+            crate::platform::DesktopLauncher(executable).launch()?,
+            sessions,
+            callbacks,
+            spool,
+        )
+    }
+    pub fn connect(
+        connection: crate::platform::ProcessConnection,
+        sessions: &crate::session::SessionController,
+        callbacks: Box<dyn CallbackHandler>,
+        spool: tempfile::TempDir,
+    ) -> Result<Arc<Self>, RuntimeError> {
         let (jobs, receive) = mpsc::sync_channel(1);
         // Child ownership is guarded before any fallible setup step.
         let control = Arc::new(ProcessControl::new(
-            child,
+            connection.control,
             jobs.clone(),
             sessions.activity(),
         ));
         control.set_generation(sessions.register(&control)?);
-        let (input, output) = control.take_pipes()?;
         let actor = PipeActor {
-            input,
-            output: BufReader::new(output),
+            input: connection.input,
+            output: BufReader::new(connection.output),
             callbacks,
             spool,
         };
@@ -106,8 +110,8 @@ impl Client {
     }
 }
 pub(crate) struct PipeActor {
-    pub input: ChildStdin,
-    pub output: BufReader<ChildStdout>,
+    pub input: Box<dyn Write + Send>,
+    pub output: BufReader<Box<dyn std::io::Read + Send>>,
     pub callbacks: Box<dyn CallbackHandler>,
     pub spool: tempfile::TempDir,
 }

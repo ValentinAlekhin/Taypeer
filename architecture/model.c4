@@ -30,16 +30,16 @@ model {
       }
     }
     android = app 'Приложение Android' {
-      #planned
+      #partial
       technology 'Kotlin + Jetpack Compose / AndroidX'
-      description 'Отдельный UI с общими Rust-сценариями. APK в spike — исследовательский стенд.'
-      metadata { evidence 'spikes/android-compose/REPORT.md'; contract 'docs/architecture.md' }
+      description 'Продуктовая сборка и генератор Compose → Rust. Документный UI и P2P ещё не подключены; spike остаётся историческим стендом.'
+      metadata { source 'apps/taypeer-android/app/src/main/java/dev/taypeer/MainActivity.kt'; evidence 'apps/taypeer-android/README.md'; contract 'docs/architecture.md' }
     }
     ffi = component 'Адаптер UniFFI' {
-      #planned
+      #partial
       technology 'Rust + UniFFI'
-      description 'Команды, ограниченные представления и события для Android.'
-      metadata { evidence 'spikes/android-compose/REPORT.md'; contract 'docs/architecture.md' }
+      description 'Типизированные команды, ограниченные представления и события с БД, поколением и ID запроса; без универсального JSON API.'
+      metadata { source 'apps/taypeer-android/native/src/lib.rs'; evidence 'apps/taypeer-android/README.md'; contract 'docs/architecture.md' }
     }
     cli = app 'Командный клиент' {
       #partial
@@ -98,7 +98,7 @@ model {
       #partial
       style { border solid }
       technology 'Rust'
-      description 'Потоковые бинарные секции, зашифрованный staging, атомарная запись без автоматических резервных копий. Подписанная ciphertext-очередь сохраняется до ACK.'
+      description 'Потоковые бинарные секции и ciphertext staging через явный источник временных файлов. Атомарная запись без автобэкапов; подписанная ciphertext-очередь сохраняется до ACK.'
       metadata { source 'crates/taypeer-storage/src/file.rs'; contract 'docs/storage.md'; evidence 'spikes/encrypted-sync/REPORT.md' }
     }
     sync = component 'Зашифрованный обмен' {
@@ -158,10 +158,10 @@ model {
       metadata { source 'apps/taypeer/crates/taypeer-desktop-platform/src/macos.rs'; contract 'docs/architecture.md' }
     }
     androidPlatform = component 'Адаптеры Android' {
-      #planned
+      #partial
       technology 'Kotlin + AndroidX'
-      description 'SAF, Keystore, биометрия, буфер, lifecycle и фоновые задания.'
-      metadata { contract 'docs/architecture.md' }
+      description 'SAF, Keystore, Binder и bindIsolatedService, буфер, lifecycle и фоновые задания. Контроль worker независим от команд; биометрия отложена.'
+      metadata { source 'apps/taypeer-android/app/src/main/java/dev/taypeer/platform/DocumentService.kt'; evidence 'apps/taypeer-android/README.md'; contract 'docs/architecture.md' }
     }
     vault = store 'Рабочий файл .taypeer' {
       #partial
@@ -208,7 +208,12 @@ model {
   taypeer.desktop -> taypeer.sessions 'Переносимый headless smoke'
   taypeer.desktop -> taypeer.coordinator 'Жизненный цикл рабочих файлов через runtime'
   taypeer.android -> taypeer.ffi 'Команды и события'
-  taypeer.ffi -> taypeer.sessions 'Сценарии Rust'
+  taypeer.ffi -> taypeer.sessions 'Сценарии Rust внутри isolated worker'
+  taypeer.ffi -> taypeer.sessionGuard 'Поколения и независимый отзыв доступа'
+  taypeer.ffi -> taypeer.coordinator 'Файлы и ciphertext независимо от разблокировки'
+  taypeer.sessionGuard -> taypeer.androidPlatform 'Неблокирующее завершение isolated Service'
+  taypeer.secretWorker -> taypeer.androidPlatform 'Приватный Binder и переданные дескрипторы'
+  taypeer.storage -> taypeer.androidPlatform 'Источник дескрипторов для ciphertext staging в isolated worker'
   taypeer.sessions -> taypeer.core 'Правила предметной области'
   taypeer.sessions -> taypeer.document 'Правки и объединение'
   taypeer.sessions -> taypeer.crypto 'Защита содержимого'

@@ -150,7 +150,8 @@ fn auxiliary(controls: &[SignedControl], journal: &ArchiveJournal) -> Result<Dig
 /// A stable verified file generation. Open readers keep the old inode across replacement.
 #[derive(Clone)]
 pub struct ArchiveSnapshot {
-    file: Arc<File>,
+    temporary: crate::TemporaryStorage,
+    file: crate::CiphertextFile,
     metadata: ArchiveMetadata,
     chain: ControlChain,
     offsets: BTreeMap<Digest, u64>,
@@ -158,6 +159,16 @@ pub struct ArchiveSnapshot {
     length: u64,
 }
 impl ArchiveSnapshot {
+    /// Allocation policy for new ciphertext objects derived from this snapshot.
+    pub fn temporary_storage(&self) -> crate::TemporaryStorage {
+        self.temporary.clone()
+    }
+    /// Select staging for objects derived by a new consumer; the verified immutable
+    /// archive capability and fingerprint remain unchanged.
+    pub fn with_temporary_storage(mut self, temporary: crate::TemporaryStorage) -> Self {
+        self.temporary = temporary;
+        self
+    }
     /// Nonsecret compatibility after outer encoding, signatures and bounds were verified.
     /// A supported receive mode still requires admission and a durable writer before ACK.
     pub fn compatibility(
@@ -186,7 +197,7 @@ impl ArchiveSnapshot {
     /// inherited private IPC spool. This never opens or decrypts an object.
     pub fn copy_ciphertext(&self, output: &mut impl std::io::Write) -> Result<(), Error> {
         crate::encrypted_object::copy_exact(
-            &mut ObjectReader::new(Arc::clone(&self.file), 0, self.length),
+            &mut ObjectReader::new(self.file.clone(), 0, self.length),
             output,
             self.length,
         )
@@ -202,7 +213,7 @@ impl ArchiveSnapshot {
             .get(&id)
             .ok_or(Error::InvalidFile)?;
         Ok(ObjectReader::new(
-            Arc::clone(&self.file),
+            self.file.clone(),
             offset,
             descriptor.length,
         ))
@@ -216,7 +227,12 @@ impl ArchiveSnapshot {
             .objects
             .get(&id)
             .ok_or(Error::MissingBlob)?;
-        EncryptedObject::receive(self.reader(id)?, descriptor, &self.chain)
+        EncryptedObject::receive_in(
+            self.reader(id)?,
+            descriptor,
+            &self.chain,
+            self.temporary.clone(),
+        )
     }
     /// Begin a candidate retaining every current section until explicitly removed.
     pub fn candidate(&self) -> ArchiveCandidate {

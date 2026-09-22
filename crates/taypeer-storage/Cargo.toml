@@ -18,5 +18,8 @@ rand_core.workspace = true
 zeroize.workspace = true
 tempfile.workspace = true
 
+[target.'cfg(target_os = "android")'.dependencies]
+rustix.workspace = true
+
 [lints]
 workspace = true

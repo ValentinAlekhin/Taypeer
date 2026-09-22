@@ -10,6 +10,7 @@ const NEW_PASSWORD: &[u8] = b"PUBLIC independently rotated fixture password";
 
 mod compatibility;
 mod corpus;
+mod temporary;
 
 #[test]
 fn receipt_revocation_and_kdf_changes_never_manage_backup_paths() {

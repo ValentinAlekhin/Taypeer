@@ -24,20 +24,36 @@ deployment {
   }
   android = device 'Телефон владельца' {
     technology 'Android 12+; ARM64'
-    ui = instanceOf taypeer.android
-    ffi = instanceOf taypeer.ffi
-    sessions = instanceOf taypeer.sessions
-    core = instanceOf taypeer.core
-    document = instanceOf taypeer.document
-    crypto = instanceOf taypeer.crypto
-    storage = instanceOf taypeer.storage
-    sync = instanceOf taypeer.sync
-    trust = instanceOf taypeer.trust
-    platform = instanceOf taypeer.androidPlatform
+    host = process 'Host приложения' {
+      description 'Единственный координатор файлов и network host для Activity, WorkManager и foreground Service; без открытого документа.'
+      ui = instanceOf taypeer.android
+      ffi = instanceOf taypeer.ffi
+      guard = instanceOf taypeer.sessionGuard
+      coordinator = instanceOf taypeer.coordinator
+      storage = instanceOf taypeer.storage
+      sync = instanceOf taypeer.sync
+      trust = instanceOf taypeer.trust
+      platform = instanceOf taypeer.androidPlatform
+    }
+    worker = process 'Isolated Service — одно поколение БД' {
+      description 'Отдельный bindIsolatedService на сессию. Только переданные дескрипторы и приватный Binder; без каталогов приложения, сети и Keystore. Смерть host отзывает доступ.'
+      worker = instanceOf taypeer.secretWorker
+      ffi = instanceOf taypeer.ffi
+      sessions = instanceOf taypeer.sessions
+      core = instanceOf taypeer.core
+      document = instanceOf taypeer.document
+      crypto = instanceOf taypeer.crypto
+      storage = instanceOf taypeer.storage {
+        description 'Только ciphertext readers и staging через переданные дескрипторы. Публикация рабочего файла остаётся у host.'
+      }
+      platform = instanceOf taypeer.androidPlatform {
+        description 'Владение полученными ParcelFileDescriptor и локальный Binder endpoint; без Keystore и доступа по путям.'
+      }
+    }
     vault = instanceOf taypeer.vault
     local = instanceOf taypeer.local
   }
-  mac.sync -> android.sync 'P2P между установками'
+  mac.sync -> android.host.sync 'P2P между установками'
 }
 
 views 'Развёртывание' {
@@ -51,12 +67,12 @@ views 'Развёртывание' {
       mac.storage,
       mac.sync,
       mac.vault,
-      android.ui,
-      android.ffi,
-      android.sessions,
-      android.core,
-      android.storage,
-      android.sync,
+      android.host.ui,
+      android.host.ffi,
+      android.worker.sessions,
+      android.worker.core,
+      android.host.storage,
+      android.host.sync,
       android.vault
     autoLayout TopBottom
   }
@@ -67,6 +83,18 @@ views 'Развёртывание' {
     title 'Общий desktop UI — текущая и будущие платформы'
     description 'macOS реализован частично; Linux/Windows показывают намерение, не готовые порты.'
     include mac, linux, windows, mac.ui, linux.ui, windows.ui
+    autoLayout LeftRight
+  }
+}
+
+views 'Развёртывание' {
+  deployment view androidProcesses {
+    title 'Android — host и изолированные поколения БД'
+    description 'Целевая граница процессов; Android runtime и файловые дескрипторы требуют отдельной приёмки.'
+    include android, android.host, android.host.*, android.worker, android.worker.*, android.vault, android.local
+    exclude
+      android.worker.storage -> android.vault,
+      android.worker.platform -> android.local
     autoLayout LeftRight
   }
 }

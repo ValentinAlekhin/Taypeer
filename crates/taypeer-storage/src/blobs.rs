@@ -1,15 +1,15 @@
 //! Immutable content backed by encrypted temporary files and an ephemeral key.
 
-use crate::{Error, ReadKey, crypto, stream::DecryptReader};
+use crate::{
+    CiphertextFile, Error, ObjectReader, ReadKey, TemporaryStorage, crypto, stream::DecryptReader,
+};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs::File,
-    io::{Read, Seek, SeekFrom},
+    io::Read,
     sync::Arc,
 };
 use taypeer_core::BlobId;
-use tempfile::NamedTempFile;
 use zeroize::Zeroizing;
 
 struct Staging {
@@ -17,7 +17,7 @@ struct Staging {
     key: ReadKey,
 }
 pub(super) struct SealedBlob {
-    file: NamedTempFile,
+    file: CiphertextFile,
     header: Vec<u8>,
     pub(super) length: u64,
     pub(super) digest: [u8; 32],
@@ -27,15 +27,25 @@ pub(super) struct SealedBlob {
 /// No plaintext, digest or staging key is printable through this type.
 #[derive(Clone)]
 pub struct BlobStore {
+    temporary: TemporaryStorage,
     staging: Arc<Staging>,
     pub(super) blobs: BTreeMap<BlobId, Arc<SealedBlob>>,
 }
 
 impl BlobStore {
+    /// Allocation policy inherited by encrypted objects prepared from this store.
+    pub fn temporary_storage(&self) -> TemporaryStorage {
+        self.temporary.clone()
+    }
     /// Create independent temporary encryption state, never persisted in a local filename.
     pub fn new() -> Result<Self, Error> {
+        Self::with_temporary_storage(TemporaryStorage::default())
+    }
+    /// Own encrypted staging using the selected file allocator, without a global temp path.
+    pub fn with_temporary_storage(temporary: TemporaryStorage) -> Result<Self, Error> {
         let (header, key) = crypto::staging()?;
         Ok(Self {
+            temporary,
             staging: Arc::new(Staging { header, key }),
             blobs: BTreeMap::new(),
         })
@@ -69,7 +79,7 @@ impl BlobStore {
             input,
             hash: Sha256::new(),
         };
-        let mut file = NamedTempFile::new()?;
+        let mut file = self.temporary.create()?;
         let header = crypto::encrypt_stream(
             &self.staging.header,
             &self.staging.key,
@@ -101,9 +111,17 @@ impl BlobStore {
         }
         Ok(())
     }
-    fn reader_for<'a>(&'a self, blob: &SealedBlob) -> Result<DecryptReader<'a, File>, Error> {
-        let mut file = blob.file.reopen()?;
-        file.seek(SeekFrom::Start(crypto::HEADER as u64))?;
+    fn reader_for<'a>(
+        &'a self,
+        blob: &SealedBlob,
+    ) -> Result<DecryptReader<'a, ObjectReader>, Error> {
+        let offset = crypto::HEADER as u64;
+        let length = blob
+            .file
+            .length()?
+            .checked_sub(offset)
+            .ok_or(Error::InvalidFile)?;
+        let file = ObjectReader::new(blob.file.clone(), offset, length);
         DecryptReader::new(file, &self.staging.key, blob.header.clone())
     }
     fn equal(&self, left: &SealedBlob, right: &SealedBlob) -> Result<bool, Error> {
@@ -120,6 +138,7 @@ impl BlobStore {
     /// Retain an exact set of aliases; shared physical bytes live while any alias needs them.
     pub fn retained(&self, ids: &BTreeSet<BlobId>) -> Self {
         Self {
+            temporary: self.temporary.clone(),
             staging: self.staging.clone(),
             blobs: self
                 .blobs

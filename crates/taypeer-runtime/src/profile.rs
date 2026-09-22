@@ -14,6 +14,18 @@ use zeroize::Zeroizing;
 mod credentials;
 use credentials::Credentials;
 
+/// Platform-protected credential store, supplied by the application host.
+/// Implementations must authenticate encrypted values, bind them to service/account,
+/// distinguish missing from unavailable/corrupt, and acknowledge only durable writes.
+/// No plaintext file fallback is permitted. Calls run off the UI/supervisor thread.
+pub trait CredentialStore: Send + Sync {
+    /// Read at most 64 KiB into an owned zeroizing buffer; missing is `None`.
+    fn get(&self, service: &str, account: &str)
+    -> Result<Option<Zeroizing<Vec<u8>>>, ProfileError>;
+    /// Durably replace at most 64 KiB; preserve the previous value on pre-commit failure.
+    fn set(&self, service: &str, account: &str, bytes: &[u8]) -> Result<(), ProfileError>;
+}
+
 /// Sanitized profile/credential failures; keychain diagnostics never escape this boundary.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProfileError {
@@ -32,6 +44,14 @@ impl std::fmt::Display for ProfileError {
     }
 }
 impl std::error::Error for ProfileError {}
+impl From<std::fs::TryLockError> for ProfileError {
+    fn from(error: std::fs::TryLockError) -> Self {
+        match error {
+            std::fs::TryLockError::WouldBlock => Self::Busy,
+            std::fs::TryLockError::Error(_) => Self::Io,
+        }
+    }
+}
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -94,6 +114,14 @@ impl NativeProfile {
     pub fn acquire(directory: &Path) -> Result<ProfileLease, ProfileError> {
         Self::acquire_with(directory, Credentials::Native)
     }
+    /// Acquire the host profile using an explicitly supplied platform credential store.
+    /// This does not grant an isolated worker filesystem or credential-store access.
+    pub fn acquire_platform(
+        directory: &Path,
+        store: Arc<dyn CredentialStore>,
+    ) -> Result<ProfileLease, ProfileError> {
+        Self::acquire_with(directory, Credentials::Platform(store))
+    }
     /// Create an isolated profile for public synthetic UI fixtures only.
     #[cfg(feature = "ui-test-support")]
     pub fn acquire_test(directory: &Path) -> Result<ProfileLease, ProfileError> {
@@ -115,7 +143,7 @@ impl NativeProfile {
             .write(true)
             .open(directory.join("host.lock"))
             .map_err(|_| ProfileError::Io)?;
-        lock.try_lock().map_err(|_| ProfileError::Busy)?;
+        taypeer_storage::try_lock_exclusive(&lock).map_err(ProfileError::from)?;
         let path = directory.join("profile.json");
         let profile = if path.try_exists().map_err(|_| ProfileError::Io)? {
             Self::load_with(&directory, credentials.clone())?

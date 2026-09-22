@@ -161,6 +161,17 @@ impl RuntimeHost {
         let lease = NativeProfile::acquire(profile)?;
         Self::with_lease(lease, sessions)
     }
+    /// Start the unique host with a platform-protected credential store.
+    pub fn with_platform_credentials(
+        profile: &Path,
+        sessions: crate::session::SessionController,
+        credentials: Arc<dyn crate::profile::CredentialStore>,
+    ) -> Result<Self, RuntimeError> {
+        Self::with_lease(
+            NativeProfile::acquire_platform(profile, credentials)?,
+            sessions,
+        )
+    }
     /// Isolated public-fixture credentials; never used as a native fallback.
     #[cfg(feature = "ui-test-support")]
     pub fn with_test_sessions(
@@ -220,6 +231,23 @@ impl RuntimeHost {
         password: String,
         form: Option<taypeer_services::CreateDatabase>,
     ) -> Result<Worker, RuntimeError> {
+        self.open_with_launcher(
+            &crate::platform::DesktopLauncher(executable),
+            path,
+            password,
+            form,
+        )
+    }
+    /// Open through a platform process launcher. The current private file protocol
+    /// still requires the worker to share access to the explicitly scoped ciphertext spool.
+    /// Android descriptor transport must replace that path requirement before use.
+    pub fn open_with_launcher(
+        &self,
+        launcher: &dyn crate::platform::ProcessLauncher,
+        path: &Path,
+        password: String,
+        form: Option<taypeer_services::CreateDatabase>,
+    ) -> Result<Worker, RuntimeError> {
         let path = canonical_path(path)?;
         let existed = self
             .context
@@ -228,7 +256,7 @@ impl RuntimeHost {
             .map_err(|_| RuntimeError::Transport)?
             .contains_key(&path);
         let opened = Worker::open(
-            executable,
+            launcher,
             &path,
             password,
             form,

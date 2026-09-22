@@ -157,10 +157,11 @@ impl Checkpoint {
         if wrapper.envelope().kind != ObjectKind::Retained {
             return Err(ServiceError::InvalidDocument);
         }
-        let mut file = tempfile::NamedTempFile::new().map_err(|_| StorageError::Io)?;
+        let temporary = snapshot.temporary_storage();
+        let mut file = temporary.create().map_err(|_| StorageError::Io)?;
         wrapper.decrypt(&self.key(wrapper.envelope().epoch)?, &mut file)?;
         let origin = self.origin_chain(snapshot.chain(), reference.trust_set)?;
-        let object = EncryptedObject::open(file.path(), &origin)?;
+        let object = EncryptedObject::open_source(file, &origin, temporary)?;
         if object.descriptor().digest != id || object.envelope().kind != reference.kind {
             return Err(ServiceError::InvalidDocument);
         }
@@ -298,7 +299,7 @@ impl DatabaseService {
         metadata.recovery.objects.clear();
         for id in ids {
             let object = open.metadata.object(&snapshot, id)?;
-            let wrapped = EncryptedObject::seal(
+            let wrapped = EncryptedObject::seal_in(
                 &chain,
                 author,
                 ObjectKind::Retained,
@@ -306,6 +307,7 @@ impl DatabaseService {
                 &key,
                 object.reader()?,
                 object.descriptor().length,
+                snapshot.temporary_storage(),
             )?;
             metadata.recovery.objects.insert(
                 id,
@@ -328,6 +330,7 @@ impl DatabaseService {
             &key,
             &metadata,
             &clear,
+            snapshot.temporary_storage(),
         )?;
         let baseline = codec::seal_payload(
             &chain,
@@ -337,6 +340,7 @@ impl DatabaseService {
             &key,
             &metadata,
             &clear,
+            snapshot.temporary_storage(),
         )?;
         let seed = ArchiveSeed {
             controls: chain.records().to_vec(),

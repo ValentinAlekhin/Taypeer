@@ -1,14 +1,12 @@
 //! Immutable, independently authenticated ciphertext objects with bounded readers.
 
-use crate::{Error, ReadKey, crypto, stream::DecryptReader};
+use crate::{CiphertextFile, Error, ReadKey, TemporaryStorage, crypto, stream::DecryptReader};
 use sha2::{Digest as _, Sha256};
 use std::{
     fs::File,
     io::{Read, Seek, Write},
-    sync::Arc,
 };
 use taypeer_trust::{AuthorKey, CipherObject, ControlChain, Digest, ObjectEnvelope, ObjectKind};
-use tempfile::NamedTempFile;
 
 const MAGIC: &[u8; 8] = b"TAYOBJ4\0";
 const MAX_ENVELOPE: usize = 16 * 1024;
@@ -16,7 +14,8 @@ const MAX_ENVELOPE: usize = 16 * 1024;
 /// An immutable encrypted spool. Its lifetime keeps ciphertext, never a read key.
 #[derive(Clone)]
 pub struct EncryptedObject {
-    file: Arc<NamedTempFile>,
+    file: CiphertextFile,
+    temporary: TemporaryStorage,
     descriptor: CipherObject,
     envelope: ObjectEnvelope,
     offset: u64,
@@ -31,14 +30,14 @@ impl std::fmt::Debug for EncryptedObject {
 
 /// A bounded independently positioned reader over an immutable encrypted file.
 pub struct ObjectReader {
-    file: Arc<File>,
+    file: CiphertextFile,
     offset: u64,
     remaining: u64,
 }
 impl ObjectReader {
-    pub(crate) fn new(file: Arc<File>, offset: u64, length: u64) -> Self {
+    pub(crate) fn new(file: impl Into<CiphertextFile>, offset: u64, length: u64) -> Self {
         Self {
-            file,
+            file: file.into(),
             offset,
             remaining: length,
         }
@@ -50,7 +49,6 @@ impl ObjectReader {
 }
 impl Read for ObjectReader {
     fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
-        use std::os::unix::fs::FileExt;
         let length = self.remaining.min(out.len() as u64) as usize;
         if length == 0 {
             return Ok(0);
@@ -66,11 +64,33 @@ impl Read for ObjectReader {
 }
 
 impl EncryptedObject {
+    /// Choose staging for subsequently decoded binary sections without changing ciphertext.
+    pub fn with_temporary_storage(mut self, temporary: TemporaryStorage) -> Self {
+        self.temporary = temporary;
+        self
+    }
     /// Authenticate a local encrypted spool by deriving its descriptor from bounded bytes.
     /// The caller separately checks whether its role is allowed at this local boundary.
     pub fn open(path: &std::path::Path, chain: &ControlChain) -> Result<Self, Error> {
-        let mut file = File::open(path)?;
-        let length = file.metadata()?.len();
+        Self::open_file(File::open(path)?, chain, TemporaryStorage::default())
+    }
+    /// Verify ciphertext from an owned descriptor and stage it with the selected allocator.
+    /// The source is treated as an immutable candidate; no path access is needed.
+    pub fn open_file(
+        file: File,
+        chain: &ControlChain,
+        temporary: TemporaryStorage,
+    ) -> Result<Self, Error> {
+        Self::open_source(file.into(), chain, temporary)
+    }
+    /// Verify an owned ciphertext capability without reopening its descriptor or pathname.
+    pub fn open_source(
+        mut file: CiphertextFile,
+        chain: &ControlChain,
+        temporary: TemporaryStorage,
+    ) -> Result<Self, Error> {
+        file.rewind()?;
+        let length = file.length()?;
         if !(12..=crypto::MAX_ENCODED_SIZE).contains(&length) {
             return Err(Error::TooLarge);
         }
@@ -91,7 +111,7 @@ impl EncryptedObject {
         let envelope: ObjectEnvelope =
             serde_json::from_slice(&json).map_err(|_| Error::InvalidFile)?;
         file.rewind()?;
-        Self::receive(
+        Self::receive_in(
             file,
             &CipherObject {
                 digest,
@@ -99,6 +119,7 @@ impl EncryptedObject {
                 kind: envelope.kind,
             },
             chain,
+            temporary,
         )
     }
     /// Encrypt and sign a stream. The password wrapper is supplied by the current
@@ -112,30 +133,54 @@ impl EncryptedObject {
         clear: impl Read,
         length: u64,
     ) -> Result<Self, Error> {
+        Self::seal_in(
+            chain,
+            author,
+            kind,
+            header,
+            key,
+            clear,
+            length,
+            TemporaryStorage::default(),
+        )
+    }
+    /// Encrypt/sign using explicit ciphertext staging. No plaintext is written to these files.
+    #[allow(clippy::too_many_arguments)] // Preserve the existing cryptographic inputs plus the allocation port.
+    pub fn seal_in(
+        chain: &ControlChain,
+        author: &AuthorKey,
+        kind: ObjectKind,
+        header: &[u8],
+        key: &ReadKey,
+        clear: impl Read,
+        length: u64,
+        temporary: TemporaryStorage,
+    ) -> Result<Self, Error> {
         if header.len() != crypto::HEADER {
             return Err(Error::InvalidFile);
         }
-        let mut encrypted = NamedTempFile::new()?;
+        let mut encrypted = temporary.create()?;
         crypto::encrypt_stream(header, key, clear, length, &mut encrypted)?;
-        let ciphertext_length = encrypted.as_file().metadata()?.len();
-        encrypted.as_file_mut().rewind()?;
-        let ciphertext = hash_exact(encrypted.as_file_mut(), ciphertext_length)?;
+        let ciphertext_length = encrypted.length()?;
+        encrypted.rewind()?;
+        let ciphertext = hash_exact(&mut encrypted, ciphertext_length)?;
         let envelope = ObjectEnvelope::sign(chain, author, kind, ciphertext_length, ciphertext)?;
         let prefix = serde_json::to_vec(&envelope).map_err(|_| Error::InvalidFile)?;
         if prefix.len() > MAX_ENVELOPE {
             return Err(Error::TooLarge);
         }
-        let mut file = NamedTempFile::new()?;
+        let mut file = temporary.create()?;
         file.write_all(MAGIC)?;
         file.write_all(&(prefix.len() as u32).to_le_bytes())?;
         file.write_all(&prefix)?;
-        encrypted.as_file_mut().rewind()?;
-        std::io::copy(encrypted.as_file_mut(), &mut file)?;
-        let length = file.as_file().metadata()?.len();
-        file.as_file_mut().rewind()?;
-        let digest = hash_exact(file.as_file_mut(), length)?;
+        encrypted.rewind()?;
+        std::io::copy(&mut encrypted, &mut file)?;
+        let length = file.length()?;
+        file.rewind()?;
+        let digest = hash_exact(&mut file, length)?;
         Ok(Self {
-            file: Arc::new(file),
+            file,
+            temporary,
             descriptor: CipherObject {
                 digest,
                 length,
@@ -148,26 +193,36 @@ impl EncryptedObject {
     /// Stage a complete received object. Length, ciphertext and author signature
     /// are checked before a coordinator can make this object durable and ACK it.
     pub fn receive(
+        input: impl Read,
+        descriptor: &CipherObject,
+        chain: &ControlChain,
+    ) -> Result<Self, Error> {
+        Self::receive_in(input, descriptor, chain, TemporaryStorage::default())
+    }
+    /// Receive and verify an object using only files from the explicit allocator.
+    pub fn receive_in(
         mut input: impl Read,
         descriptor: &CipherObject,
         chain: &ControlChain,
+        temporary: TemporaryStorage,
     ) -> Result<Self, Error> {
         if descriptor.length > crypto::MAX_ENCODED_SIZE || descriptor.length < 12 {
             return Err(Error::TooLarge);
         }
-        let mut file = NamedTempFile::new()?;
+        let mut file = temporary.create()?;
         copy_exact(&mut input, &mut file, descriptor.length)?;
-        file.as_file_mut().rewind()?;
-        if hash_exact(file.as_file_mut(), descriptor.length)? != descriptor.digest {
+        file.rewind()?;
+        if hash_exact(&mut file, descriptor.length)? != descriptor.digest {
             return Err(Error::Authentication);
         }
-        file.as_file_mut().rewind()?;
-        let (envelope, offset) = read_envelope(file.as_file_mut(), descriptor, chain)?;
-        if hash_exact(file.as_file_mut(), envelope.length)? != envelope.ciphertext {
+        file.rewind()?;
+        let (envelope, offset) = read_envelope(&mut file, descriptor, chain)?;
+        if hash_exact(&mut file, envelope.length)? != envelope.ciphertext {
             return Err(Error::Authentication);
         }
         Ok(Self {
-            file: Arc::new(file),
+            file,
+            temporary,
             descriptor: descriptor.clone(),
             envelope,
             offset,
@@ -184,7 +239,7 @@ impl EncryptedObject {
     /// Independent reader for ciphertext transport or portable archive assembly.
     pub fn reader(&self) -> Result<ObjectReader, Error> {
         Ok(ObjectReader::new(
-            Arc::new(self.file.reopen()?),
+            self.file.clone(),
             0,
             self.descriptor.length,
         ))
@@ -220,11 +275,14 @@ impl EncryptedObject {
         let mut header = vec![0; crypto::HEADER];
         reader.read_exact(&mut header)?;
         crypto::validate(&header, self.envelope.length)?;
-        crate::BlobStore::read_bundle(DecryptReader::new(reader, key, header)?)
+        crate::BlobStore::read_bundle_in(
+            DecryptReader::new(reader, key, header)?,
+            self.temporary.clone(),
+        )
     }
     fn cipher_reader(&self) -> Result<ObjectReader, Error> {
         Ok(ObjectReader::new(
-            Arc::new(self.file.reopen()?),
+            self.file.clone(),
             self.offset,
             self.envelope.length,
         ))

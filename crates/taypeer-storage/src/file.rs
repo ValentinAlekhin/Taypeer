@@ -86,7 +86,7 @@ pub(crate) fn lock(path: &Path) -> Result<File, Error> {
         options.mode(0o600);
     }
     let file = options.open(sibling(path, ".lock"))?;
-    file.try_lock().map_err(|error| match error {
+    crate::try_lock_exclusive(&file).map_err(|error| match error {
         std::fs::TryLockError::WouldBlock => Error::Busy,
         std::fs::TryLockError::Error(_) => Error::Io,
     })?;
@@ -94,8 +94,14 @@ pub(crate) fn lock(path: &Path) -> Result<File, Error> {
 }
 
 pub(crate) fn fingerprint(file: &mut File) -> Result<[u8; 32], Error> {
-    file.seek(SeekFrom::Start(0))?;
     let length = file.metadata()?.len();
+    fingerprint_reader(file, length)
+}
+pub(crate) fn fingerprint_reader(
+    file: &mut (impl Read + Seek),
+    length: u64,
+) -> Result<[u8; 32], Error> {
+    file.seek(SeekFrom::Start(0))?;
     if length > crypto::MAX_ENCODED_SIZE {
         return Err(Error::TooLarge);
     }

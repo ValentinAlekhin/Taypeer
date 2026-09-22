@@ -48,7 +48,7 @@ impl SessionSettings {
             .write(true)
             .open(profile.join("session-policy.lock"))
             .map_err(|_| ProfileError::Io)?;
-        lock.try_lock().map_err(|_| ProfileError::Busy)?;
+        taypeer_storage::try_lock_exclusive(&lock).map_err(ProfileError::from)?;
         let mut candidate =
             tempfile::NamedTempFile::new_in(profile).map_err(|_| ProfileError::Io)?;
         let bytes = serde_json::to_vec(&Stored { version: 1, policy })
