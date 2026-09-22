@@ -1,0 +1,1248 @@
+{
+  "database": "837d89eef08cdbecb4894f8335363743",
+  "entries": [
+    {
+      "conflicts": [],
+      "created_at": 1790092278528,
+      "fields": {
+        "appearance": {
+          "background": null,
+          "foreground": null,
+          "icon": {
+            "kind": "default"
+          }
+        },
+        "attachments": {
+          "a8ce6003a9ddea8dbadc61101708e021": {
+            "blob": "e8390949caa24cebfa8c7e1478d9dafe",
+            "id": "a8ce6003a9ddea8dbadc61101708e021",
+            "name": "PUBLIC attachment"
+          }
+        },
+        "attributes": {
+          "c332fc9f8a2c719544c386bd95f6313b": {
+            "id": "c332fc9f8a2c719544c386bd95f6313b",
+            "name": "PUBLIC protected",
+            "value": {
+              "protected": true,
+              "value": "PUBLIC protected value"
+            }
+          }
+        },
+        "expires_at": null,
+        "notes": null,
+        "password": "PUBLIC saved password",
+        "tags": [],
+        "title": "PUBLIC entry",
+        "url": null,
+        "username": "PUBLIC user"
+      },
+      "generation": "1bc2c07c60ea9404a82e36926aa766ff",
+      "group_id": "4072c25a9013861a31fb10f8913cb9b9",
+      "id": "1bc2c07c60ea9404a82e36926aa766ff",
+      "modified_at": 1790092278601,
+      "placements": [
+        {
+          "generation": "4072c25a9013861a31fb10f8913cb9b9",
+          "id": "4072c25a9013861a31fb10f8913cb9b9"
+        }
+      ],
+      "values": [
+        {
+          "field": "Title",
+          "variants": [
+            {
+              "origins": [
+                "39@54415934fae0910f1bdbe705989f32a1d0c246e9b8278d96d6781728c9812a410389fce701f5d78bea0f06d5bdeb2b2aa3b80751"
+              ],
+              "value": {
+                "Text": "PUBLIC entry"
+              }
+            }
+          ]
+        },
+        {
+          "field": "Username",
+          "variants": [
+            {
+              "origins": [
+                "40@54415934fae0910f1bdbe705989f32a1d0c246e9b8278d96d6781728c9812a410389fce701f5d78bea0f06d5bdeb2b2aa3b80751"
+              ],
+              "value": {
+                "Text": "PUBLIC user"
+              }
+            }
+          ]
+        },
+        {
+          "field": "Password",
+          "variants": [
+            {
+              "origins": [
+                "41@54415934fae0910f1bdbe705989f32a1d0c246e9b8278d96d6781728c9812a410389fce701f5d78bea0f06d5bdeb2b2aa3b80751"
+              ],
+              "value": {
+                "Text": "PUBLIC saved password"
+              }
+            }
+          ]
+        },
+        {
+          "field": "Url",
+          "variants": [
+            {
+              "origins": [
+                "42@54415934fae0910f1bdbe705989f32a1d0c246e9b8278d96d6781728c9812a410389fce701f5d78bea0f06d5bdeb2b2aa3b80751"
+              ],
+              "value": {
+                "Text": null
+              }
+            }
+          ]
+        },
+        {
+          "field": "Notes",
+          "variants": [
+            {
+              "origins": [
+                "43@54415934fae0910f1bdbe705989f32a1d0c246e9b8278d96d6781728c9812a410389fce701f5d78bea0f06d5bdeb2b2aa3b80751"
+              ],
+              "value": {
+                "Text": null
+              }
+            }
+          ]
+        },
+        {
+          "field": "Tags",
+          "variants": [
+            {
+              "origins": [
+                "44@54415934fae0910f1bdbe705989f32a1d0c246e9b8278d96d6781728c9812a410389fce701f5d78bea0f06d5bdeb2b2aa3b80751"
+              ],
+              "value": {
+                "Tags": []
+              }
+            }
+          ]
+        },
+        {
+          "field": "ExpiresAt",
+          "variants": [
+            {
+              "origins": [
+                "45@54415934fae0910f1bdbe705989f32a1d0c246e9b8278d96d6781728c9812a410389fce701f5d78bea0f06d5bdeb2b2aa3b80751"
+              ],
+              "value": {
+                "Timestamp": null
+              }
+            }
+          ]
+        },
+        {
+          "field": "Icon",
+          "variants": [
+            {
+              "origins": [
+                "36@54415934fae0910f1bdbe705989f32a1d0c246e9b8278d96d6781728c9812a410389fce701f5d78bea0f06d5bdeb2b2aa3b80751"
+              ],
+              "value": {
+                "Icon": {
+                  "kind": "default"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "field": "Foreground",
+          "variants": [
+            {
+              "origins": [
+                "37@54415934fae0910f1bdbe705989f32a1d0c246e9b8278d96d6781728c9812a410389fce701f5d78bea0f06d5bdeb2b2aa3b80751"
+              ],
+              "value": {
+                "Color": null
+              }
+            }
+          ]
+        },
+        {
+          "field": "Background",
+          "variants": [
+            {
+              "origins": [
+                "38@54415934fae0910f1bdbe705989f32a1d0c246e9b8278d96d6781728c9812a410389fce701f5d78bea0f06d5bdeb2b2aa3b80751"
+              ],
+              "value": {
+                "Color": null
+              }
+            }
+          ]
+        },
+        {
+          "field": {
+            "AttributeName": "c332fc9f8a2c719544c386bd95f6313b"
+          },
+          "variants": [
+            {
+              "origins": [
+                "47@54415934fae0910f1bdbe705989f32a1d0c246e9b8278d96d6781728c9812a410389fce701f5d78bea0f06d5bdeb2b2aa3b80751"
+              ],
+              "value": {
+                "Text": "PUBLIC protected"
+              }
+            }
+          ]
+        },
+        {
+          "field": {
+            "AttributeValue": "c332fc9f8a2c719544c386bd95f6313b"
+          },
+          "variants": [
+            {
+              "origins": [
+                "48@54415934fae0910f1bdbe705989f32a1d0c246e9b8278d96d6781728c9812a410389fce701f5d78bea0f06d5bdeb2b2aa3b80751"
+              ],
+              "value": {
+                "Attribute": {
+                  "protected": true,
+                  "value": "PUBLIC protected value"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "field": {
+            "AttributePresence": "c332fc9f8a2c719544c386bd95f6313b"
+          },
+          "variants": [
+            {
+              "origins": [
+                "49@54415934fae0910f1bdbe705989f32a1d0c246e9b8278d96d6781728c9812a410389fce701f5d78bea0f06d5bdeb2b2aa3b80751"
+              ],
+              "value": {
+                "Presence": true
+              }
+            }
+          ]
+        },
+        {
+          "field": {
+            "AttachmentName": "a8ce6003a9ddea8dbadc61101708e021"
+          },
+          "variants": [
+            {
+              "origins": [
+                "53@54415934fae0910f1bdbe705989f32a1d0c246e9b8278d96d6781728c9812a410389fce740de9a46378502f63c4155f005c2e13a"
+              ],
+              "value": {
+                "Text": "PUBLIC attachment"
+              }
+            }
+          ]
+        },
+        {
+          "field": {
+            "AttachmentBlob": "a8ce6003a9ddea8dbadc61101708e021"
+          },
+          "variants": [
+            {
+              "origins": [
+                "54@54415934fae0910f1bdbe705989f32a1d0c246e9b8278d96d6781728c9812a410389fce740de9a46378502f63c4155f005c2e13a"
+              ],
+              "value": {
+                "Blob": "e8390949caa24cebfa8c7e1478d9dafe"
+              }
+            }
+          ]
+        },
+        {
+          "field": {
+            "AttachmentPresence": "a8ce6003a9ddea8dbadc61101708e021"
+          },
+          "variants": [
+            {
+              "origins": [
+                "55@54415934fae0910f1bdbe705989f32a1d0c246e9b8278d96d6781728c9812a410389fce740de9a46378502f63c4155f005c2e13a"
+              ],
+              "value": {
+                "Presence": true
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "groups": [
+    {
+      "address": {
+        "generation": "4072c25a9013861a31fb10f8913cb9b9",
+        "object": {
+          "id": "4072c25a9013861a31fb10f8913cb9b9",
+          "kind": "group"
+        }
+      },
+      "conflicted": false,
+      "created_at": 1790092278478,
+      "current": true,
+      "icons": [
+        {
+          "kind": "default"
+        }
+      ],
+      "modified_at": 1790092278478,
+      "names": [
+        "PUBLIC group"
+      ],
+      "placement_conflict": false,
+      "placements": [
+        {
+          "order": [
+            [
+              [
+                128
+              ],
+              "4072c25a9013861a31fb10f8913cb9b9"
+            ]
+          ],
+          "parent": null
+        }
+      ],
+      "status": "active"
+    }
+  ],
+  "histories": [
+    [
+      {
+        "base": [
+          "06faf9dd998f487302b0b950fa72e0c5fb1cbf55393a8ef3a10003a67f6e3fec"
+        ],
+        "entry_id": "1bc2c07c60ea9404a82e36926aa766ff",
+        "id": "f6d8ae9090b60adee4e7da0ebcb3ea6e",
+        "kind": "Create",
+        "saved_at": 1790092278528,
+        "snapshot": {
+          "conflicts": [],
+          "created_at": 1790092278528,
+          "fields": {
+            "appearance": {
+              "background": null,
+              "foreground": null,
+              "icon": {
+                "kind": "default"
+              }
+            },
+            "attachments": {},
+            "attributes": {
+              "c332fc9f8a2c719544c386bd95f6313b": {
+                "id": "c332fc9f8a2c719544c386bd95f6313b",
+                "name": "PUBLIC protected",
+                "value": {
+                  "protected": true,
+                  "value": "PUBLIC protected value"
+                }
+              }
+            },
+            "expires_at": null,
+            "notes": null,
+            "password": "PUBLIC saved password",
+            "tags": [],
+            "title": "PUBLIC entry",
+            "url": null,
+            "username": "PUBLIC user"
+          },
+          "generation": "1bc2c07c60ea9404a82e36926aa766ff",
+          "group_id": "4072c25a9013861a31fb10f8913cb9b9",
+          "id": "1bc2c07c60ea9404a82e36926aa766ff",
+          "modified_at": 1790092278528,
+          "placements": [
+            {
+              "generation": "4072c25a9013861a31fb10f8913cb9b9",
+              "id": "4072c25a9013861a31fb10f8913cb9b9"
+            }
+          ],
+          "values": [
+            {
+              "field": "Title",
+              "variants": [
+                {
+                  "origins": [
+                    "39@54415934fae0910f1bdbe705989f32a1d0c246e9b8278d96d6781728c9812a410389fce701f5d78bea0f06d5bdeb2b2aa3b80751"
+                  ],
+                  "value": {
+                    "Text": "PUBLIC entry"
+                  }
+                }
+              ]
+            },
+            {
+              "field": "Username",
+              "variants": [
+                {
+                  "origins": [
+                    "40@54415934fae0910f1bdbe705989f32a1d0c246e9b8278d96d6781728c9812a410389fce701f5d78bea0f06d5bdeb2b2aa3b80751"
+                  ],
+                  "value": {
+                    "Text": "PUBLIC user"
+                  }
+                }
+              ]
+            },
+            {
+              "field": "Password",
+              "variants": [
+                {
+                  "origins": [
+                    "41@54415934fae0910f1bdbe705989f32a1d0c246e9b8278d96d6781728c9812a410389fce701f5d78bea0f06d5bdeb2b2aa3b80751"
+                  ],
+                  "value": {
+                    "Text": "PUBLIC saved password"
+                  }
+                }
+              ]
+            },
+            {
+              "field": "Url",
+              "variants": [
+                {
+                  "origins": [
+                    "42@54415934fae0910f1bdbe705989f32a1d0c246e9b8278d96d6781728c9812a410389fce701f5d78bea0f06d5bdeb2b2aa3b80751"
+                  ],
+                  "value": {
+                    "Text": null
+                  }
+                }
+              ]
+            },
+            {
+              "field": "Notes",
+              "variants": [
+                {
+                  "origins": [
+                    "43@54415934fae0910f1bdbe705989f32a1d0c246e9b8278d96d6781728c9812a410389fce701f5d78bea0f06d5bdeb2b2aa3b80751"
+                  ],
+                  "value": {
+                    "Text": null
+                  }
+                }
+              ]
+            },
+            {
+              "field": "Tags",
+              "variants": [
+                {
+                  "origins": [
+                    "44@54415934fae0910f1bdbe705989f32a1d0c246e9b8278d96d6781728c9812a410389fce701f5d78bea0f06d5bdeb2b2aa3b80751"
+                  ],
+                  "value": {
+                    "Tags": []
+                  }
+                }
+              ]
+            },
+            {
+              "field": "ExpiresAt",
+              "variants": [
+                {
+                  "origins": [
+                    "45@54415934fae0910f1bdbe705989f32a1d0c246e9b8278d96d6781728c9812a410389fce701f5d78bea0f06d5bdeb2b2aa3b80751"
+                  ],
+                  "value": {
+                    "Timestamp": null
+                  }
+                }
+              ]
+            },
+            {
+              "field": "Icon",
+              "variants": [
+                {
+                  "origins": [
+                    "36@54415934fae0910f1bdbe705989f32a1d0c246e9b8278d96d6781728c9812a410389fce701f5d78bea0f06d5bdeb2b2aa3b80751"
+                  ],
+                  "value": {
+                    "Icon": {
+                      "kind": "default"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "field": "Foreground",
+              "variants": [
+                {
+                  "origins": [
+                    "37@54415934fae0910f1bdbe705989f32a1d0c246e9b8278d96d6781728c9812a410389fce701f5d78bea0f06d5bdeb2b2aa3b80751"
+                  ],
+                  "value": {
+                    "Color": null
+                  }
+                }
+              ]
+            },
+            {
+              "field": "Background",
+              "variants": [
+                {
+                  "origins": [
+                    "38@54415934fae0910f1bdbe705989f32a1d0c246e9b8278d96d6781728c9812a410389fce701f5d78bea0f06d5bdeb2b2aa3b80751"
+                  ],
+                  "value": {
+                    "Color": null
+                  }
+                }
+              ]
+            },
+            {
+              "field": {
+                "AttributeName": "c332fc9f8a2c719544c386bd95f6313b"
+              },
+              "variants": [
+                {
+                  "origins": [
+                    "47@54415934fae0910f1bdbe705989f32a1d0c246e9b8278d96d6781728c9812a410389fce701f5d78bea0f06d5bdeb2b2aa3b80751"
+                  ],
+                  "value": {
+                    "Text": "PUBLIC protected"
+                  }
+                }
+              ]
+            },
+            {
+              "field": {
+                "AttributeValue": "c332fc9f8a2c719544c386bd95f6313b"
+              },
+              "variants": [
+                {
+                  "origins": [
+                    "48@54415934fae0910f1bdbe705989f32a1d0c246e9b8278d96d6781728c9812a410389fce701f5d78bea0f06d5bdeb2b2aa3b80751"
+                  ],
+                  "value": {
+                    "Attribute": {
+                      "protected": true,
+                      "value": "PUBLIC protected value"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "field": {
+                "AttributePresence": "c332fc9f8a2c719544c386bd95f6313b"
+              },
+              "variants": [
+                {
+                  "origins": [
+                    "49@54415934fae0910f1bdbe705989f32a1d0c246e9b8278d96d6781728c9812a410389fce701f5d78bea0f06d5bdeb2b2aa3b80751"
+                  ],
+                  "value": {
+                    "Presence": true
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "base": [
+          "27582aa519024814bf8aa8088c85e4255e7c1b15b93399826988d118732b1e37"
+        ],
+        "entry_id": "1bc2c07c60ea9404a82e36926aa766ff",
+        "id": "2cd78a79e0fdb064a9742f3bcdb34654",
+        "kind": "Save",
+        "saved_at": 1790092278601,
+        "snapshot": {
+          "conflicts": [],
+          "created_at": 1790092278528,
+          "fields": {
+            "appearance": {
+              "background": null,
+              "foreground": null,
+              "icon": {
+                "kind": "default"
+              }
+            },
+            "attachments": {
+              "a8ce6003a9ddea8dbadc61101708e021": {
+                "blob": "e8390949caa24cebfa8c7e1478d9dafe",
+                "id": "a8ce6003a9ddea8dbadc61101708e021",
+                "name": "PUBLIC attachment"
+              }
+            },
+            "attributes": {
+              "c332fc9f8a2c719544c386bd95f6313b": {
+                "id": "c332fc9f8a2c719544c386bd95f6313b",
+                "name": "PUBLIC protected",
+                "value": {
+                  "protected": true,
+                  "value": "PUBLIC protected value"
+                }
+              }
+            },
+            "expires_at": null,
+            "notes": null,
+            "password": "PUBLIC saved password",
+            "tags": [],
+            "title": "PUBLIC entry",
+            "url": null,
+            "username": "PUBLIC user"
+          },
+          "generation": "1bc2c07c60ea9404a82e36926aa766ff",
+          "group_id": "4072c25a9013861a31fb10f8913cb9b9",
+          "id": "1bc2c07c60ea9404a82e36926aa766ff",
+          "modified_at": 1790092278601,
+          "placements": [
+            {
+              "generation": "4072c25a9013861a31fb10f8913cb9b9",
+              "id": "4072c25a9013861a31fb10f8913cb9b9"
+            }
+          ],
+          "values": [
+            {
+              "field": "Title",
+              "variants": [
+                {
+                  "origins": [
+                    "39@54415934fae0910f1bdbe705989f32a1d0c246e9b8278d96d6781728c9812a410389fce701f5d78bea0f06d5bdeb2b2aa3b80751"
+                  ],
+                  "value": {
+                    "Text": "PUBLIC entry"
+                  }
+                }
+              ]
+            },
+            {
+              "field": "Username",
+              "variants": [
+                {
+                  "origins": [
+                    "40@54415934fae0910f1bdbe705989f32a1d0c246e9b8278d96d6781728c9812a410389fce701f5d78bea0f06d5bdeb2b2aa3b80751"
+                  ],
+                  "value": {
+                    "Text": "PUBLIC user"
+                  }
+                }
+              ]
+            },
+            {
+              "field": "Password",
+              "variants": [
+                {
+                  "origins": [
+                    "41@54415934fae0910f1bdbe705989f32a1d0c246e9b8278d96d6781728c9812a410389fce701f5d78bea0f06d5bdeb2b2aa3b80751"
+                  ],
+                  "value": {
+                    "Text": "PUBLIC saved password"
+                  }
+                }
+              ]
+            },
+            {
+              "field": "Url",
+              "variants": [
+                {
+                  "origins": [
+                    "42@54415934fae0910f1bdbe705989f32a1d0c246e9b8278d96d6781728c9812a410389fce701f5d78bea0f06d5bdeb2b2aa3b80751"
+                  ],
+                  "value": {
+                    "Text": null
+                  }
+                }
+              ]
+            },
+            {
+              "field": "Notes",
+              "variants": [
+                {
+                  "origins": [
+                    "43@54415934fae0910f1bdbe705989f32a1d0c246e9b8278d96d6781728c9812a410389fce701f5d78bea0f06d5bdeb2b2aa3b80751"
+                  ],
+                  "value": {
+                    "Text": null
+                  }
+                }
+              ]
+            },
+            {
+              "field": "Tags",
+              "variants": [
+                {
+                  "origins": [
+                    "44@54415934fae0910f1bdbe705989f32a1d0c246e9b8278d96d6781728c9812a410389fce701f5d78bea0f06d5bdeb2b2aa3b80751"
+                  ],
+                  "value": {
+                    "Tags": []
+                  }
+                }
+              ]
+            },
+            {
+              "field": "ExpiresAt",
+              "variants": [
+                {
+                  "origins": [
+                    "45@54415934fae0910f1bdbe705989f32a1d0c246e9b8278d96d6781728c9812a410389fce701f5d78bea0f06d5bdeb2b2aa3b80751"
+                  ],
+                  "value": {
+                    "Timestamp": null
+                  }
+                }
+              ]
+            },
+            {
+              "field": "Icon",
+              "variants": [
+                {
+                  "origins": [
+                    "36@54415934fae0910f1bdbe705989f32a1d0c246e9b8278d96d6781728c9812a410389fce701f5d78bea0f06d5bdeb2b2aa3b80751"
+                  ],
+                  "value": {
+                    "Icon": {
+                      "kind": "default"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "field": "Foreground",
+              "variants": [
+                {
+                  "origins": [
+                    "37@54415934fae0910f1bdbe705989f32a1d0c246e9b8278d96d6781728c9812a410389fce701f5d78bea0f06d5bdeb2b2aa3b80751"
+                  ],
+                  "value": {
+                    "Color": null
+                  }
+                }
+              ]
+            },
+            {
+              "field": "Background",
+              "variants": [
+                {
+                  "origins": [
+                    "38@54415934fae0910f1bdbe705989f32a1d0c246e9b8278d96d6781728c9812a410389fce701f5d78bea0f06d5bdeb2b2aa3b80751"
+                  ],
+                  "value": {
+                    "Color": null
+                  }
+                }
+              ]
+            },
+            {
+              "field": {
+                "AttributeName": "c332fc9f8a2c719544c386bd95f6313b"
+              },
+              "variants": [
+                {
+                  "origins": [
+                    "47@54415934fae0910f1bdbe705989f32a1d0c246e9b8278d96d6781728c9812a410389fce701f5d78bea0f06d5bdeb2b2aa3b80751"
+                  ],
+                  "value": {
+                    "Text": "PUBLIC protected"
+                  }
+                }
+              ]
+            },
+            {
+              "field": {
+                "AttributeValue": "c332fc9f8a2c719544c386bd95f6313b"
+              },
+              "variants": [
+                {
+                  "origins": [
+                    "48@54415934fae0910f1bdbe705989f32a1d0c246e9b8278d96d6781728c9812a410389fce701f5d78bea0f06d5bdeb2b2aa3b80751"
+                  ],
+                  "value": {
+                    "Attribute": {
+                      "protected": true,
+                      "value": "PUBLIC protected value"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "field": {
+                "AttributePresence": "c332fc9f8a2c719544c386bd95f6313b"
+              },
+              "variants": [
+                {
+                  "origins": [
+                    "49@54415934fae0910f1bdbe705989f32a1d0c246e9b8278d96d6781728c9812a410389fce701f5d78bea0f06d5bdeb2b2aa3b80751"
+                  ],
+                  "value": {
+                    "Presence": true
+                  }
+                }
+              ]
+            },
+            {
+              "field": {
+                "AttachmentName": "a8ce6003a9ddea8dbadc61101708e021"
+              },
+              "variants": [
+                {
+                  "origins": [
+                    "53@54415934fae0910f1bdbe705989f32a1d0c246e9b8278d96d6781728c9812a410389fce740de9a46378502f63c4155f005c2e13a"
+                  ],
+                  "value": {
+                    "Text": "PUBLIC attachment"
+                  }
+                }
+              ]
+            },
+            {
+              "field": {
+                "AttachmentBlob": "a8ce6003a9ddea8dbadc61101708e021"
+              },
+              "variants": [
+                {
+                  "origins": [
+                    "54@54415934fae0910f1bdbe705989f32a1d0c246e9b8278d96d6781728c9812a410389fce740de9a46378502f63c4155f005c2e13a"
+                  ],
+                  "value": {
+                    "Blob": "e8390949caa24cebfa8c7e1478d9dafe"
+                  }
+                }
+              ]
+            },
+            {
+              "field": {
+                "AttachmentPresence": "a8ce6003a9ddea8dbadc61101708e021"
+              },
+              "variants": [
+                {
+                  "origins": [
+                    "55@54415934fae0910f1bdbe705989f32a1d0c246e9b8278d96d6781728c9812a410389fce740de9a46378502f63c4155f005c2e13a"
+                  ],
+                  "value": {
+                    "Presence": true
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ]
+  ],
+  "objects": [
+    {
+      "address": {
+        "generation": "4072c25a9013861a31fb10f8913cb9b9",
+        "object": {
+          "id": "4072c25a9013861a31fb10f8913cb9b9",
+          "kind": "group"
+        }
+      },
+      "conflicted": false,
+      "status": "active"
+    },
+    {
+      "address": {
+        "generation": "1bc2c07c60ea9404a82e36926aa766ff",
+        "object": {
+          "id": "1bc2c07c60ea9404a82e36926aa766ff",
+          "kind": "entry"
+        }
+      },
+      "conflicted": false,
+      "status": "active"
+    },
+    {
+      "address": {
+        "generation": "ff716ca789f4a13d9aeb0daf2d76b28c",
+        "object": {
+          "id": "ff716ca789f4a13d9aeb0daf2d76b28c",
+          "kind": "entry"
+        }
+      },
+      "conflicted": false,
+      "status": "trashed"
+    }
+  ],
+  "pending": [],
+  "received": [],
+  "schema": {
+    "required_read_features": [
+      "taypeer.binary",
+      "taypeer.entries",
+      "taypeer.history",
+      "taypeer.lifecycle"
+    ],
+    "required_write_features": [
+      "taypeer.binary",
+      "taypeer.entries",
+      "taypeer.history",
+      "taypeer.lifecycle"
+    ],
+    "schema_version": 5
+  },
+  "sources": [
+    {
+      "author": [
+        250,
+        224,
+        145,
+        15,
+        27,
+        219,
+        231,
+        5,
+        152,
+        159,
+        50,
+        161,
+        208,
+        194,
+        70,
+        233,
+        184,
+        39,
+        141,
+        150,
+        214,
+        120,
+        23,
+        40,
+        201,
+        129,
+        42,
+        65,
+        3,
+        137,
+        252,
+        231
+      ],
+      "dependencies": [],
+      "hash": "ca4942e66325de37950c6d2425f6a2617bac22fe83835cc9360c5c01928a26a6"
+    },
+    {
+      "author": [
+        250,
+        224,
+        145,
+        15,
+        27,
+        219,
+        231,
+        5,
+        152,
+        159,
+        50,
+        161,
+        208,
+        194,
+        70,
+        233,
+        184,
+        39,
+        141,
+        150,
+        214,
+        120,
+        23,
+        40,
+        201,
+        129,
+        42,
+        65,
+        3,
+        137,
+        252,
+        231
+      ],
+      "dependencies": [
+        "ca4942e66325de37950c6d2425f6a2617bac22fe83835cc9360c5c01928a26a6"
+      ],
+      "hash": "06faf9dd998f487302b0b950fa72e0c5fb1cbf55393a8ef3a10003a67f6e3fec"
+    },
+    {
+      "author": [
+        250,
+        224,
+        145,
+        15,
+        27,
+        219,
+        231,
+        5,
+        152,
+        159,
+        50,
+        161,
+        208,
+        194,
+        70,
+        233,
+        184,
+        39,
+        141,
+        150,
+        214,
+        120,
+        23,
+        40,
+        201,
+        129,
+        42,
+        65,
+        3,
+        137,
+        252,
+        231
+      ],
+      "dependencies": [
+        "06faf9dd998f487302b0b950fa72e0c5fb1cbf55393a8ef3a10003a67f6e3fec"
+      ],
+      "hash": "27582aa519024814bf8aa8088c85e4255e7c1b15b93399826988d118732b1e37"
+    },
+    {
+      "author": [
+        250,
+        224,
+        145,
+        15,
+        27,
+        219,
+        231,
+        5,
+        152,
+        159,
+        50,
+        161,
+        208,
+        194,
+        70,
+        233,
+        184,
+        39,
+        141,
+        150,
+        214,
+        120,
+        23,
+        40,
+        201,
+        129,
+        42,
+        65,
+        3,
+        137,
+        252,
+        231
+      ],
+      "dependencies": [
+        "27582aa519024814bf8aa8088c85e4255e7c1b15b93399826988d118732b1e37"
+      ],
+      "hash": "fcf3d2440c60fd26dfa6ad47e19fe8c92983b714cccade9bd5ce4841e936c8fa"
+    },
+    {
+      "author": [
+        250,
+        224,
+        145,
+        15,
+        27,
+        219,
+        231,
+        5,
+        152,
+        159,
+        50,
+        161,
+        208,
+        194,
+        70,
+        233,
+        184,
+        39,
+        141,
+        150,
+        214,
+        120,
+        23,
+        40,
+        201,
+        129,
+        42,
+        65,
+        3,
+        137,
+        252,
+        231
+      ],
+      "dependencies": [
+        "fcf3d2440c60fd26dfa6ad47e19fe8c92983b714cccade9bd5ce4841e936c8fa"
+      ],
+      "hash": "256914630e9d9e04bd77976bc45a3c4fccb421a6b48a2948a7db3c5ee289bdbf"
+    },
+    {
+      "author": [
+        250,
+        224,
+        145,
+        15,
+        27,
+        219,
+        231,
+        5,
+        152,
+        159,
+        50,
+        161,
+        208,
+        194,
+        70,
+        233,
+        184,
+        39,
+        141,
+        150,
+        214,
+        120,
+        23,
+        40,
+        201,
+        129,
+        42,
+        65,
+        3,
+        137,
+        252,
+        231
+      ],
+      "dependencies": [
+        "256914630e9d9e04bd77976bc45a3c4fccb421a6b48a2948a7db3c5ee289bdbf"
+      ],
+      "hash": "637ed5e8fee47f21b770500f013a2f96508ffb071090d53f0dcfb893a609d7ed"
+    },
+    {
+      "author": [
+        250,
+        224,
+        145,
+        15,
+        27,
+        219,
+        231,
+        5,
+        152,
+        159,
+        50,
+        161,
+        208,
+        194,
+        70,
+        233,
+        184,
+        39,
+        141,
+        150,
+        214,
+        120,
+        23,
+        40,
+        201,
+        129,
+        42,
+        65,
+        3,
+        137,
+        252,
+        231
+      ],
+      "dependencies": [
+        "637ed5e8fee47f21b770500f013a2f96508ffb071090d53f0dcfb893a609d7ed"
+      ],
+      "hash": "a0f8d38467c0caf632d8f214e21d0112dda4048f661ab1cc220dab9c9808ad64"
+    },
+    {
+      "author": [
+        250,
+        224,
+        145,
+        15,
+        27,
+        219,
+        231,
+        5,
+        152,
+        159,
+        50,
+        161,
+        208,
+        194,
+        70,
+        233,
+        184,
+        39,
+        141,
+        150,
+        214,
+        120,
+        23,
+        40,
+        201,
+        129,
+        42,
+        65,
+        3,
+        137,
+        252,
+        231
+      ],
+      "dependencies": [
+        "a0f8d38467c0caf632d8f214e21d0112dda4048f661ab1cc220dab9c9808ad64"
+      ],
+      "hash": "2042a4bbd0ee99e3839acadf99f39dab438d57445fc2d72604cba1595d25458a"
+    },
+    {
+      "author": [
+        250,
+        224,
+        145,
+        15,
+        27,
+        219,
+        231,
+        5,
+        152,
+        159,
+        50,
+        161,
+        208,
+        194,
+        70,
+        233,
+        184,
+        39,
+        141,
+        150,
+        214,
+        120,
+        23,
+        40,
+        201,
+        129,
+        42,
+        65,
+        3,
+        137,
+        252,
+        231
+      ],
+      "dependencies": [
+        "2042a4bbd0ee99e3839acadf99f39dab438d57445fc2d72604cba1595d25458a"
+      ],
+      "hash": "489cfb3f7729f4bc8dd70301e2c069e5e0d900cfb1aae197416b32d0933b08a1"
+    }
+  ]
+}

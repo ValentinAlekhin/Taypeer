@@ -15,6 +15,7 @@ use taypeer_core::{
 };
 
 mod binary;
+mod schema;
 mod source;
 pub use binary::BlobReferences;
 pub use source::{OriginalChange, SourceMetadata};
@@ -187,25 +188,7 @@ impl Document {
         let database_id = DatabaseId::new(random_id());
         let mut doc = Automerge::new();
         source::prepare_actor(&mut doc, writer)?;
-        let mut tx = doc.transaction();
-        tx.put(ROOT, "schema", u64::from(taypeer_core::CURRENT_SCHEMA))?;
-        tx.put(
-            ROOT,
-            "schema_descriptor",
-            codec::encode(&taypeer_core::SchemaDescriptor::current())?,
-        )?;
-        tx.put(ROOT, "database_id", database_id.as_str())?;
-        tx.put(ROOT, "name", name.as_str())?;
-        tx.put(ROOT, "created_at", now)?;
-        tx.put_object(ROOT, "groups", ObjType::Map)?;
-        tx.put_object(ROOT, "entries", ObjType::Map)?;
-        tx.put_object(ROOT, "revisions", ObjType::Map)?;
-        tx.put_object(ROOT, "operations", ObjType::Map)?;
-        tx.put_object(ROOT, "purged_revisions", ObjType::Map)?;
-        for root in ["events", "purges", "lifecycle_receipts", "recoveries"] {
-            tx.put_object(ROOT, root, ObjType::Map)?;
-        }
-        tx.commit();
+        schema::initialize(&mut doc, &database_id, &name, now)?;
         Ok(Self {
             database_id,
             name,
@@ -228,32 +211,7 @@ impl Document {
     /// Load a document and validate all known projections before exposing any values.
     /// This parser is not a substitute for outer authentication or resource limits.
     pub fn load(bytes: &[u8]) -> Result<Self, Error> {
-        let doc = Automerge::load(bytes)?;
-        let schema = unique(&doc, &ROOT, "schema")?
-            .to_u64()
-            .filter(|value| *value > 0 && *value <= u64::from(u16::MAX))
-            .ok_or(Error::InvalidDocument)?;
-        if schema != u64::from(taypeer_core::CURRENT_SCHEMA) {
-            return Err(Error::UnsupportedSchema);
-        }
-        let database_id = DatabaseId::new(
-            unique(&doc, &ROOT, "database_id")?
-                .to_str()
-                .ok_or(Error::InvalidDocument)?,
-        );
-        let name = unique(&doc, &ROOT, "name")?
-            .to_str()
-            .ok_or(Error::InvalidDocument)?
-            .to_owned();
-        validate_group_name(&name)?;
-        let document = Self {
-            database_id,
-            name,
-            doc,
-            writer: None,
-        };
-        document.validate_structure()?;
-        Ok(document)
+        schema::load(bytes)
     }
 
     /// Declared semantics, checked against signed management by the service.

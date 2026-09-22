@@ -56,7 +56,7 @@ model {
     sessionGuard = component 'Контроль времени жизни сессий' {
       #partial
       technology 'Rust; runtime'
-      description 'Общий монотонный таймер, инвалидирование ответов и завершение процессов независимо от команд. События ОС передаются через API; подключение UI отложено.'
+      description 'Общий монотонный таймер, инвалидирование ответов и завершение процессов CLI/macOS независимо от команд. AppKit передаёт события ОС; нативная приёмка остаётся открытой.'
       metadata { source 'crates/taypeer-runtime/src/session/mod.rs'; contract 'docs/sessions.md'; evidence 'crates/taypeer-runtime/src/worker/tests.rs' }
     }
     coordinator = component 'Координатор рабочей копии' {

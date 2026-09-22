@@ -321,14 +321,7 @@ impl Document {
         Ok(Some(receipt.result))
     }
 
-    pub(super) fn validate_structure(&self) -> Result<(), Error> {
-        if !taypeer_core::ClientCapabilities::default()
-            .assess(&self.schema_descriptor()?)
-            .read
-            .is_supported()
-        {
-            return Err(Error::UnsupportedSchema);
-        }
+    pub(super) fn validate_v5_structure(&self) -> Result<(), Error> {
         groups::tree(&self.doc)?;
         let mut owners = BTreeMap::new();
         let mut attachment_owners = BTreeMap::new();

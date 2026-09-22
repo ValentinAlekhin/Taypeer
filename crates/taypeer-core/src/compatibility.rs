@@ -2,15 +2,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-/// Current experimental document contract, not a stable-format release.
-pub const CURRENT_SCHEMA: u16 = 5;
-/// Semantic requirements of the current document, including its retention rules.
-pub const DOCUMENT_FEATURES: [&str; 4] = [
-    "taypeer.entries",
-    "taypeer.history",
-    "taypeer.lifecycle",
-    "taypeer.binary",
-];
+mod schema;
+pub use schema::{CURRENT_SCHEMA, DOCUMENT_FEATURES};
 
 /// A bounded, nonsecret semantic feature identifier with a stable meaning.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -91,13 +84,15 @@ impl SchemaDescriptor {
         {
             return Err(DescriptorError);
         }
-        if schema_version == CURRENT_SCHEMA {
-            let required = document_features();
-            if !required.is_subset(&required_read_features)
-                || !required.is_subset(&required_write_features)
-            {
-                return Err(DescriptorError);
-            }
+        if let Some(definition) = schema::definition(schema_version)
+            && (!definition
+                .read_features()
+                .is_subset(&required_read_features)
+                || !definition
+                    .write_features()
+                    .is_subset(&required_write_features))
+        {
+            return Err(DescriptorError);
         }
         Ok(Self {
             schema_version,
@@ -109,8 +104,8 @@ impl SchemaDescriptor {
     pub fn current() -> Self {
         Self {
             schema_version: CURRENT_SCHEMA,
-            required_read_features: document_features(),
-            required_write_features: document_features(),
+            required_read_features: schema::current().read_features(),
+            required_write_features: schema::current().write_features(),
         }
     }
     /// Independent logical schema version.
@@ -126,12 +121,6 @@ impl SchemaDescriptor {
         &self.required_write_features
     }
 }
-fn document_features() -> BTreeSet<FeatureId> {
-    DOCUMENT_FEATURES
-        .into_iter()
-        .map(|id| FeatureId(id.into()))
-        .collect()
-}
 
 /// Supported semantics of a client build. Restrictions can remove capabilities;
 /// callers cannot claim a reader or writer that is absent from the implementation.
@@ -143,8 +132,8 @@ pub struct ClientCapabilities {
 impl Default for ClientCapabilities {
     fn default() -> Self {
         Self {
-            read: document_features(),
-            write: document_features(),
+            read: schema::supported_read_features(),
+            write: schema::supported_write_features(),
         }
     }
 }
@@ -158,7 +147,7 @@ impl ClientCapabilities {
     /// Assess a descriptor from an already verified, supported outer container/control
     /// encoding. Network admission, lock state and author permission are separate.
     pub fn assess(&self, descriptor: &SchemaDescriptor) -> CompatibilityReport {
-        let read = if descriptor.schema_version != CURRENT_SCHEMA {
+        let read = if schema::definition(descriptor.schema_version).is_none() {
             CompatibilityAccess::UnsupportedSchema {
                 schema_version: descriptor.schema_version,
             }

@@ -1,4 +1,5 @@
 //! PUBLIC-only process fixture: real dispatch, service and dev5 files, no native credentials.
+mod compatibility;
 mod presentation;
 mod stalled;
 use super::*;
@@ -26,6 +27,19 @@ fn synthetic_open(
     _: &Arc<Mutex<Channel>>,
     service: &mut DatabaseService,
 ) -> Result<SessionToken, RuntimeError> {
+    if std::env::var_os("TAYPEER_PUBLIC_FORMAT_READ_ONLY").is_some() {
+        let schema = taypeer_core::SchemaDescriptor::current();
+        let write = schema
+            .required_write_features()
+            .iter()
+            .filter(|feature| feature.as_str() != "taypeer.binary")
+            .cloned()
+            .collect();
+        *service = DatabaseService::with_capabilities(
+            taypeer_core::ClientCapabilities::default()
+                .restricted(schema.required_read_features(), &write),
+        );
+    }
     let author = || AuthorKey::from_seed(&[19; 32]);
     let transport = Arc::new(TransportKey::from_seed(&[59; 32]));
     if let Some(form) = boot.create_form.take().or_else(|| {
@@ -102,9 +116,38 @@ fn open_mode(
     create: bool,
     read_only: bool,
 ) -> Arc<Client> {
+    open_access(
+        sessions,
+        path,
+        create,
+        if read_only {
+            TestAccess::WithoutAuthor
+        } else {
+            TestAccess::Full
+        },
+    )
+}
+
+enum TestAccess {
+    Full,
+    WithoutAuthor,
+    UnsupportedWriter,
+}
+fn open_access(
+    sessions: &SessionController,
+    path: &Path,
+    create: bool,
+    access: TestAccess,
+) -> Arc<Client> {
     let mut process = Process::new(std::env::current_exe().unwrap());
-    if read_only {
-        process.env("TAYPEER_PUBLIC_READ_ONLY", "1");
+    match access {
+        TestAccess::Full => {}
+        TestAccess::WithoutAuthor => {
+            process.env("TAYPEER_PUBLIC_READ_ONLY", "1");
+        }
+        TestAccess::UnsupportedWriter => {
+            process.env("TAYPEER_PUBLIC_FORMAT_READ_ONLY", "1");
+        }
     }
     let mut child = process
         .args([

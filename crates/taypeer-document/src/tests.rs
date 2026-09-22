@@ -822,3 +822,5 @@ fn addressed_noop_edits_preserve_heads_and_history_even_with_unrelated_conflicts
     assert_eq!(document.entry(&entry).unwrap(), before);
     assert_eq!(document.history(&entry).unwrap().len(), 3);
 }
+
+mod corpus;

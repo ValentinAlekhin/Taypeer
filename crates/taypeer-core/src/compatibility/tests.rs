@@ -85,3 +85,19 @@ fn deserialization_cannot_drop_mandatory_semantics_or_accept_unbounded_identifie
         .collect();
     assert!(SchemaDescriptor::new(99, many, BTreeSet::new()).is_err());
 }
+
+#[test]
+fn development_five_contract_is_independent_of_current_writer_defaults() {
+    let frozen = r#"{"schema_version":5,"required_read_features":["taypeer.binary","taypeer.entries","taypeer.history","taypeer.lifecycle"],"required_write_features":["taypeer.binary","taypeer.entries","taypeer.history","taypeer.lifecycle"]}"#;
+    let descriptor: SchemaDescriptor = serde_json::from_str(frozen).unwrap();
+    assert!(
+        ClientCapabilities::default()
+            .assess(&descriptor)
+            .write
+            .is_supported()
+    );
+    assert_eq!(serde_json::to_string(&descriptor).unwrap(), frozen);
+    assert_eq!(schema::current().version, CURRENT_SCHEMA);
+    assert_eq!(SchemaDescriptor::current().schema_version(), CURRENT_SCHEMA);
+    assert!(schema::definition(CURRENT_SCHEMA).is_some());
+}
