@@ -28,7 +28,7 @@ pub struct RuntimeHost {
     pub(crate) requested_relay: Mutex<Option<taypeer_sync::RelaySetting>>,
     pub(crate) enrollments: Mutex<BTreeMap<Digest, Arc<crate::process::Client>>>,
     pub(crate) join_state: Mutex<()>,
-    catalog: Mutex<catalog::Catalog>,
+    catalog: Arc<Mutex<catalog::Catalog>>,
 }
 
 /// Public format and transport-admission state; querying it never unlocks a database.
@@ -45,6 +45,7 @@ pub(crate) struct HostContext {
     pub transport: Arc<TransportKey>,
     pub copies: Mutex<BTreeMap<PathBuf, Registration>>,
     children: Mutex<BTreeMap<DatabaseId, Arc<HostContext>>>,
+    catalog: Arc<Mutex<catalog::Catalog>>,
     #[cfg(test)]
     credential_fault: std::sync::atomic::AtomicU8,
 }
@@ -187,7 +188,7 @@ impl RuntimeHost {
         sessions: crate::session::SessionController,
     ) -> Result<Self, RuntimeError> {
         let profile = lease.profile().clone();
-        let catalog = catalog::Catalog::load(profile.directory())?;
+        let catalog = Arc::new(Mutex::new(catalog::Catalog::load(profile.directory())?));
         let transport = Arc::new(if profile.is_linux_lazy() {
             TransportKey::generate().map_err(|_| RuntimeError::Transport)?
         } else {
@@ -205,13 +206,14 @@ impl RuntimeHost {
             requested_relay: Mutex::new(None),
             enrollments: Mutex::new(BTreeMap::new()),
             join_state: Mutex::new(()),
-            catalog: Mutex::new(catalog),
+            catalog: Arc::clone(&catalog),
             context: Arc::new(HostContext {
                 profile,
                 coordinator,
                 transport,
                 copies: Mutex::new(BTreeMap::new()),
                 children: Mutex::new(BTreeMap::new()),
+                catalog,
                 #[cfg(test)]
                 credential_fault: std::sync::atomic::AtomicU8::new(0),
             }),
@@ -437,6 +439,7 @@ impl HostContext {
             transport,
             copies: Mutex::new(BTreeMap::new()),
             children: Mutex::new(BTreeMap::new()),
+            catalog: Arc::clone(&self.catalog),
             #[cfg(test)]
             credential_fault: std::sync::atomic::AtomicU8::new(
                 self.credential_fault
@@ -624,7 +627,11 @@ impl Callbacks {
                 )?);
                 self.snapshot(None)
             }
-            IoRequest::Recover { path, seed } => {
+            IoRequest::Recover {
+                path,
+                seed,
+                operation,
+            } => {
                 let root = seed
                     .controls
                     .first()
@@ -633,6 +640,14 @@ impl Callbacks {
                     .map_err(|_| RuntimeError::Protocol)?;
                 let chain = ControlChain::validate(seed.controls.clone(), root)
                     .map_err(|_| RuntimeError::Protocol)?;
+                if self
+                    .registration
+                    .as_ref()
+                    .is_none_or(|registration| registration.database != chain.head().database)
+                {
+                    return Err(RuntimeError::Protocol);
+                }
+                self.require_recovery_destination(&path, root, operation)?;
                 let objects = cipher_ipc::read_objects(seed.objects, &self.directory, &chain)?;
                 self.context.publish_recovery(
                     &path,
@@ -643,6 +658,15 @@ impl Callbacks {
                         baseline: seed.baseline,
                     },
                 )?;
+                self.confirm_recovery(&path, root, operation)?;
+                Ok(IoValue::Done)
+            }
+            IoRequest::ConfirmRecovery {
+                path,
+                root,
+                operation,
+            } => {
+                self.confirm_recovery(&path, root, operation)?;
                 Ok(IoValue::Done)
             }
             IoRequest::Snapshot { known } => self.snapshot(known),

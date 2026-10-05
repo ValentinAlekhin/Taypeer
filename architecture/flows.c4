@@ -186,6 +186,11 @@ views 'Разбор сетевых источников' {
     taypeer.secretWorker -> taypeer.coordinator 'Передать только зашифрованный seed нового файла'
     taypeer.coordinator -> taypeer.storage 'Создать отдельный файл без перезаписи источника'
     taypeer.cli <- taypeer.secretWorker 'Надёжно созданный новый доверенный набор'
+    taypeer.cli -> taypeer.host 'Связать recovery receipt с прежним root и точным ID операции'
+    taypeer.host -> taypeer.local 'Надёжно сохранить публичную квитанцию и защищённую регистрацию'
+    taypeer.cli -> taypeer.sessionGuard 'Закрыть прежний worker и writer перед явным открытием'
+    taypeer.cli -> taypeer.host 'Принять только квитанцию завершённого восстановления'
+    taypeer.host -> taypeer.local 'Атомарно сменить catalog item; сохранить прежний файл'
   }
 
 }

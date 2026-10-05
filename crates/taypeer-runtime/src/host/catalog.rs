@@ -34,11 +34,46 @@ pub struct RelocatedWorkingCopy {
 struct CatalogFile {
     version: u16,
     copies: Vec<WorkingCopy>,
+    #[serde(default)]
+    recoveries: Vec<RecoveryReceipt>,
+}
+
+/// A locator is public; its matching protected profile receipt authorizes adoption.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RecoveryReceipt {
+    source: WorkingCopy,
+    destination: WorkingCopy,
+    operation: Digest,
+    fingerprint: Digest,
+}
+impl RecoveryReceipt {
+    fn account(&self) -> Result<String, RuntimeError> {
+        Self::account_for(&self.source.database, self.operation)
+    }
+
+    fn account_for(database: &DatabaseId, operation: Digest) -> Result<String, RuntimeError> {
+        let id = Digest::object(b"taypeer.working-copy.recovery.v1", &(database, operation))
+            .map_err(|_| RuntimeError::Protocol)?;
+        Ok(format!("recovery:{id}"))
+    }
+
+    fn verify_destination(&self) -> Result<(), RuntimeError> {
+        let snapshot = ArchiveSnapshot::open(&self.destination.path, Some(self.destination.root))
+            .map_err(cipher_ipc::storage)?;
+        if snapshot.chain().head().database != self.destination.database
+            || snapshot.fingerprint() != self.fingerprint
+        {
+            return Err(cipher_ipc::storage(taypeer_storage::Error::Changed));
+        }
+        Ok(())
+    }
 }
 
 pub(super) struct Catalog {
     directory: PathBuf,
     copies: BTreeMap<DatabaseId, WorkingCopy>,
+    recoveries: Vec<RecoveryReceipt>,
 }
 impl Catalog {
     pub fn load(profile: &Path) -> Result<Self, RuntimeError> {
@@ -46,7 +81,7 @@ impl Catalog {
             .canonicalize()
             .map_err(|_| RuntimeError::Transport)?;
         let path = directory.join("working-copies.json");
-        let copies = match File::open(path) {
+        let (copies, recoveries) = match File::open(path) {
             Ok(file) => {
                 let mut bytes = Vec::new();
                 file.take(MAX_CATALOG_BYTES + 1)
@@ -75,12 +110,28 @@ impl Catalog {
                         return Err(RuntimeError::Protocol);
                     }
                 }
-                copies
+                for receipt in &file.recoveries {
+                    if receipt.source.database != receipt.destination.database
+                        || receipt.source.root == receipt.destination.root
+                        || !receipt.source.path.is_absolute()
+                        || !receipt.destination.path.is_absolute()
+                        || receipt.source.path == receipt.destination.path
+                    {
+                        return Err(RuntimeError::Protocol);
+                    }
+                }
+                (copies, file.recoveries)
             }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => BTreeMap::new(),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                (BTreeMap::new(), Vec::new())
+            }
             Err(_) => return Err(RuntimeError::Transport),
         };
-        Ok(Self { directory, copies })
+        Ok(Self {
+            directory,
+            copies,
+            recoveries,
+        })
     }
 
     fn working_directory(&self) -> Result<PathBuf, RuntimeError> {
@@ -118,7 +169,11 @@ impl Catalog {
             .map_err(|_| RuntimeError::Protocol)?;
         if let Some(copy) = self.copies.get(&database) {
             if copy.root != root {
-                return Err(RuntimeError::Protocol);
+                let receipt = self
+                    .recovery(&source, &database, root)
+                    .ok_or(RuntimeError::Protocol)?;
+                receipt.verify_destination()?;
+                return Ok(receipt.destination.clone());
             }
             verify(copy)?;
             return Ok(copy.clone());
@@ -169,9 +224,67 @@ impl Catalog {
         }
         let mut candidate = self.copies.clone();
         candidate.insert(copy.database.clone(), copy);
+        self.publish(candidate, self.recoveries.clone())
+    }
+
+    fn recovery(
+        &self,
+        path: &Path,
+        database: &DatabaseId,
+        root: Digest,
+    ) -> Option<&RecoveryReceipt> {
+        let prior = self.copies.get(database)?;
+        self.recoveries.iter().find(|receipt| {
+            receipt.destination.database == *database
+                && receipt.destination.path == path
+                && receipt.destination.root == root
+                && receipt.source.root == prior.root
+        })
+    }
+
+    fn record_recovery(&mut self, receipt: RecoveryReceipt) -> Result<(), RuntimeError> {
+        receipt.verify_destination()?;
+        if let Some(prior) = self.recoveries.iter().find(|prior| {
+            prior.source.database == receipt.source.database && prior.operation == receipt.operation
+        }) {
+            return if prior == &receipt {
+                Ok(())
+            } else {
+                Err(RuntimeError::Protocol)
+            };
+        }
+        let mut recoveries = self.recoveries.clone();
+        recoveries.push(receipt);
+        self.publish(self.copies.clone(), recoveries)
+    }
+
+    fn adopt_recovery(&mut self, receipt: &RecoveryReceipt) -> Result<(), RuntimeError> {
+        if self.recovery(
+            &receipt.destination.path,
+            &receipt.destination.database,
+            receipt.destination.root,
+        ) != Some(receipt)
+        {
+            return Err(RuntimeError::Protocol);
+        }
+        receipt.verify_destination()?;
+        let mut candidate = self.copies.clone();
+        candidate.insert(
+            receipt.destination.database.clone(),
+            receipt.destination.clone(),
+        );
+        self.publish(candidate, self.recoveries.clone())
+    }
+
+    fn publish(
+        &mut self,
+        candidate: BTreeMap<DatabaseId, WorkingCopy>,
+        recoveries: Vec<RecoveryReceipt>,
+    ) -> Result<(), RuntimeError> {
         let bytes = serde_json::to_vec(&CatalogFile {
             version: VERSION,
             copies: candidate.values().cloned().collect(),
+            recoveries: recoveries.clone(),
         })
         .map_err(|_| RuntimeError::Protocol)?;
         if bytes.len() as u64 > MAX_CATALOG_BYTES {
@@ -189,6 +302,7 @@ impl Catalog {
         )
         .map_err(cipher_ipc::storage)?;
         self.copies = candidate;
+        self.recoveries = recoveries;
         Ok(())
     }
 }
@@ -200,6 +314,109 @@ fn verify(copy: &WorkingCopy) -> Result<(), RuntimeError> {
         return Err(RuntimeError::Protocol);
     }
     Ok(())
+}
+
+impl Callbacks {
+    pub(super) fn require_recovery_destination(
+        &self,
+        destination: &Path,
+        root: Digest,
+        operation: Digest,
+    ) -> Result<(), RuntimeError> {
+        let source = self.registration.as_ref().ok_or(RuntimeError::Protocol)?;
+        let destination = canonical_path(destination)?;
+        if destination == self.path || root == source.root {
+            return Err(RuntimeError::Protocol);
+        }
+        if let Some(prior) =
+            self.context
+                .profile
+                .load_state::<RecoveryReceipt>(&RecoveryReceipt::account_for(
+                    &source.database,
+                    operation,
+                )?)?
+            && (prior.source.database != source.database
+                || prior.source.root != source.root
+                || prior.source.path != self.path
+                || prior.destination.path != destination
+                || prior.destination.root != root)
+        {
+            return Err(RuntimeError::Protocol);
+        }
+        Ok(())
+    }
+
+    pub(super) fn confirm_recovery(
+        &self,
+        destination: &Path,
+        root: Digest,
+        operation: Digest,
+    ) -> Result<(), RuntimeError> {
+        self.require_recovery_destination(destination, root, operation)?;
+        let source = self.registration.as_ref().ok_or(RuntimeError::Protocol)?;
+        let destination = canonical_path(destination)?;
+        if destination == self.path || root == source.root {
+            return Err(RuntimeError::Protocol);
+        }
+        let registration = self
+            .context
+            .profile
+            .registration(&destination)?
+            .ok_or(RuntimeError::Protocol)?;
+        if registration.database != source.database || registration.root != root {
+            return Err(RuntimeError::Protocol);
+        }
+        let snapshot =
+            ArchiveSnapshot::open(&destination, Some(root)).map_err(cipher_ipc::storage)?;
+        if snapshot.chain().head().database != source.database {
+            return Err(RuntimeError::Protocol);
+        }
+        let receipt = RecoveryReceipt {
+            source: WorkingCopy {
+                database: source.database.clone(),
+                root: source.root,
+                path: self.path.clone(),
+            },
+            destination: WorkingCopy {
+                database: source.database.clone(),
+                root,
+                path: destination.clone(),
+            },
+            operation,
+            fingerprint: snapshot.fingerprint(),
+        };
+        // A retry authenticates the checkpoint in the child and then reconfirms
+        // publication here before its linked intent can authorize a catalog change.
+        File::open(&destination)
+            .and_then(|file| file.sync_all())
+            .and_then(|()| {
+                File::open(
+                    destination
+                        .parent()
+                        .ok_or(std::io::ErrorKind::InvalidInput)?,
+                )
+                .and_then(|file| file.sync_all())
+            })
+            .map_err(|_| cipher_ipc::storage(taypeer_storage::Error::CommitUncertain))?;
+        receipt.verify_destination()?;
+        let account = receipt.account()?;
+        if let Some(prior) = self
+            .context
+            .profile
+            .load_state::<RecoveryReceipt>(&account)?
+            && prior != receipt
+        {
+            return Err(RuntimeError::Protocol);
+        }
+        // Re-publish even an identical protected intent: the previous response
+        // may have been lost after a credential-store replacement.
+        self.context.profile.save_state(&account, &receipt)?;
+        self.context
+            .catalog
+            .lock()
+            .map_err(|_| RuntimeError::Transport)?
+            .record_recovery(receipt)
+    }
 }
 
 impl RuntimeHost {
@@ -331,12 +548,83 @@ impl RuntimeHost {
         password: String,
     ) -> Result<Worker, RuntimeError> {
         let copy = self.stage_external_copy(source)?;
+        let receipt = self
+            .catalog
+            .lock()
+            .map_err(|_| RuntimeError::Transport)?
+            .recovery(&copy.path, &copy.database, copy.root)
+            .cloned();
+        if receipt.is_some() {
+            self.require_closed_recovery_source(&copy.database)?;
+        }
+        if let Some(receipt) = &receipt {
+            // Do not start an admitted worker or its optional network exchange
+            // from a forged public locator, even transiently.
+            self.verify_recovery_proof(receipt)?;
+        }
         let worker = self.open(executable, &copy.path, password, None)?;
-        if let Err(error) = self.register_working_copy(&copy.path) {
-            worker.invalidate(crate::session::LockReason::Transport);
+        let publication = match receipt {
+            Some(receipt) => self.adopt_recovery(&receipt),
+            None => self.register_working_copy(&copy.path).map(|_| ()),
+        };
+        if let Err(error) = publication {
+            let mut worker = worker;
+            // The candidate must never be exposed after an unverifiable intent.
+            let _closed = worker.close_report();
+            self.close(&copy.database)?;
             return Err(error);
         }
         Ok(worker)
+    }
+
+    fn require_closed_recovery_source(&self, database: &DatabaseId) -> Result<(), RuntimeError> {
+        if self.sessions.statuses().iter().any(|status| {
+            status.database.as_ref() == Some(database)
+                && status.phase != crate::session::SessionPhase::Closed
+        }) {
+            return Err(cipher_ipc::storage(taypeer_storage::Error::Busy));
+        }
+        for context in self.context.active_contexts()? {
+            if context
+                .copies
+                .lock()
+                .map_err(|_| RuntimeError::Transport)?
+                .values()
+                .any(|registration| &registration.database == database)
+            {
+                return Err(cipher_ipc::storage(taypeer_storage::Error::Busy));
+            }
+        }
+        Ok(())
+    }
+
+    fn adopt_recovery(&self, receipt: &RecoveryReceipt) -> Result<(), RuntimeError> {
+        self.verify_recovery_proof(receipt)?;
+        self.catalog
+            .lock()
+            .map_err(|_| RuntimeError::Transport)?
+            .adopt_recovery(receipt)
+    }
+
+    fn verify_recovery_proof(&self, receipt: &RecoveryReceipt) -> Result<(), RuntimeError> {
+        let context = self.context.for_database(&receipt.destination.database)?;
+        let proof = context
+            .profile
+            .load_state::<RecoveryReceipt>(&receipt.account()?)?
+            .ok_or(RuntimeError::Protocol)?;
+        if &proof != receipt {
+            return Err(RuntimeError::Protocol);
+        }
+        let registration = context
+            .profile
+            .registration(&receipt.destination.path)?
+            .ok_or(RuntimeError::Protocol)?;
+        if registration.database != receipt.destination.database
+            || registration.root != receipt.destination.root
+        {
+            return Err(RuntimeError::Protocol);
+        }
+        receipt.verify_destination()
     }
 
     /// Create an internal working file. Repeating the creation operation reopens the existing
@@ -686,6 +974,126 @@ mod tests {
             )
         );
         assert_eq!(path.extension().unwrap(), "taypeer");
+    }
+
+    #[test]
+    fn recovery_adopts_only_a_protected_exact_intent_after_the_old_writer_closes() {
+        let directory = tempfile::tempdir().unwrap();
+        let profile = directory.path().join("profile");
+        let credentials = Arc::new(PublicCredentials::default());
+        let host = RuntimeHost::with_platform_credentials(
+            &profile,
+            crate::session::SessionController::new(Default::default()),
+            credentials.clone(),
+        )
+        .unwrap();
+        let source = canonical_path(&directory.path().join("PUBLIC original.taypeer")).unwrap();
+        let (original, draft) = owned_archive(&host, &source);
+        let before = std::fs::read(&source).unwrap();
+        let destination =
+            canonical_path(&directory.path().join("PUBLIC recovered.taypeer")).unwrap();
+        archive(&destination, original.database.as_str());
+        let snapshot = ArchiveSnapshot::open(&destination, None).unwrap();
+        let root = snapshot.chain().root().unwrap();
+        host.profile().register(&destination, &snapshot).unwrap();
+        // Only the callback reached after child authentication can link this file.
+        let mut callbacks = Callbacks::new(
+            Arc::clone(&host.context),
+            source.clone(),
+            directory.path().to_owned(),
+        );
+        callbacks.registration = host.profile().registration(&source).unwrap();
+        let operation = Digest::of(b"PUBLIC exact recovery operation");
+        callbacks
+            .confirm_recovery(&destination, root, operation)
+            .unwrap();
+        callbacks
+            .confirm_recovery(&destination, root, operation)
+            .unwrap();
+        assert_eq!(host.catalog.lock().unwrap().recoveries.len(), 1);
+        assert!(matches!(
+            host.require_closed_recovery_source(&original.database),
+            Err(RuntimeError::Service(
+                taypeer_services::ServiceError::Storage(taypeer_storage::Error::Busy)
+            ))
+        ));
+        assert_eq!(host.working_copies().unwrap(), vec![original.clone()]);
+        host.close(&original.database).unwrap();
+        host.require_closed_recovery_source(&original.database)
+            .unwrap();
+        let receipt = host.catalog.lock().unwrap().recoveries[0].clone();
+        host.adopt_recovery(&receipt).unwrap();
+        let recovered = host.stage_external_copy(&destination).unwrap();
+        assert_eq!(host.working_copies().unwrap(), vec![recovered.clone()]);
+        assert_eq!(recovered.path, destination);
+        assert_eq!(std::fs::read(&source).unwrap(), before);
+        let registration = host.profile().registration(&source).unwrap().unwrap();
+        let original_snapshot = ArchiveSnapshot::open(&source, Some(original.root)).unwrap();
+        assert_eq!(
+            taypeer_storage::read_local_draft(
+                &source,
+                registration.working_copy,
+                original_snapshot.chain()
+            )
+            .unwrap()
+            .unwrap()
+            .descriptor(),
+            draft.descriptor()
+        );
+        drop(callbacks);
+        drop(host);
+        let host = RuntimeHost::with_platform_credentials(
+            &profile,
+            crate::session::SessionController::new(Default::default()),
+            credentials,
+        )
+        .unwrap();
+        assert_eq!(host.working_copies().unwrap(), vec![recovered.clone()]);
+        assert_eq!(host.stage_external_copy(&destination).unwrap(), recovered);
+        // Opening the preserved original cannot silently switch back to its lineage.
+        assert!(matches!(
+            host.stage_external_copy(&source),
+            Err(RuntimeError::Protocol)
+        ));
+    }
+
+    #[test]
+    fn a_forged_public_recovery_locator_cannot_replace_the_pinned_root() {
+        let directory = tempfile::tempdir().unwrap();
+        let host = RuntimeHost::with_platform_credentials(
+            &directory.path().join("profile"),
+            crate::session::SessionController::new(Default::default()),
+            Arc::new(PublicCredentials::default()),
+        )
+        .unwrap();
+        let source = canonical_path(&directory.path().join("PUBLIC original.taypeer")).unwrap();
+        let (original, _) = owned_archive(&host, &source);
+        let destination =
+            canonical_path(&directory.path().join("PUBLIC unrelated.taypeer")).unwrap();
+        archive(&destination, original.database.as_str());
+        let snapshot = ArchiveSnapshot::open(&destination, None).unwrap();
+        host.profile().register(&destination, &snapshot).unwrap();
+        let receipt = RecoveryReceipt {
+            source: original.clone(),
+            destination: WorkingCopy {
+                database: original.database.clone(),
+                root: snapshot.chain().root().unwrap(),
+                path: destination,
+            },
+            operation: Digest::of(b"PUBLIC forged operation"),
+            fingerprint: snapshot.fingerprint(),
+        };
+        host.catalog
+            .lock()
+            .unwrap()
+            .record_recovery(receipt.clone())
+            .unwrap();
+        host.close(&original.database).unwrap();
+        assert!(matches!(
+            host.adopt_recovery(&receipt),
+            Err(RuntimeError::Protocol)
+        ));
+        assert_eq!(host.working_copies().unwrap(), vec![original]);
     }
 
     #[test]

@@ -25,12 +25,27 @@ pub(crate) enum WorkerMessage {
 #[derive(Serialize, Deserialize)]
 pub(crate) enum IoRequest {
     Activate(Box<crate::profile::TransportCapability>),
-    PrepareCredentials { epoch: u64 },
-    FinalizeCredentials { epoch: u64 },
+    PrepareCredentials {
+        epoch: u64,
+    },
+    FinalizeCredentials {
+        epoch: u64,
+    },
     Open,
     Create(Seed),
-    Recover { path: PathBuf, seed: Seed },
-    Snapshot { known: Option<Digest> },
+    Recover {
+        path: PathBuf,
+        seed: Seed,
+        operation: Digest,
+    },
+    ConfirmRecovery {
+        path: PathBuf,
+        root: Digest,
+        operation: Digest,
+    },
+    Snapshot {
+        known: Option<Digest>,
+    },
     Commit(Commit),
     SaveDraft(PathBuf),
     LoadDraft,

@@ -540,6 +540,16 @@ fn recover(
         .map_err(|_| RuntimeError::Protocol)?;
     if path.try_exists().map_err(|_| RuntimeError::Transport)? {
         let root = service.trust_recovery_retry(session, path, password, &identity, operation)?;
+        let reply = channel.lock().map_err(|_| RuntimeError::Transport)?.io(
+            IoRequest::ConfirmRecovery {
+                path: path.to_owned(),
+                root,
+                operation,
+            },
+        )?;
+        if !matches!(reply, IoValue::Done) {
+            return Err(RuntimeError::Protocol);
+        }
         return Ok(json!({"root": root, "database": session.database, "path": path}));
     }
     let seed = service.prepare_trust_recovery(session, password, identity, operation)?;
@@ -556,6 +566,7 @@ fn recover(
         .map_err(|_| RuntimeError::Transport)?
         .io(IoRequest::Recover {
             path: path.to_owned(),
+            operation,
             seed: Seed {
                 controls: seed.controls,
                 objects,
