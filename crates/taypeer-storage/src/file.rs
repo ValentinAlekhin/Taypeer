@@ -61,21 +61,7 @@ fn atomic_write(path: &Path, bytes: &[u8], create: bool) -> Result<(), Error> {
     let directory = parent(path)?;
     let mut temp = NamedTempFile::new_in(directory)?;
     temp.write_all(bytes)?;
-    temp.as_file().sync_all()?;
-    if create {
-        temp.persist_noclobber(path).map_err(|error| {
-            if error.error.kind() == std::io::ErrorKind::AlreadyExists {
-                Error::AlreadyExists
-            } else {
-                Error::Io
-            }
-        })?;
-    } else {
-        temp.persist(path).map_err(|_| Error::Io)?;
-    }
-    File::open(directory)
-        .and_then(|directory| directory.sync_all())
-        .map_err(|_| Error::CommitUncertain)
+    persist(temp, path, create)
 }
 pub(crate) fn lock(path: &Path) -> Result<File, Error> {
     let mut options = OpenOptions::new();
@@ -136,21 +122,12 @@ fn header(file: &mut File) -> Result<Vec<u8>, Error> {
 }
 
 pub(crate) fn persist(temp: NamedTempFile, path: &Path, create: bool) -> Result<(), Error> {
-    temp.as_file().sync_all()?;
-    if create {
-        temp.persist_noclobber(path).map_err(|error| {
-            if error.error.kind() == std::io::ErrorKind::AlreadyExists {
-                Error::AlreadyExists
-            } else {
-                Error::Io
-            }
-        })?;
+    let mode = if create {
+        crate::PublicationMode::Create
     } else {
-        temp.persist(path).map_err(|_| Error::Io)?;
-    }
-    File::open(parent(path)?)
-        .and_then(|directory| directory.sync_all())
-        .map_err(|_| Error::CommitUncertain)
+        crate::PublicationMode::Replace
+    };
+    crate::publish_file(temp, path, mode)
 }
 
 impl FileStore {
@@ -316,6 +293,44 @@ impl FileStore {
         Ok((key, document, blobs))
     }
 
+    /// Reconcile the current bundle using this working copy's retained read key.
+    /// The password wrapper must match the previously opened file. All sections
+    /// are authenticated and publication durability is confirmed before the
+    /// expected fingerprint advances and an uncertain commit is cleared.
+    ///
+    /// A different key binding or a changing file returns `Changed`; corrupted
+    /// ciphertext returns `Authentication`. A synchronization failure returns
+    /// `CommitUncertain`. Failure leaves the previous baseline and uncertainty
+    /// unchanged, and no plaintext or staged blobs escape.
+    pub fn reload_bundle(
+        &mut self,
+        key: &ReadKey,
+    ) -> Result<(Zeroizing<Vec<u8>>, BlobStore), Error> {
+        let mut input = File::open(&self.path)?;
+        let before = fingerprint(&mut input)?;
+        let candidate = header(&mut input)?;
+        if !crypto::same_key_binding(&candidate, &self.header) {
+            return Err(Error::Changed);
+        }
+        let (document, blobs) =
+            BlobStore::read_bundle(DecryptReader::new(&mut input, key, candidate.clone())?)?;
+        // Reading a visible replacement alone cannot confirm that an earlier
+        // failed directory synchronization made it durable.
+        input.sync_all().map_err(|_| Error::CommitUncertain)?;
+        File::open(parent(&self.path)?)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|_| Error::CommitUncertain)?;
+        if fingerprint(&mut input)? != before
+            || fingerprint(&mut File::open(&self.path)?)? != before
+        {
+            return Err(Error::Changed);
+        }
+        self.header = candidate;
+        self.fingerprint = before;
+        self.uncertain = false;
+        Ok((document, blobs))
+    }
+
     /// Atomically persist an independently encrypted binary draft bundle.
     pub fn save_binary_draft(
         &self,
@@ -463,3 +478,7 @@ impl FileStore {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "reload_tests.rs"]
+mod reload_tests;

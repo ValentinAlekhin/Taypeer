@@ -133,6 +133,10 @@ pub(super) fn payload_length(header: &[u8]) -> Result<u64, Error> {
     ))
 }
 
+pub(super) fn same_key_binding(left: &[u8], right: &[u8]) -> bool {
+    left.len() == HEADER && right.len() == HEADER && left[..WRAPPED] == right[..WRAPPED]
+}
+
 pub(super) fn create_header(password: &[u8], target_ms: u32) -> Result<(Vec<u8>, ReadKey), Error> {
     if !(500..=5000).contains(&target_ms) {
         return Err(Error::InvalidFile);

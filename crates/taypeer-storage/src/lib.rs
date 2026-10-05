@@ -10,6 +10,7 @@ mod encrypted_object;
 mod file;
 mod local_state;
 mod locking;
+mod publication;
 mod stream;
 mod temporary;
 
@@ -30,10 +31,12 @@ pub use crypto::ReadKey;
 pub use file::{BinaryDraft, FileStore};
 pub use local_state::{LocalCredentialStore, LocalStateKey, LocalStateStore};
 pub use locking::try_lock_exclusive;
+pub use publication::{PublicationMode, publish_file};
 pub use temporary::{TemporaryFileProvider, TemporaryStorage};
 
 /// Categorized failures without paths, passwords or parser diagnostics.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, thiserror::Error)]
+#[error("{self:?}")]
 pub enum Error {
     /// Empty master passwords are forbidden; whitespace remains significant.
     EmptyPassword,
@@ -53,7 +56,7 @@ pub enum Error {
     Io,
     /// The file is already open by another writer.
     Busy,
-    /// Creating a database would replace an existing file.
+    /// Creating a destination would replace an existing file.
     AlreadyExists,
     /// Another writer changed the file; reopen before further edits.
     Changed,
@@ -69,12 +72,6 @@ impl From<taypeer_trust::Error> for Error {
         Self::Trust(error)
     }
 }
-impl std::fmt::Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{self:?}")
-    }
-}
-impl std::error::Error for Error {}
 impl From<std::io::Error> for Error {
     fn from(error: std::io::Error) -> Self {
         // Streaming adapters preserve our sanitized authentication/format categories.

@@ -53,7 +53,7 @@ M владеет taypeer-core/taypeer-document; S владеет taypeer-storage
 - [ ] M: история записей, групп и метаданных БД; выбранные снимки новых версий, исходные альтернативы до явной очистки, no-op/retry без новых версий.
 - [ ] M: адресные GroupMetadataPatch/DatabaseMetadataPatch с Keep/Set/Clear, причинные операции и продолжение подтверждённого EntryDraft. Перенести общий FieldUpdate в core.
 - [ ] M: обновить удержание бинарного содержимого и правила очистки для выбранного состояния и доступных исходных версий.
-- [ ] S: единый publish_file с PublicationMode Create/Replace; atomic_write и внутренний persist используют его. Сохранить AlreadyExists, CommitUncertain, sync файла/каталога и относительные пути без указанного каталога.
+- [x] S: единый publish_file с PublicationMode Create/Replace; atomic_write и внутренний persist используют его. Сохранить AlreadyExists, CommitUncertain, sync файла/каталога и относительные пути без указанного каталога. Проверены также аутентификация и повторное подтверждение durability в reload_bundle.
 - [ ] Проверить M/S целевыми тестами и интегрировать; коммит этапа.
 
 ## Волна 2 — редактор и host/profile
