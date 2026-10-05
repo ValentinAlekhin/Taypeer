@@ -19,7 +19,6 @@ pub struct SyncView<H: SyncHost> {
     code: Entity<InputState>,
     password: Entity<InputState>,
     error: Option<&'static str>,
-    selecting: bool,
     epoch: u64,
     _subscription: Subscription,
 }
@@ -47,13 +46,12 @@ impl<H: SyncHost> SyncView<H> {
             code,
             password,
             error: None,
-            selecting: false,
             epoch,
             _subscription: subscription,
         }
     }
     fn connect(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.selecting || self.store.read(cx).sync(cx).busy() {
+        if self.store.read(cx).sync(cx).busy() {
             return;
         }
         let code = match parse_invitation(self.code.read(cx).value().as_str()) {
@@ -66,36 +64,13 @@ impl<H: SyncHost> SyncView<H> {
         };
         let password = zeroize::Zeroizing::new(self.password.read(cx).value().to_string());
         self.error = None;
-        self.selecting = true;
-        let epoch = self.epoch;
-        let prompt =
-            taypeer_ui::file_picker::save(cx, std::path::Path::new("."), Some("received.taypeer"));
-        cx.spawn_in(window, async move |this, cx| {
-            let selected = prompt.await;
-            let _ = this.update_in(cx, |this, window, cx| {
-                this.selecting = false;
-                if epoch != this.store.read(cx).secret_epoch()
-                    || !this.store.read(cx).is_receiving()
-                {
-                    return;
-                }
-                match selected {
-                    Ok(Some(path)) => {
-                        this.code
-                            .update(cx, |input, cx| input.set_value("", window, cx));
-                        this.password
-                            .update(cx, |input, cx| input.set_value("", window, cx));
-                        this.store.update(cx, |store, cx| {
-                            store.join_database(code, path, password.to_string(), cx)
-                        });
-                    }
-                    Ok(None) => {}
-                    _ => this.error = Some("ui.file_error"),
-                }
-                cx.notify();
-            });
-        })
-        .detach();
+        self.code
+            .update(cx, |input, cx| input.set_value("", window, cx));
+        self.password
+            .update(cx, |input, cx| input.set_value("", window, cx));
+        self.store.update(cx, |store, cx| {
+            store.join_database(code, password.to_string(), cx)
+        });
         cx.notify();
     }
     fn receive(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -134,7 +109,7 @@ impl<H: SyncHost> SyncView<H> {
                             .id("invitation-code")
                             .aria_label(tr("sync.code"))
                             .mask_toggle()
-                            .disabled(sync.busy() || self.selecting),
+                            .disabled(sync.busy()),
                         &self.code,
                         true,
                     )),
@@ -148,7 +123,7 @@ impl<H: SyncHost> SyncView<H> {
                             .id("invitation-password")
                             .aria_label(tr("ui.master_password"))
                             .mask_toggle()
-                            .disabled(sync.busy() || self.selecting),
+                            .disabled(sync.busy()),
                         &self.password,
                         true,
                     )),
@@ -160,7 +135,7 @@ impl<H: SyncHost> SyncView<H> {
                         Button::new("connect-invitation")
                             .primary()
                             .label(tr("sync.connect"))
-                            .disabled(sync.busy() || self.selecting)
+                            .disabled(sync.busy())
                             .on_click(cx.listener(|this, _, window, cx| this.connect(window, cx))),
                     )
                     .child(

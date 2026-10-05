@@ -204,29 +204,16 @@ impl SessionView {
                 el.child(self.recent_databases(cx))
             })
             .child(
-                h_flex()
-                    .gap_3()
-                    .child(
-                        Button::new("welcome-receive")
-                            .min_w(rems(10.5))
-                            .label(tr("ui.welcome_receive"))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.store.update(cx, |store, cx| {
-                                    store.navigate(
-                                        crate::ui_state::Destination::Receive,
-                                        window,
-                                        cx,
-                                    )
-                                });
-                            })),
-                    )
-                    .child(
-                        Button::new("welcome-import")
-                            .w(rems(10.))
-                            .label(tr("ui.welcome_import"))
-                            .disabled(true)
-                            .tooltip(tr("ui.import_unavailable")),
-                    ),
+                h_flex().gap_3().child(
+                    Button::new("welcome-receive")
+                        .min_w(rems(10.5))
+                        .label(tr("ui.welcome_receive"))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.store.update(cx, |store, cx| {
+                                store.navigate(crate::ui_state::Destination::Receive, window, cx)
+                            });
+                        })),
+                ),
             )
     }
 

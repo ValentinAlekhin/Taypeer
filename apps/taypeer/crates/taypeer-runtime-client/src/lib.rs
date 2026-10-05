@@ -15,8 +15,7 @@ use taypeer_runtime::{
     session::{SessionController, SessionSettings},
 };
 use taypeer_services::{
-    CreateDatabase, DatabaseInfo, EntrySummary, EntryView, GroupInfo, PendingDraftSummary,
-    RevisionSummary, StorageUsage,
+    CreateDatabase, DatabaseInfo, EntrySummary, EntryView, GroupInfo, RevisionSummary, StorageUsage,
 };
 
 /// Runtime failures crossing the background client boundary.
@@ -151,6 +150,8 @@ fn decode<T: DeserializeOwned>(value: Result<serde_json::Value>) -> Result<T> {
 /// An opened connection and its initial projection, owned by the receiving feature.
 #[non_exhaustive]
 pub struct Opened {
+    /// Confirmed catalog working path; an external source may have been copied here.
+    pub path: PathBuf,
     /// Live worker command queue.
     pub connection: Connection,
     /// Initial database projection.
@@ -161,6 +162,7 @@ enum HostJob {
         path: PathBuf,
         password: zeroize::Zeroizing<String>,
         form: Option<CreateDatabase>,
+        operation: Option<taypeer_core::OperationId>,
         epoch: u64,
         reply: mpsc::Sender<Result<Opened>>,
     },
@@ -225,6 +227,7 @@ impl Backend {
                         path,
                         password,
                         form,
+                        operation,
                         epoch,
                         reply,
                     } => {
@@ -240,12 +243,34 @@ impl Backend {
                                 fixture,
                             )?;
                             let executable = &worker_executable;
-                            let mut worker = host.open_configured(
-                                executable,
-                                &path,
-                                password.to_string(),
-                                form,
-                            )?;
+                            let (mut worker, path) = if let Some(form) = form {
+                                let operation = operation.ok_or(RuntimeError::Protocol)?;
+                                let path = host.creation_path(&operation)?;
+                                (
+                                    host.create_internal(
+                                        executable,
+                                        &operation,
+                                        password.to_string(),
+                                        form,
+                                    )?,
+                                    path,
+                                )
+                            } else if host.working_copies()?.iter().any(|copy| copy.path == path) {
+                                (
+                                    host.open(executable, &path, password.to_string(), None)?,
+                                    path,
+                                )
+                            } else {
+                                let worker =
+                                    host.open_external(executable, &path, password.to_string())?;
+                                let path = host
+                                    .working_copies()?
+                                    .into_iter()
+                                    .find(|copy| &copy.database == worker.database_id())
+                                    .ok_or(RuntimeError::Protocol)?
+                                    .path;
+                                (worker, path)
+                            };
                             if controller.activity().epoch() != epoch {
                                 worker.invalidate(taypeer_runtime::session::LockReason::Manual);
                                 return Err(RuntimeError::Closed);
@@ -268,6 +293,7 @@ impl Backend {
                                 run_worker(worker, pending, updates, application)
                             });
                             Ok(Opened {
+                                path,
                                 connection,
                                 snapshot,
                             })
@@ -341,15 +367,51 @@ impl Backend {
         password: String,
         form: Option<CreateDatabase>,
     ) -> Ticket<Opened> {
+        if let Some(form) = form {
+            return match taypeer_services::new_operation_id() {
+                Ok(operation) => self.create_internal(form, password, operation),
+                Err(error) => {
+                    let password = zeroize::Zeroizing::new(password);
+                    drop(password);
+                    let (reply, receive) = mpsc::channel();
+                    let _ = reply.send(Err(error.into()));
+                    Ticket(receive, None)
+                }
+            };
+        }
         let (reply, receive) = mpsc::channel();
         let _ = self.send.send(HostJob::Open {
             path: path.into(),
             password: zeroize::Zeroizing::new(password),
-            form,
+            form: None,
+            operation: None,
             epoch: self.sessions.activity().epoch(),
             reply,
         });
         Ticket(receive, None)
+    }
+    /// Create a host-selected working file with a stable retry identity.
+    pub fn create_internal(
+        &self,
+        form: CreateDatabase,
+        password: String,
+        operation: taypeer_core::OperationId,
+    ) -> Ticket<Opened> {
+        let (reply, receive) = mpsc::channel();
+        let _ = self.send.send(HostJob::Open {
+            path: PathBuf::new(),
+            password: zeroize::Zeroizing::new(password),
+            form: Some(form),
+            operation: Some(operation),
+            epoch: self.sessions.activity().epoch(),
+            reply,
+        });
+        Ticket(receive, None)
+    }
+    /// Load verified working paths without reading document labels or plaintext.
+    pub fn catalog(&self) -> Ticket<Vec<taypeer_runtime::WorkingCopy>> {
+        let profile = self.profile.clone();
+        background(move || RuntimeHost::read_working_copies(&profile))
     }
     /// Revoke and close a database worker through its owning host.
     pub fn close(&self, database: DatabaseId, control: WorkerControl) -> Ticket<()> {
@@ -452,13 +514,6 @@ pub struct Query {
     /// Entry whose detail projection is requested.
     pub selected: Option<EntryId>,
 }
-#[derive(serde::Deserialize)]
-/// Pending draft metadata returned without secret draft contents.
-#[non_exhaustive]
-pub struct DraftStatus {
-    /// An available draft summary, if present.
-    pub pending: Option<PendingDraftSummary>,
-}
 /// A coherent worker projection; its owner must discard it on revocation.
 #[non_exhaustive]
 pub struct Snapshot {
@@ -478,8 +533,8 @@ pub struct Snapshot {
     pub entry: Option<EntryView>,
     /// Selected entry revision summaries.
     pub history: Vec<RevisionSummary>,
-    /// Recoverable draft summary, without its plaintext.
-    pub pending: Option<PendingDraftSummary>,
+    /// All resumable local editors, without their entered contents.
+    pub drafts: Vec<taypeer_services::DraftSummary>,
     /// Storage accounting from the same worker.
     pub usage: StorageUsage,
     /// Database security policy.
@@ -510,7 +565,7 @@ impl Snapshot {
             binary: None,
             entry: None,
             history: Vec::new(),
-            pending: None,
+            drafts: Vec::new(),
             usage,
             policy: Default::default(),
             writable: true,
@@ -573,7 +628,6 @@ impl Snapshot {
         } else {
             (None, Vec::new())
         };
-        let pending = request::<DraftStatus>(worker, Command::DraftStatus)?.pending;
         let compatibility: taypeer_services::SessionValue<taypeer_core::CompatibilityReport> =
             request(worker, Command::Compatibility)?;
         let writable = info.writable && compatibility.value.write.is_supported();
@@ -586,7 +640,7 @@ impl Snapshot {
             binary,
             entry,
             history,
-            pending,
+            drafts: request(worker, Command::Drafts)?,
             usage: request(worker, Command::StorageUsage)?,
             policy: request(worker, Command::DatabasePolicy)?,
             writable,

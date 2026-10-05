@@ -37,18 +37,30 @@ impl DatabaseSettings {
             .gap_3()
             .p_6()
             .max_w(rems(58.))
-            .child(row("name", database.name.clone(), cx))
+            .child(row(
+                "name",
+                div()
+                    .id("database-name")
+                    .test_support()
+                    .aria_label(database.name.clone())
+                    .child(database.name.clone()),
+                cx,
+            ))
             .child(row(
                 "ui.description",
-                database.description.clone().unwrap_or_default(),
+                div()
+                    .id("database-description")
+                    .test_support()
+                    .aria_label(database.description.clone().unwrap_or_default())
+                    .child(database.description.clone().unwrap_or_default()),
                 cx,
             ))
             .when(database.metadata_conflict, |el| {
                 el.child(
                     div()
                         .px_6()
-                        .text_color(cx.theme().danger)
-                        .child(tr("ui.metadata_conflict")),
+                        .text_color(cx.theme().muted_foreground)
+                        .child(tr("ui.history_alternatives")),
                 )
             })
             .child(row(
@@ -72,9 +84,17 @@ impl DatabaseSettings {
                     .child(
                         Button::new("database-info")
                             .label(tr("ui.database_info"))
-                            .disabled(!database.writable || database.metadata_conflict)
+                            .disabled(!database.writable)
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 forms::database(this.store.clone(), Some(id.clone()), window, cx)
+                            })),
+                    )
+                    .child(
+                        Button::new("database-history")
+                            .label(tr("ui.database_history"))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.store
+                                    .update(cx, |store, cx| store.metadata_history(None, cx))
                             })),
                     )
                     .child(

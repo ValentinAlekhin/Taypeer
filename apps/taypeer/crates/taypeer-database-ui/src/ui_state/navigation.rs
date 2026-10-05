@@ -1,7 +1,7 @@
 //! Window navigation and projections over loaded service results.
 
 use super::{CatalogStore, DatabaseId, EntryId, GroupId, RevisionId};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 pub(crate) enum EntryTab {
@@ -84,6 +84,12 @@ pub enum Route {
 #[derive(Clone, Debug, PartialEq, Eq)]
 /// Requested navigation, resolved by the workflow and unsaved-change guard.
 pub enum Destination {
+    /// Device settings, after confirming current input durability.
+    Settings,
+    /// Entries outside all groups.
+    Ungrouped,
+    /// Resume one service-owned local editor.
+    Draft(taypeer_core::DraftId),
     /// Return to the database home.
     Home,
     /// Show device trust and exchange.
@@ -113,6 +119,10 @@ pub enum Destination {
     CloneGroup,
     /// Move the selected group to trash.
     TrashGroup,
+    /// Move the selected entry to trash and retain an Undo action.
+    TrashEntry,
+    /// Flush current input, then restore the most recent exact trash selection.
+    UndoTrash,
     /// Close the selected database session.
     CloseDatabase,
     /// Leave the editor through the unsaved-change guard.
@@ -142,7 +152,6 @@ pub(crate) struct NavigationState {
     pub selected: Option<EntryId>,
     pub opened: BTreeSet<DatabaseId>,
     pub unlocked: BTreeSet<DatabaseId>,
-    pub suspended: BTreeMap<DatabaseId, taypeer_services::PendingDraftSummary>,
     pub query: String,
     pub scope: SearchScope,
     pub sort: Column,
@@ -162,7 +171,6 @@ impl Default for NavigationState {
             selected: None,
             opened: BTreeSet::new(),
             unlocked: BTreeSet::new(),
-            suspended: BTreeMap::new(),
             query: String::new(),
             scope: SearchScope::Current,
             sort: Column::Title,
@@ -198,7 +206,6 @@ impl NavigationState {
         if let Some(db) = self.database.take() {
             self.opened.remove(&db);
             self.unlocked.remove(&db);
-            self.suspended.remove(&db);
         }
         if let Some(db) = self.opened.first().cloned() {
             self.select_database(db, catalog);
@@ -212,7 +219,6 @@ impl NavigationState {
     }
     pub fn lock(&mut self, db: &DatabaseId) {
         self.unlocked.remove(db);
-        self.suspended.remove(db);
         if self.database.as_ref() == Some(db) {
             self.selected = None;
             self.query.clear();

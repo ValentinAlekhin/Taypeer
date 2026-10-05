@@ -1,11 +1,15 @@
 //! Editable widget values and ordered delivery to the service-owned draft.
 use super::*;
 use crate::backend::{Connection, Ticket};
+use std::time::{Duration, Instant};
 use taypeer_runtime::Command;
 use taypeer_services::{
     BinaryEdit, BinaryRequest, BinaryTarget, EditorView, EntryPatch, FieldUpdate,
 };
 use zeroize::Zeroize;
+
+mod autosave;
+pub(crate) use autosave::SaveEvent;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum EntryField {
@@ -63,17 +67,19 @@ impl EntryField {
 }
 pub(crate) struct EditorStore {
     connection: Connection,
+    identity: taypeer_services::DraftIdentity,
+    last_input: Instant,
+    durable_revision: Option<u64>,
+    snapshot: Option<autosave::SaveAttempt>,
+    save_event: Option<SaveEvent>,
     content: EntryContent,
     dirty: bool,
     preview: Option<taypeer_services::IconPreview>,
     error: Option<FormError>,
     save_error: Option<FormError>,
-    save_operation: Option<taypeer_core::OperationId>,
-    write_uncertain: bool,
     pending: Vec<Ticket<()>>,
     projection: Option<(u64, Ticket<EditorView>)>,
     revision: u64,
-    frozen: bool,
     forms_pending: usize,
     needs_projection: bool,
     reveal: Option<(
@@ -86,17 +92,19 @@ impl EditorStore {
     pub fn from_view(connection: Connection, view: EditorView) -> Self {
         let mut result = Self {
             connection,
+            identity: view.identity.clone(),
+            last_input: Instant::now(),
+            durable_revision: (!view.dirty).then_some(0),
+            snapshot: None,
+            save_event: None,
             content: EntryContent::default(),
             dirty: view.dirty,
             preview: None,
             error: None,
             save_error: None,
-            save_operation: None,
-            write_uncertain: false,
             pending: Vec::new(),
             projection: None,
             revision: 0,
-            frozen: false,
             forms_pending: 0,
             needs_projection: false,
             reveal: None,
@@ -105,6 +113,7 @@ impl EditorStore {
         result
     }
     fn install(&mut self, view: EditorView) {
+        self.identity = view.identity.clone();
         self.dirty = view.dirty;
         self.content = EntryContent {
             title: view.fields.title,
@@ -134,6 +143,7 @@ impl EditorStore {
                 .into_iter()
                 .map(|a| Attachment {
                     id: a.id,
+                    blob: a.blob,
                     name: a.name,
                     bytes: None,
                 })
@@ -156,40 +166,29 @@ impl EditorStore {
         &self.content
     }
     pub fn editable(&self) -> bool {
-        !self.frozen && !self.write_uncertain && self.connection.control.is_open()
-    }
-    pub fn fail(&mut self, error: taypeer_runtime::RuntimeError) {
-        self.frozen = false;
-        self.write_uncertain = matches!(
-            error,
-            taypeer_runtime::RuntimeError::Service(taypeer_services::ServiceError::Storage(
-                taypeer_services::StorageError::CommitUncertain
-            ))
-        );
-        self.save_error = Some(FormError::Runtime(error));
-        self.needs_projection = false;
+        self.connection.control.is_open()
     }
     pub fn save_blocked(&self) -> bool {
-        self.error.is_some() || self.write_uncertain
-    }
-    pub fn save_operation(
-        &mut self,
-    ) -> Result<taypeer_core::OperationId, taypeer_services::ServiceError> {
-        if let Some(id) = &self.save_operation {
-            return Ok(id.clone());
-        }
-        let id = taypeer_services::new_operation_id()?;
-        self.save_operation = Some(id.clone());
-        Ok(id)
-    }
-    pub fn freeze(&mut self, value: bool) {
-        self.frozen = value;
+        self.error.is_some()
     }
     pub fn unacknowledged(&self) -> bool {
         !self.pending.is_empty() || self.forms_pending > 0
     }
-    pub fn dirty(&self) -> bool {
-        self.dirty
+    pub fn status_key(&self) -> &'static str {
+        if !self.durably_current() {
+            "ui.autosave_pending"
+        } else if self.dirty {
+            "ui.draft_saved"
+        } else if self.revision == 0
+            && matches!(
+                self.identity.target,
+                taypeer_services::DraftTarget::NewEntry { .. }
+            )
+        {
+            "ui.autosave_ready"
+        } else {
+            "ui.autosave_saved"
+        }
     }
     pub fn error(&self) -> Option<FormError> {
         self.error.or(self.save_error)
@@ -204,7 +203,7 @@ impl EditorStore {
         &self.connection
     }
     pub fn form_command(&mut self, command: Command) -> Ticket<()> {
-        self.revision += 1;
+        self.input_changed();
         self.forms_pending += 1;
         self.connection.command(command)
     }
@@ -212,7 +211,6 @@ impl EditorStore {
         self.forms_pending = self.forms_pending.saturating_sub(1);
         match result {
             Ok(()) => {
-                self.save_operation = None;
                 self.save_error = None;
                 self.dirty = true;
                 self.needs_projection = true;
@@ -226,7 +224,7 @@ impl EditorStore {
             command.erase_input();
             return;
         }
-        self.revision += 1;
+        self.input_changed();
         self.needs_projection = true;
         self.pending.push(self.connection.command(command));
         self.dirty = true;
@@ -255,7 +253,6 @@ impl EditorStore {
                 match result {
                     Err(error) => self.error = Some(FormError::Runtime(error)),
                     Ok(()) => {
-                        self.save_operation = None;
                         self.save_error = None;
                     }
                 }
@@ -307,9 +304,11 @@ impl EditorStore {
                             .iter_mut()
                             .find(|a| a.id.as_ref() == Some(&id))
                         {
+                            field.value.zeroize();
                             field.value = value.to_string();
                         }
                     } else {
+                        self.content.password.zeroize();
                         self.content.password = value.to_string();
                     }
                 }
@@ -317,6 +316,7 @@ impl EditorStore {
                 Err(error) => self.error = Some(FormError::Runtime(error)),
             }
         }
+        changed |= self.poll_snapshot();
         changed
     }
     pub fn reveal(&mut self, attribute: Option<taypeer_core::AttributeId>) {
@@ -331,6 +331,9 @@ impl EditorStore {
     pub fn clear_field(&mut self, field: EntryField) {
         if !self.editable() {
             return;
+        }
+        if field == EntryField::Password {
+            self.content.password.zeroize();
         }
         field.set(&mut self.content, String::new());
         let mut patch = EntryPatch::default();
@@ -351,138 +354,163 @@ impl EditorStore {
         }
         self.command(Command::PatchDraft(patch));
     }
-    pub fn edit(&mut self, edit: impl FnOnce(&mut EntryContent)) {
-        if !self.editable() {
+    fn input_changed(&mut self) {
+        self.revision += 1;
+        self.last_input = Instant::now();
+    }
+    pub fn set_field(&mut self, field: EntryField, value: String) {
+        if !self.editable() || field.value(&self.content) == value {
             return;
         }
-        let old = self.content.clone();
-        edit(&mut self.content);
-        if self.content == old {
-            return;
+        if field == EntryField::Password {
+            self.content.password.zeroize();
         }
+        field.set(&mut self.content, value.clone());
         let mut patch = EntryPatch::default();
-        macro_rules! changed {
-            ($field:ident) => {
-                if self.content.$field != old.$field {
-                    patch.$field = FieldUpdate::Set(self.content.$field.clone());
+        match field {
+            EntryField::Title => patch.title = FieldUpdate::Set(value),
+            EntryField::Username => patch.username = FieldUpdate::Set(value),
+            EntryField::Password => {
+                self.content.has_password = true;
+                patch.password = FieldUpdate::Set(value);
+            }
+            EntryField::Url => patch.url = FieldUpdate::Set(value),
+            EntryField::Tags => {
+                patch.tags = FieldUpdate::Set(value.lines().map(String::from).collect())
+            }
+            EntryField::Notes => patch.notes = FieldUpdate::Set(value),
+            EntryField::Expires => {
+                let parsed = if value.is_empty() {
+                    Ok(None)
+                } else {
+                    chrono::NaiveDateTime::parse_from_str(&value, "%Y-%m-%d %H:%M:%S%.f")
+                        .or_else(|_| {
+                            chrono::NaiveDateTime::parse_from_str(&value, "%Y-%m-%d %H:%M")
+                        })
+                        .map(|value| Some(value.and_utc().timestamp_millis()))
+                };
+                match parsed {
+                    Ok(value) => {
+                        self.command(Command::DraftExpiry(None));
+                        patch.expires_at = value.map_or(FieldUpdate::Clear, FieldUpdate::Set);
+                    }
+                    Err(_) => {
+                        self.command(Command::DraftExpiry(Some(value)));
+                        return;
+                    }
                 }
-            };
-        }
-        changed!(title);
-        changed!(username);
-        changed!(password);
-        changed!(url);
-        changed!(notes);
-        if self.content.tags != old.tags {
-            patch.tags = FieldUpdate::Set(self.content.tags.lines().map(String::from).collect());
-        }
-        if self.content.expires != old.expires {
-            let parsed = if self.content.expires.is_empty() {
-                Ok(None)
-            } else {
-                chrono::NaiveDateTime::parse_from_str(&self.content.expires, "%Y-%m-%d %H:%M:%S%.f")
-                    .or_else(|_| {
-                        chrono::NaiveDateTime::parse_from_str(
-                            &self.content.expires,
-                            "%Y-%m-%d %H:%M",
-                        )
-                    })
-                    .map(|v| Some(v.and_utc().timestamp_millis()))
-            };
-            match parsed {
-                Ok(value) => {
-                    patch.expires_at = value.map_or(FieldUpdate::Clear, FieldUpdate::Set);
-                    self.command(Command::DraftExpiry(None));
-                }
-                Err(_) => self.command(Command::DraftExpiry(Some(self.content.expires.clone()))),
             }
         }
         self.command(Command::PatchDraft(patch));
-        // Existing UI controls use the same edit entry point for presentation fields.
-        if self.content.icon != old.icon
-            && let Ok(key) = self.content.icon.clone().try_into()
-        {
-            self.binary(BinaryEdit::Icon(taypeer_services::IconInput::Lucide(key)));
+    }
+    pub fn set_attribute_protected(&mut self, id: &taypeer_core::AttributeId, protected: bool) {
+        if !self.editable() {
+            return;
         }
-        if self.content.foreground != old.foreground || self.content.background != old.background {
-            let color = |value: Option<u32>| {
-                value
-                    .map(|v| taypeer_core::Color(v.to_be_bytes()))
-                    .map_or(FieldUpdate::Clear, FieldUpdate::Set)
-            };
-            self.binary(BinaryEdit::Appearance {
-                foreground: color(self.content.foreground),
-                background: color(self.content.background),
-            });
+        let Some(attribute) = self
+            .content
+            .attributes
+            .iter_mut()
+            .find(|attribute| attribute.id.as_ref() == Some(id))
+        else {
+            return;
+        };
+        if attribute.protected == protected {
+            return;
         }
-        for a in &old.attributes {
-            if !self.content.attributes.iter().any(|b| b.id == a.id) {
-                self.command(Command::PatchAttribute {
-                    patch: taypeer_services::AttributePatch {
-                        id: a.id.clone(),
-                        name: a.key.clone(),
-                        value: FieldUpdate::Keep,
-                        protected: a.protected,
-                    },
-                    remove: true,
-                });
-            }
+        attribute.protected = protected;
+        let patch = taypeer_services::AttributePatch {
+            id: attribute.id.clone(),
+            name: attribute.key.clone(),
+            value: FieldUpdate::Keep,
+            protected,
+        };
+        self.command(Command::PatchAttribute {
+            patch,
+            remove: false,
+        });
+    }
+    pub fn remove_attribute(&mut self, id: &taypeer_core::AttributeId) {
+        if !self.editable() {
+            return;
         }
-        let updates: Vec<_> = self
+        let Some(index) = self
             .content
             .attributes
             .iter()
-            .filter(|a| !old.attributes.contains(a))
-            .cloned()
-            .collect();
-        for a in updates {
-            let same = old
-                .attributes
-                .iter()
-                .find(|b| b.id == a.id && a.id.is_some());
-            let value = if same.is_some_and(|b| b.value == a.value) {
-                FieldUpdate::Keep
-            } else {
-                FieldUpdate::Set(a.value)
-            };
-            self.command(Command::PatchAttribute {
-                patch: taypeer_services::AttributePatch {
-                    id: a.id,
-                    name: a.key,
-                    value,
-                    protected: a.protected,
-                },
-                remove: false,
-            });
+            .position(|attribute| attribute.id.as_ref() == Some(id))
+        else {
+            return;
+        };
+        let attribute = self.content.attributes.remove(index);
+        let patch = taypeer_services::AttributePatch {
+            id: attribute.id.clone(),
+            name: attribute.key.clone(),
+            value: FieldUpdate::Keep,
+            protected: attribute.protected,
+        };
+        self.command(Command::PatchAttribute {
+            patch,
+            remove: true,
+        });
+    }
+    pub fn remove_attachment(&mut self, id: &taypeer_core::AttachmentId) {
+        if !self.editable() {
+            return;
         }
-        for a in &old.attachments {
-            if !self.content.attachments.iter().any(|b| b.id == a.id) {
-                self.binary(BinaryEdit::Attachment(
-                    taypeer_services::AttachmentEdit::Remove {
-                        attachment: a.id.clone(),
-                    },
-                ));
-            }
-        }
-        let renamed: Vec<_> = self
+        let Some(index) = self
             .content
             .attachments
             .iter()
-            .filter(|a| {
-                old.attachments
-                    .iter()
-                    .any(|b| a.id == b.id && a.name != b.name)
-            })
-            .cloned()
-            .collect();
-        for a in renamed {
-            self.binary(BinaryEdit::Attachment(
-                taypeer_services::AttachmentEdit::Rename {
-                    attachment: a.id,
-                    name: a.name,
-                },
-            ));
+            .position(|attachment| &attachment.id == id)
+        else {
+            return;
+        };
+        let attachment = self.content.attachments.remove(index);
+        self.binary(BinaryEdit::Attachment(
+            taypeer_services::AttachmentEdit::Remove {
+                attachment: attachment.id,
+            },
+        ));
+    }
+    pub fn set_color(&mut self, background: bool, value: Option<u32>) {
+        if !self.editable() {
+            return;
         }
+        let target = if background {
+            &mut self.content.background
+        } else {
+            &mut self.content.foreground
+        };
+        if *target == value {
+            return;
+        }
+        *target = value;
+        let update = value
+            .map(|value| taypeer_core::Color(value.to_be_bytes()))
+            .map_or(FieldUpdate::Clear, FieldUpdate::Set);
+        self.binary(BinaryEdit::Appearance {
+            foreground: if background {
+                FieldUpdate::Keep
+            } else {
+                update.clone()
+            },
+            background: if background {
+                update
+            } else {
+                FieldUpdate::Keep
+            },
+        });
+    }
+    pub fn set_icon(&mut self, name: String) {
+        if !self.editable() || self.content.icon == name {
+            return;
+        }
+        let Ok(key) = name.clone().try_into() else {
+            return;
+        };
+        self.content.icon = name;
+        self.binary(BinaryEdit::Icon(taypeer_services::IconInput::Lucide(key)));
     }
 }
 impl Drop for EditorStore {

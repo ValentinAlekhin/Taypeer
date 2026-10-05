@@ -29,18 +29,17 @@ impl EditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let content = editor.read(cx).content().clone();
         let fields: Vec<_> = EntryField::ALL
             .into_iter()
             .filter(|f| *f != EntryField::Notes)
             .map(|f| {
-                (
-                    f,
-                    input(f.value(&content), f == EntryField::Password, window, cx),
-                )
+                (f, {
+                    let value = f.value(editor.read(cx).content()).to_owned();
+                    input(&value, f == EntryField::Password, window, cx)
+                })
             })
             .collect();
-        if content.has_password
+        if editor.read(cx).content().has_password
             && let Some((_, password)) = fields
                 .iter()
                 .find(|(field, _)| *field == EntryField::Password)
@@ -49,26 +48,26 @@ impl EditorView {
                 input.set_placeholder("••••••••••", window, cx)
             });
         }
+        let initial_notes = editor.read(cx).content().notes.clone();
         let notes = cx.new(|cx| {
             let mut state = TextareaState::new(window, cx);
-            state.set_value(content.notes.clone(), window, cx);
+            state.set_value(initial_notes, window, cx);
             state
         });
         let mut subscriptions = vec![
             cx.observe_in(&editor, window, |this, editor, window, cx| {
-                let content = editor.read(cx).content().clone();
                 for (field, input) in &this.fields {
-                    let value = field.value(&content);
-                    if input.read(cx).value().as_str() != value {
-                        input.update(cx, |input, cx| {
-                            input.set_value(value.to_owned(), window, cx)
-                        });
+                    let changed =
+                        input.read(cx).value().as_str() != field.value(editor.read(cx).content());
+                    if changed {
+                        let value = field.value(editor.read(cx).content()).to_owned();
+                        input.update(cx, |input, cx| input.set_value(value, window, cx));
                     }
                 }
-                if this.notes.read(cx).value().as_str() != content.notes {
-                    this.notes.update(cx, |input, cx| {
-                        input.set_value(content.notes.clone(), window, cx)
-                    });
+                if this.notes.read(cx).value().as_str() != editor.read(cx).content().notes {
+                    let value = editor.read(cx).content().notes.clone();
+                    this.notes
+                        .update(cx, |input, cx| input.set_value(value, window, cx));
                 }
                 cx.notify();
             }),
@@ -82,7 +81,7 @@ impl EditorView {
                     if matches!(event, InputEvent::Change) {
                         let value = input.read(cx).value().to_string();
                         editor.update(cx, |editor, cx| {
-                            editor.edit(|content| field.set(content, value));
+                            editor.set_field(field, value);
                             cx.notify();
                         });
                     }
@@ -95,7 +94,7 @@ impl EditorView {
                 if matches!(event, InputEvent::Change) {
                     let value = input.read(cx).value().to_string();
                     editor.update(cx, |editor, cx| {
-                        editor.edit(|content| content.notes = value);
+                        editor.set_field(EntryField::Notes, value);
                         cx.notify();
                     });
                 }
@@ -230,6 +229,9 @@ impl EditorView {
                 ),
         );
         for (index, attribute) in content.attributes.iter().enumerate() {
+            let protect_id = attribute.id.clone();
+            let edit_id = attribute.id.clone();
+            let remove_id = attribute.id.clone();
             let value = if attribute.protected {
                 if attribute.value.is_empty() {
                     "••••••••••••".into()
@@ -272,11 +274,9 @@ impl EditorView {
                             .tooltip(tr("protected"))
                             .on_click(move |checked, _, cx| {
                                 editor.update(cx, |editor, cx| {
-                                    editor.edit(|content| {
-                                        if let Some(attribute) = content.attributes.get_mut(index) {
-                                            attribute.protected = *checked;
-                                        }
-                                    });
+                                    if let Some(id) = &protect_id {
+                                        editor.set_attribute_protected(id, *checked);
+                                    }
                                     cx.notify();
                                 })
                             }),
@@ -284,7 +284,7 @@ impl EditorView {
                     .child(
                         icon_button(("edit-attribute", index), "pencil", "ui.edit_attribute")
                             .on_click(cx.listener(move |this, _, window, cx| {
-                                forms::attribute(this.editor.clone(), Some(index), window, cx)
+                                forms::attribute(this.editor.clone(), edit_id.clone(), window, cx)
                             })),
                     )
                     .child(
@@ -294,9 +294,9 @@ impl EditorView {
                             )
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.editor.update(cx, |editor, cx| {
-                                    editor.edit(|content| {
-                                        content.attributes.remove(index);
-                                    });
+                                    if let Some(id) = &remove_id {
+                                        editor.remove_attribute(id);
+                                    }
                                     cx.notify();
                                 })
                             })),
@@ -317,6 +317,8 @@ impl EditorView {
                 ),
         );
         for (index, attachment) in content.attachments.iter().enumerate() {
+            let rename_id = attachment.id.clone();
+            let remove_id = attachment.id.clone();
             result = result.child(
                 h_flex()
                     .min_h(rems(2.75))
@@ -344,7 +346,12 @@ impl EditorView {
                         )
                         .on_click(cx.listener(
                             move |this, _, window, cx| {
-                                forms::attachment(this.editor.clone(), Some(index), window, cx)
+                                forms::attachment(
+                                    this.editor.clone(),
+                                    Some(rename_id.clone()),
+                                    window,
+                                    cx,
+                                )
                             },
                         )),
                     )
@@ -352,9 +359,7 @@ impl EditorView {
                         icon_button(("remove-attachment", index), "x", "remove").on_click(
                             cx.listener(move |this, _, _, cx| {
                                 this.editor.update(cx, |editor, cx| {
-                                    editor.edit(|content| {
-                                        content.attachments.remove(index);
-                                    });
+                                    editor.remove_attachment(&remove_id);
                                     cx.notify();
                                 })
                             }),
@@ -407,13 +412,7 @@ impl EditorView {
                     )
                 });
                 editor.update(cx, |editor, cx| {
-                    editor.edit(|content| {
-                        if background {
-                            content.background = value;
-                        } else {
-                            content.foreground = value;
-                        }
-                    });
+                    editor.set_color(background, value);
                     cx.notify();
                 });
             },
@@ -460,13 +459,7 @@ impl EditorView {
                     .on_click(move |_, window, cx| {
                         picker.update(cx, |picker, cx| picker.clear_value(window, cx));
                         editor.update(cx, |editor, cx| {
-                            editor.edit(|content| {
-                                if background {
-                                    content.background = None;
-                                } else {
-                                    content.foreground = None;
-                                }
-                            });
+                            editor.set_color(background, None);
                             cx.notify();
                         });
                     }),
@@ -496,7 +489,7 @@ impl EditorView {
                                         let editor = this.editor.clone();
                                         move |name, cx| {
                                             editor.update(cx, |editor, cx| {
-                                                editor.edit(|content| content.icon = name.into());
+                                                editor.set_icon(name.into());
                                                 cx.notify();
                                             })
                                         }
@@ -574,6 +567,9 @@ impl Render for EditorView {
             .when_some(self.editor.read(cx).error(), |el, error| {
                 el.child(
                     div()
+                        .id("autosave-error")
+                        .test_support()
+                        .aria_label(tr(error.key()))
                         .p_4()
                         .text_color(cx.theme().danger)
                         .child(tr(error.key())),

@@ -10,6 +10,7 @@ use gpui_kit::{
 use std::collections::BTreeMap;
 use taypeer_runtime::Command;
 use zeroize::Zeroizing;
+mod alternatives;
 
 #[derive(Default)]
 struct ValueSource {
@@ -29,6 +30,7 @@ pub struct Inspector {
     revision: Option<RevisionId>,
     snapshot: Option<RevisionId>,
     compare: bool,
+    alternatives: Option<taypeer_services::ConflictView>,
     scroll: ScrollHandle,
     _subscription: Subscription,
 }
@@ -53,6 +55,7 @@ impl Inspector {
                     })
                 {
                     this.clear_values(window, cx);
+                    this.alternatives = None;
                     this.fields = None;
                 }
                 this.reconcile(window, cx);
@@ -68,6 +71,7 @@ impl Inspector {
             revision: None,
             snapshot: None,
             compare: false,
+            alternatives: None,
             scroll: ScrollHandle::new(),
         };
         view.reconcile(window, cx);
@@ -130,7 +134,7 @@ impl Inspector {
             .and_then(|(db, id)| self.store.read(cx).catalog().read(cx).entry(db, id))
             .cloned();
         let mut desired = BTreeMap::<String, Zeroizing<String>>::new();
-        if self.fields.is_none()
+        if (self.fields.is_none() || matches!(self.tab, EntryTab::Properties | EntryTab::History))
             && let Some(entry) = entry
         {
             let mut add_content = |content: &EntryContent, revision: Option<RevisionId>| {
@@ -236,8 +240,9 @@ impl Inspector {
         let body = if let Some(text) = &text {
             let input = self
                 .values
-                .get(&key)
-                .expect("value reconciled before rendering");
+                .entry(key.clone())
+                .or_insert_with(|| super::read_value::ReadValue::new(text, _window, cx));
+            input.sync(text, _window, cx);
             input.render(
                 format!("read-{key}").into(),
                 text.clone(),
@@ -348,10 +353,7 @@ impl Inspector {
         copy: bool,
         cx: &mut Context<Self>,
     ) {
-        let Some((db, entry)) = self.identity.clone() else {
-            return;
-        };
-        let Some(connection) = self.store.read(cx).connection().cloned() else {
+        let Some((_, entry)) = self.identity.clone() else {
             return;
         };
         let command = if let Some(revision) = revision {
@@ -364,6 +366,21 @@ impl Inspector {
             Command::RevealAttribute { entry, attribute }
         } else {
             Command::RevealPassword(entry)
+        };
+        self.reveal_command(key, command, copy, cx);
+    }
+    fn reveal_command(
+        &mut self,
+        key: String,
+        command: Command,
+        copy: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((db, _)) = self.identity.clone() else {
+            return;
+        };
+        let Some(connection) = self.store.read(cx).connection().cloned() else {
+            return;
         };
         let ticket = connection.command::<Zeroizing<String>>(command);
         let target = cx.entity().downgrade();
@@ -599,6 +616,7 @@ impl Inspector {
                     })),
             );
         }
+        result = result.child(self.alternatives(window, cx));
         let selected = self.revision.clone();
         result = result.child(
             h_flex()
@@ -669,6 +687,7 @@ impl Inspector {
 }
 impl Render for Inspector {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.reconcile(window, cx);
         let store = self.store.read(cx);
         let editor = store.editor().cloned();
         let entry = self
@@ -780,7 +799,20 @@ impl Render for Inspector {
                     )
                     .when(editing, |el| {
                         el.child(
-                            icon_button("cancel-edit", "x", "cancel")
+                            div()
+                                .id("autosave-status")
+                                .text_xs()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(tr(self
+                                    .store
+                                    .read(cx)
+                                    .editor()
+                                    .map_or("ui.autosave_pending", |editor| {
+                                        editor.read(cx).status_key()
+                                    }))),
+                        )
+                        .child(
+                            icon_button("close-editor", "x", "back")
                                 .disabled(busy)
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.store.update(cx, |s, cx| {
@@ -788,20 +820,22 @@ impl Render for Inspector {
                                     })
                                 })),
                         )
-                        .child(
-                            icon_button("save-entry", "check", "save")
-                                .disabled(busy)
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.store.update(cx, |s, cx| s.save(cx))
-                                })),
-                        )
                     })
                     .when(!editing && self.snapshot.is_none(), |el| {
                         el.child(
                             icon_button("edit-entry", "pencil", "edit")
-                                .disabled(!writable || entry.as_ref().is_some_and(|e| e.conflicted))
+                                .disabled(!writable)
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.store.update(cx, |s, cx| s.begin_edit(cx))
+                                })),
+                        )
+                        .child(
+                            icon_button("trash-entry", "trash", "ui.delete_entry")
+                                .disabled(!writable)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.store.update(cx, |store, cx| {
+                                        store.navigate(Destination::TrashEntry, window, cx)
+                                    })
                                 })),
                         )
                     }),
@@ -820,7 +854,14 @@ impl Render for Inspector {
                 )
             })
             .when(entry.as_ref().is_some_and(|e| e.conflicted), |el| {
-                el.child(empty("ui.conflict", cx))
+                el.child(
+                    div()
+                        .px_6()
+                        .py_2()
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(tr("ui.history_alternatives")),
+                )
             })
             .child(
                 tabs(

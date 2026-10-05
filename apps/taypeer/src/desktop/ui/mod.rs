@@ -279,6 +279,9 @@ impl AppView {
         let weak = store.downgrade();
         window.on_window_should_close(cx, move |window, cx| {
             if window.has_active_dialog(cx) {
+                if let Some(store) = weak.upgrade() {
+                    database::request_quit(store, window, cx);
+                }
                 return false;
             }
             weak.update(cx, |this, cx| {
@@ -425,33 +428,8 @@ impl AppView {
                 preferences.update(cx, |prefs, cx| prefs.resize(group, entry, cx));
             }
         });
-        let suspended = self.store.read(cx).has_suspended_draft();
         v_flex()
             .size_full()
-            .when(suspended, |el| {
-                el.child(
-                    h_flex()
-                        .p_3()
-                        .gap_3()
-                        .child(tr("ui.draft_available"))
-                        .child(
-                            gpui_kit::component::button::Button::new("restore-draft")
-                                .label(tr("ui.restore_draft"))
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.store
-                                        .update(cx, |store, cx| store.restore_draft(true, cx))
-                                })),
-                        )
-                        .child(
-                            gpui_kit::component::button::Button::new("discard-draft")
-                                .label(tr("ui.discard_draft"))
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.store
-                                        .update(cx, |store, cx| store.restore_draft(false, cx))
-                                })),
-                        ),
-                )
-            })
             .child(div().flex_1().min_h_0().child(panes))
             .into_any_element()
     }
@@ -563,6 +541,19 @@ impl Render for AppView {
                             .child(style::file_size(file_bytes))
                     })
                     .when_some(notice, |el, notice| el.child(tr(notice)))
+                    .when(store.can_undo(), |el| {
+                        el.child(
+                            button::Button::new("undo-trash")
+                                .ghost()
+                                .compact()
+                                .label(tr("ui.undo"))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.store.update(cx, |store, cx| {
+                                        store.navigate(Destination::UndoTrash, window, cx)
+                                    })
+                                })),
+                        )
+                    })
                     .child(div().flex_1())
                     .when(store.selected_database().is_some(), |el| {
                         el.child(

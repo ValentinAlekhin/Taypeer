@@ -287,5 +287,21 @@
   "ui.welcome_import": "Импорт KDBX…",
   "ui.import_unavailable": "Импорт KDBX пока недоступен",
   "ui.master_password": "Мастер-пароль",
-  "ui.operation_conflict": "Форма больше не соответствует этой попытке сохранения. Проверьте изменения и повторите попытку."
+  "ui.operation_conflict": "Форма больше не соответствует этой попытке сохранения. Проверьте изменения и повторите попытку.",
+  "ui.history_alternatives": "Исходные альтернативы доступны в истории",
+  "ui.autosave_saved": "Сохранено",
+  "ui.autosave_pending": "Сохранение…",
+  "ui.ungrouped": "Без группы",
+  "ui.local_draft": "Локальный черновик",
+  "ui.draft_saved": "Черновик сохранён локально",
+  "ui.trashed": "Перемещено в корзину",
+  "ui.undo": "Отменить",
+  "ui.delete_entry": "Переместить запись в корзину",
+  "ui.group_history": "История группы",
+  "ui.database_history": "История базы",
+  "ui.alternatives": "Исходные альтернативы",
+  "ui.present": "Есть",
+  "ui.absent": "Нет",
+  "ui.attributes": "Атрибуты",
+  "ui.autosave_ready": "Изменения сохраняются автоматически"
 }

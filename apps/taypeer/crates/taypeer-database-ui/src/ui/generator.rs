@@ -218,9 +218,10 @@ impl Render for GeneratorView {
                                     && let Some(sample) = &this.generated
                                 {
                                     this.editor.update(cx, |editor, cx| {
-                                        editor.edit(|content| {
-                                            content.password = sample.expose().to_owned()
-                                        });
+                                        editor.set_field(
+                                            crate::ui_state::EntryField::Password,
+                                            sample.expose().to_owned(),
+                                        );
                                         cx.notify();
                                     });
                                     window.close_dialog(cx);

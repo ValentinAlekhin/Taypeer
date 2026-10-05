@@ -137,10 +137,41 @@ impl Render for Sidebar {
         let menu_store = self.store.clone();
         let context_store = self.store.clone();
         let empty_tree = self.tree.read(cx).entry(0).is_none();
+        let drafts = self
+            .store
+            .read(cx)
+            .state()
+            .database
+            .as_ref()
+            .and_then(|db| self.store.read(cx).catalog().read(cx).database(db))
+            .map(|db| db.drafts.clone())
+            .unwrap_or_default();
+        let draft_store = self.store.clone();
         v_flex()
             .size_full()
             .border_r_1()
             .border_color(cx.theme().border)
+            .child(
+                ListItem::new("ungrouped")
+                    .selected(self.store.read(cx).state().group.is_none())
+                    .child(tr("ui.ungrouped"))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.store.update(cx, |store, cx| {
+                            store.navigate(Destination::Ungrouped, window, cx)
+                        })
+                    })),
+            )
+            .children(drafts.into_iter().enumerate().map(move |(index, draft)| {
+                let id = draft.identity.draft;
+                let store = draft_store.clone();
+                ListItem::new(SharedString::from(format!("draft-{}", id.as_str())))
+                    .child(format!("{} {}", tr("ui.local_draft"), index + 1))
+                    .on_click(move |_, window, cx| {
+                        store.update(cx, |store, cx| {
+                            store.navigate(Destination::Draft(id.clone()), window, cx)
+                        })
+                    })
+            }))
             .child(
                 h_flex()
                     .h(rems(2.75))
@@ -160,6 +191,8 @@ impl Render for Sidebar {
                                 let edit_parent = parent.clone();
                                 let clone = menu_store.clone();
                                 let delete = menu_store.clone();
+                                let history = menu_store.clone();
+                                let history_group = parent.clone();
                                 let writable = state.writable(cx) && parent.is_some();
                                 menu.item(
                                     PopupMenuItem::new(tr("add_child"))
@@ -188,6 +221,15 @@ impl Render for Sidebar {
                                         }),
                                 )
                                 .separator()
+                                .item(
+                                    PopupMenuItem::new(tr("ui.group_history"))
+                                        .disabled(history_group.is_none())
+                                        .on_click(move |_, _, cx| {
+                                            history.update(cx, |store, cx| {
+                                                store.metadata_history(history_group.clone(), cx)
+                                            })
+                                        }),
+                                )
                                 .item(
                                     PopupMenuItem::new(tr("ui.clone_group"))
                                         .disabled(!writable)

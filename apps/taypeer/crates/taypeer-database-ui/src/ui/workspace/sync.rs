@@ -42,12 +42,11 @@ impl WorkspaceStore {
     pub(crate) fn join_database(
         &mut self,
         code: taypeer_runtime::InvitationCode,
-        path: PathBuf,
         password: String,
         cx: &mut Context<Self>,
     ) {
         self.sync
-            .update(cx, |sync, cx| sync.join(code, path, password, cx));
+            .update(cx, |sync, cx| sync.join(code, password, cx));
     }
     pub(crate) fn resume_join(
         &mut self,

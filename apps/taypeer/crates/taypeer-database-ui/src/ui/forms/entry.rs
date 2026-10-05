@@ -3,15 +3,23 @@ use super::*;
 
 pub(in crate::ui) fn attribute(
     editor: Entity<EditorStore>,
-    index: Option<usize>,
+    id: Option<taypeer_core::AttributeId>,
     window: &mut Window,
     cx: &mut App,
 ) {
     if !editor.read(cx).editable() || editor.read(cx).busy() {
         return;
     }
-    let attribute = index
-        .and_then(|index| editor.read(cx).content().attributes.get(index))
+    let attribute = id
+        .as_ref()
+        .and_then(|id| {
+            editor
+                .read(cx)
+                .content()
+                .attributes
+                .iter()
+                .find(|attribute| attribute.id.as_ref() == Some(id))
+        })
         .cloned();
     let original = zeroize::Zeroizing::new(
         attribute
@@ -36,15 +44,6 @@ pub(in crate::ui) fn attribute(
         ],
         Box::new(move |values, _, cx| {
             require_name(&values[0])?;
-            if editor
-                .read(cx)
-                .content()
-                .attributes
-                .iter()
-                .any(|a| a.id != id && a.key == values[0])
-            {
-                return Err(FormError::DuplicateAttribute);
-            }
             let patch = taypeer_services::AttributePatch {
                 id: id.clone(),
                 name: values[0].clone(),

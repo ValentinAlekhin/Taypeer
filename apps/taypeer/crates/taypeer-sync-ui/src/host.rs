@@ -40,7 +40,6 @@ pub trait SyncHost: Sized + 'static {
     fn join_database(
         &mut self,
         code: taypeer_runtime::InvitationCode,
-        path: std::path::PathBuf,
         password: String,
         cx: &mut Context<Self>,
     );

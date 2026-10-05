@@ -251,7 +251,6 @@ impl SyncStore {
         &mut self,
         backend: &Backend,
         code: InvitationCode,
-        path: PathBuf,
         password: String,
         relay: RelayPreference,
     ) {
@@ -267,10 +266,12 @@ impl SyncStore {
         self.operation = Some(backend.network(move |host, cancellation| {
             host.start_network(relay.setting()?)?;
 
-            let progress = host.join_cancellable(
+            let request = code.invitation.id().map_err(|_| RuntimeError::Protocol)?;
+            let path =
+                host.creation_path(&taypeer_core::OperationId::new(format!("join:{request}")))?;
+            let progress = host.join_internal_cancellable(
                 &executable,
                 code,
-                &path,
                 password.to_string(),
                 cancellation,
             )?;
@@ -391,7 +392,7 @@ impl SyncStore {
             self.operation = Some(backend.network(move |host, cancellation| {
                 host.start_network(relay.setting()?)?;
                 Ok(Outcome::Joined {
-                    progress: host.resume_join_cancellable(
+                    progress: host.resume_internal_join_cancellable(
                         request,
                         password.to_string(),
                         cancellation,

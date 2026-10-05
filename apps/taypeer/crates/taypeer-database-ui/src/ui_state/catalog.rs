@@ -12,6 +12,7 @@ pub(crate) struct Attribute {
 }
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) struct Attachment {
+    pub blob: taypeer_core::BlobId,
     pub id: taypeer_core::AttachmentId,
     pub name: String,
     pub bytes: Option<u64>,
@@ -53,12 +54,9 @@ pub(crate) struct Entry {
 #[derive(Clone)]
 pub(crate) struct Group {
     pub entry_count: usize,
-    pub source_icon: taypeer_core::IconRef,
-    pub description_conflict: bool,
     pub id: GroupId,
     pub parent: Option<GroupId>,
     pub name: String,
-    pub description: Option<String>,
     pub icon: String,
     pub icon_blob: Option<taypeer_core::BlobId>,
 }
@@ -76,6 +74,7 @@ pub(crate) struct Database {
     pub writable: bool,
     pub managing: bool,
     pub metadata_conflict: bool,
+    pub drafts: Vec<taypeer_services::DraftSummary>,
 }
 pub(crate) use taypeer_ui::{FormError, require_name};
 #[derive(Default)]
@@ -97,6 +96,11 @@ impl CatalogStore {
         self.database(db)?.entries.get(id)
     }
     pub fn add_path(&mut self, id: DatabaseId, path: PathBuf) {
+        if let Some(database) = self.databases.get_mut(&id) {
+            database.path = path;
+            self.version += 1;
+            return;
+        }
         self.databases
             .entry(id.clone())
             .or_insert_with(|| Database {
@@ -117,6 +121,7 @@ impl CatalogStore {
                 writable: false,
                 managing: false,
                 metadata_conflict: false,
+                drafts: Vec::new(),
             });
         self.version += 1;
     }
@@ -126,17 +131,15 @@ impl CatalogStore {
         };
         database.name = snapshot.info.name;
         database.description = snapshot.info.description;
+        database.drafts = snapshot.drafts;
         database.groups = snapshot
             .groups
             .into_iter()
             .map(|info| Group {
                 entry_count: info.entry_count,
-                source_icon: info.group.icon.clone(),
-                description_conflict: info.description_conflict,
                 id: info.group.id,
                 parent: info.group.parent,
                 name: info.group.name,
-                description: info.description,
                 icon: icon_name(&info.group.icon),
                 icon_blob: info.group.icon.blob().cloned(),
             })
@@ -292,6 +295,7 @@ pub(crate) fn content(view: &taypeer_services::EntryView) -> EntryContent {
             .iter()
             .map(|a| Attachment {
                 id: a.id.clone(),
+                blob: a.blob.clone(),
                 name: a.name.clone(),
                 bytes: None,
             })

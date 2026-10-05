@@ -3,12 +3,13 @@ use super::style::*;
 use super::workspace::WorkspaceStore;
 use crate::ui_state::*;
 use gpui_kit::*;
-pub(super) use taypeer_ui::forms::{Deferred, Done, text_form, text_form_with_icon};
+pub(super) use taypeer_ui::forms::{Deferred, Done, text_form};
 
 mod binary;
 mod database;
 mod entry;
 mod group;
+pub(in crate::ui) mod metadata;
 pub(super) use binary::{attachment, export_attachment, image_file, image_url};
 pub use database::choose_file;
 pub(super) use database::database;

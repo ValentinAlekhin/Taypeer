@@ -20,7 +20,6 @@ impl Global for OpenForms {}
 struct FormField {
     label: &'static str,
     input: Entity<InputState>,
-    initial: String,
     secret: bool,
 }
 /// One-shot form completion; invoke on the UI context after the operation resolves.
@@ -35,7 +34,6 @@ struct TextForm {
     error: Option<FormError>,
     busy: bool,
     icon: Option<String>,
-    initial_icon: Option<String>,
     _subscriptions: Vec<Subscription>,
 }
 impl TextForm {
@@ -51,7 +49,6 @@ impl TextForm {
             .map(|(label, value, secret)| FormField {
                 label,
                 input: input(&value, secret, window, cx),
-                initial: value,
                 secret,
             })
             .collect();
@@ -70,17 +67,9 @@ impl TextForm {
             submit,
             error: None,
             busy: false,
-            initial_icon: icon.clone(),
             icon,
             _subscriptions: subscriptions,
         }
-    }
-    fn dirty(&self, cx: &App) -> bool {
-        self.icon != self.initial_icon
-            || self
-                .fields
-                .iter()
-                .any(|field| field.input.read(cx).value().as_str() != field.initial)
     }
     fn commit(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         if self.busy {
@@ -250,123 +239,19 @@ pub fn text_form_with_icon(
     }
 }
 
-fn cancel_form(form: Entity<TextForm>, window: &mut Window, cx: &mut App) -> bool {
-    if form.read(cx).busy {
-        return false;
-    }
-    if !form.read(cx).dirty(cx) {
-        return true;
-    }
-    window.open_dialog(cx, move |dialog, _, _| {
-        let save = form.clone();
-        dialog
-            .title(tr("unsaved"))
-            .child(tr("unsaved_body"))
-            .close_button(false)
-            .overlay_closable(false)
-            .footer(
-                h_flex()
-                    .gap_2()
-                    .child(
-                        Button::new("form-stay")
-                            .label(tr("stay"))
-                            .on_click(|_, window, cx| window.close_dialog(cx)),
-                    )
-                    .child(Button::new("form-discard").label(tr("discard")).on_click(
-                        |_, window, cx| {
-                            window.close_dialog(cx);
-                            window.close_dialog(cx);
-                        },
-                    ))
-                    .child(
-                        Button::new("form-save")
-                            .primary()
-                            .label(tr("save"))
-                            .on_click(move |_, window, cx| {
-                                let success = save.update(cx, |form, cx| form.commit(window, cx));
-                                window.close_dialog(cx);
-                                if success {
-                                    window.close_dialog(cx);
-                                }
-                            }),
-                    ),
-            )
-    });
-    false
+fn cancel_form(form: Entity<TextForm>, _: &mut Window, cx: &mut App) -> bool {
+    !form.read(cx).busy
 }
 
-impl Drop for FormField {
-    fn drop(&mut self) {
-        use zeroize::Zeroize;
-        self.initial.zeroize();
-    }
-}
-
-/// Continue quitting only after any dirty shared form has been resolved.
+/// Finish an already submitted security command, then delegate encrypted form flushing.
 pub fn request_quit(continue_quit: QuitContinuation, window: &mut Window, cx: &mut App) {
     let form = cx
         .try_global::<OpenForms>()
         .and_then(|forms| forms.0.iter().rev().find_map(WeakEntity::upgrade));
-    let Some(form) = form.filter(|_| window.has_active_dialog(cx)) else {
-        window.close_all_dialogs(cx);
-        continue_quit(window, cx);
-        return;
-    };
-    if form.read(cx).after_save.is_some() {
-        return;
-    }
-    if form.read(cx).busy {
+    if let Some(form) = form.filter(|form| window.has_active_dialog(cx) && form.read(cx).busy) {
         form.update(cx, |form, _| form.after_save = Some(continue_quit));
         return;
     }
-    if !form.read(cx).dirty(cx) {
-        window.close_all_dialogs(cx);
-        continue_quit(window, cx);
-        return;
-    }
-    window.open_dialog(cx, move |dialog, _, _| {
-        let save = form.clone();
-        let discard = continue_quit.clone();
-        let continuation = continue_quit.clone();
-        dialog
-            .title(tr("unsaved"))
-            .child(tr("unsaved_body"))
-            .close_button(false)
-            .overlay_closable(false)
-            .footer(
-                h_flex()
-                    .gap_2()
-                    .child(
-                        Button::new("quit-stay")
-                            .label(tr("stay"))
-                            .on_click(|_, window, cx| window.close_dialog(cx)),
-                    )
-                    .child(Button::new("quit-discard").label(tr("discard")).on_click(
-                        move |_, window, cx| {
-                            window.close_all_dialogs(cx);
-                            discard(window, cx);
-                        },
-                    ))
-                    .child(
-                        Button::new("quit-save")
-                            .primary()
-                            .label(tr("save"))
-                            .on_click(move |_, window, cx| {
-                                window.close_dialog(cx);
-                                let done = save.update(cx, |form, cx| {
-                                    form.after_save = Some(continuation.clone());
-                                    let done = form.commit(window, cx);
-                                    if !done && !form.busy {
-                                        form.after_save = None;
-                                    }
-                                    done
-                                });
-                                if done {
-                                    window.close_all_dialogs(cx);
-                                    continuation(window, cx);
-                                }
-                            }),
-                    ),
-            )
-    });
+    window.close_all_dialogs(cx);
+    continue_quit(window, cx);
 }

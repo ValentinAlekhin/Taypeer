@@ -536,7 +536,7 @@ impl Render for Entries {
         let store = self.store.read(cx);
         let state = store.state();
         let scope = state.scope;
-        let can_add = state.group.is_some();
+        let can_add = state.is_unlocked();
         let bookmark = state.bookmark.is_some();
         let row_count = self.table.read(cx).delegate().rows.len();
         let menu_store = self.store.clone();

@@ -34,13 +34,10 @@ pub(in crate::ui) fn database(
     window: &mut Window,
     cx: &mut App,
 ) {
-    let connection = store.read(cx).connection().cloned();
-    if id.is_some()
-        && id
-            .as_ref()
-            .and_then(|id| store.read(cx).catalog().read(cx).database(id))
-            .is_none_or(|db| db.metadata_conflict || !db.writable)
-    {
+    if id.is_some() {
+        store.update(cx, |store, cx| {
+            store.open_metadata(taypeer_runtime::Command::BeginEditDatabaseInfo, cx)
+        });
         return;
     }
     let (name, description) = id
@@ -80,28 +77,6 @@ pub(in crate::ui) fn database(
                 Some(values[1].clone())
             };
             let store = store.clone();
-            if id.is_some() {
-                let operation = attempt.operation(values)?;
-                let connection = connection.clone().ok_or(FormError::MissingObject)?;
-                return Ok(Some(Box::new(move |done, _, cx| {
-                    store.update(cx, |s, _| {
-                        s.watch(
-                            connection.command::<()>(taypeer_runtime::Command::SetDatabaseInfo {
-                                operation,
-                                name,
-                                description,
-                            }),
-                            move |s, result, window, cx| {
-                                let result = result.map_err(FormError::Runtime);
-                                if result.is_ok() {
-                                    s.refresh(cx);
-                                }
-                                done(result, window, cx);
-                            },
-                        );
-                    });
-                })));
-            }
             if values[2].is_empty() || values[2] != values[3] {
                 return Err(FormError::PasswordConfirmation);
             }
@@ -119,42 +94,24 @@ pub(in crate::ui) fn database(
             )
             .map_err(|_| FormError::InvalidNumber)?;
             let password = zeroize::Zeroizing::new(values[2].clone());
+            let operation = attempt.operation(values)?;
             Ok(Some(Box::new(move |done, window, cx| {
-                let epoch = store.read(cx).secret_epoch();
-                let prompt = taypeer_ui::file_picker::save(
-                    cx,
-                    std::path::Path::new("."),
-                    Some("database.taypeer"),
-                );
-                let handle = window.window_handle();
-                cx.spawn(async move |cx| {
-                    let selected = prompt.await;
-                    let _ = handle.update(cx, |_, window, cx| match selected {
-                        Ok(Some(path)) => store.update(cx, |s, cx| {
-                            if s.secret_epoch() != epoch {
-                                done(Err(FormError::Canceled), window, cx);
-                                return;
-                            }
-                            s.open_file(
-                                path,
-                                password.to_string(),
-                                Some(taypeer_services::CreateDatabase {
-                                    name,
-                                    description,
-                                    policy,
-                                }),
-                                move |result, window, cx| {
-                                    done(result.map_err(FormError::Runtime), window, cx)
-                                },
-                                window,
-                                cx,
-                            )
-                        }),
-                        Ok(None) => done(Err(FormError::Canceled), window, cx),
-                        _ => done(Err(FormError::Backend), window, cx),
-                    });
-                })
-                .detach();
+                store.update(cx, |store, cx| {
+                    store.create_database(
+                        taypeer_services::CreateDatabase {
+                            name,
+                            description,
+                            policy,
+                        },
+                        password.to_string(),
+                        operation,
+                        move |result, window, cx| {
+                            done(result.map_err(FormError::Runtime), window, cx)
+                        },
+                        window,
+                        cx,
+                    )
+                });
             })))
         }),
         window,

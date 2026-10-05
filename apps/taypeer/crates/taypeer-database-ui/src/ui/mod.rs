@@ -7,6 +7,7 @@ mod generator;
 mod header;
 mod images;
 mod inspector;
+mod metadata_history;
 mod read_value;
 mod session;
 mod sidebar;

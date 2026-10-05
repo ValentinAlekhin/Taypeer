@@ -287,5 +287,21 @@
   "ui.welcome_import": "Import KDBX…",
   "ui.import_unavailable": "KDBX import is not available yet",
   "ui.master_password": "Master password",
-  "ui.operation_conflict": "The form no longer matches this save attempt. Review your changes and try again."
+  "ui.operation_conflict": "The form no longer matches this save attempt. Review your changes and try again.",
+  "ui.history_alternatives": "Original alternatives are available in history",
+  "ui.autosave_saved": "Saved",
+  "ui.autosave_pending": "Saving…",
+  "ui.ungrouped": "Ungrouped",
+  "ui.local_draft": "Local draft",
+  "ui.draft_saved": "Draft saved locally",
+  "ui.trashed": "Moved to trash",
+  "ui.undo": "Undo",
+  "ui.delete_entry": "Move entry to trash",
+  "ui.group_history": "Group history",
+  "ui.database_history": "Database history",
+  "ui.alternatives": "Original alternatives",
+  "ui.present": "Present",
+  "ui.absent": "Absent",
+  "ui.attributes": "Attributes",
+  "ui.autosave_ready": "Changes save automatically"
 }

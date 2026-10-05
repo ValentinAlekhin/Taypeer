@@ -1,14 +1,12 @@
 //! Window navigation and acceptance of generation-scoped background results.
+mod editing;
+mod lifecycle;
 mod sync;
-use super::style::tr;
 use crate::{
     backend::{Backend, Connection, Query, Ticket},
     ui_state::*,
 };
-use gpui_kit::{
-    component::{button::*, *},
-    *,
-};
+use gpui_kit::{component::*, *};
 use std::{collections::BTreeMap, path::PathBuf};
 use taypeer_runtime::{Command, RuntimeError, session::LockReason};
 type Pending =
@@ -20,6 +18,12 @@ pub struct WorkspaceStore {
     state: NavigationState,
     catalog: Entity<CatalogStore>,
     editor: Option<Entity<EditorStore>>,
+    metadata: Option<Entity<super::forms::metadata::MetadataForm>>,
+    undo: Option<(
+        Connection,
+        taypeer_services::PreparedLifecycle,
+        taypeer_core::OperationId,
+    )>,
     backend: Option<std::sync::Arc<Backend>>,
     connections: BTreeMap<DatabaseId, Connection>,
     requests: BTreeMap<DatabaseId, u64>,
@@ -28,6 +32,7 @@ pub struct WorkspaceStore {
     notice: Option<&'static str>,
     saving: bool,
     quit_requested: bool,
+    settings_requested: bool,
     opening: bool,
     save_requested: bool,
     operation: u64,
@@ -41,7 +46,13 @@ impl WorkspaceStore {
     pub fn test_idle(&self, cx: &App) -> bool {
         !self.busy()
             && !self.sync.read(cx).model().busy()
-            && !self.editor.as_ref().is_some_and(|e| e.read(cx).busy())
+            && !self.editor.as_ref().is_some_and(|e| {
+                e.read(cx).busy() || (e.read(cx).autosave_pending() && e.read(cx).error().is_none())
+            })
+            && !self
+                .metadata
+                .as_ref()
+                .is_some_and(|form| form.read(cx).pending())
     }
     #[cfg(feature = "ui-test-support")]
     /// Revocation handles for synthetic worker-lifetime assertions.
@@ -100,12 +111,14 @@ impl WorkspaceStore {
                 },
             ),
         ];
-        Self {
+        let mut store = Self {
             sync,
             settings,
             state: Default::default(),
             catalog: catalog.clone(),
             editor: None,
+            metadata: None,
+            undo: None,
             backend,
             connections: BTreeMap::new(),
             requests: BTreeMap::new(),
@@ -114,13 +127,34 @@ impl WorkspaceStore {
             notice,
             saving: false,
             quit_requested: false,
+            settings_requested: false,
             opening: false,
             save_requested: false,
             operation: 0,
             secret_epoch: 0,
             _catalog_subscription: cx.observe(&catalog, |_, _, cx| cx.notify()),
             _feature_subscriptions: subscriptions,
+        };
+        if let Some(backend) = &store.backend {
+            let ticket = backend.catalog();
+            store.pending.push(Box::new(move |store, _, cx| {
+                let Some(result) = ticket.try_take() else {
+                    return false;
+                };
+                match result {
+                    Ok(copies) => store.catalog.update(cx, |catalog, cx| {
+                        for copy in copies {
+                            catalog.add_path(copy.database, copy.path);
+                        }
+                        cx.notify();
+                    }),
+                    Err(error) => store.notice = Some(error_key(&error)),
+                }
+                cx.notify();
+                true
+            }));
         }
+        store
     }
     pub(crate) fn local<'a>(&self, cx: &'a App) -> &'a crate::local_settings::LocalSettings {
         self.settings.read(cx).values()
@@ -209,7 +243,13 @@ impl WorkspaceStore {
     }
     /// Whether navigation must resolve an unsaved database draft.
     pub fn dirty(&self, cx: &App) -> bool {
-        self.editor.as_ref().is_some_and(|e| e.read(cx).dirty())
+        self.editor
+            .as_ref()
+            .is_some_and(|e| e.read(cx).autosave_pending())
+            || self
+                .metadata
+                .as_ref()
+                .is_some_and(|form| form.read(cx).pending())
     }
     /// Record interaction against the shared session inactivity policy.
     pub fn activity(&self) {
@@ -283,6 +323,10 @@ impl WorkspaceStore {
     }
     /// Poll database operations and platform events, committing coherent transitions.
     pub fn poll(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.settings_requested && !self.busy() && self.state.pending.is_none() {
+            self.settings_requested = false;
+            self.navigate(Destination::Settings, window, cx);
+        }
         if self.quit_requested && !self.busy() && self.state.pending.is_none() {
             self.quit_requested = false;
             self.navigate(Destination::Quit, window, cx);
@@ -366,9 +410,8 @@ impl WorkspaceStore {
         {
             cx.notify();
         }
-        if self.save_requested && self.editor.as_ref().is_some_and(|e| !e.read(cx).busy()) {
-            self.save(cx);
-        }
+        self.poll_autosave(window, cx);
+        self.poll_metadata(window, cx);
         let pending = std::mem::take(&mut self.pending);
         for mut job in pending {
             if !job(self, window, cx) {
@@ -424,11 +467,6 @@ impl WorkspaceStore {
                     Ok(mut snapshot) => {
                         for preview in std::mem::take(&mut snapshot.previews) {
                             super::images::Images::install(&db, preview, cx);
-                        }
-                        if let Some(pending) = snapshot.pending.clone() {
-                            this.state.suspended.insert(db.clone(), pending);
-                        } else {
-                            this.state.suspended.remove(&db);
                         }
                         this.catalog.update(cx, |catalog, cx| {
                             catalog.apply(&db, snapshot);
@@ -497,6 +535,31 @@ impl WorkspaceStore {
             return;
         };
         let ticket = backend.open(&path, std::mem::take(&mut *password), form);
+        self.watch_opened(ticket, done, cx);
+    }
+    pub(crate) fn create_database(
+        &mut self,
+        form: taypeer_services::CreateDatabase,
+        password: String,
+        operation: taypeer_core::OperationId,
+        done: impl FnOnce(Result<(), RuntimeError>, &mut Window, &mut Context<Self>) + 'static,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let password = zeroize::Zeroizing::new(password);
+        let Some(backend) = &self.backend else {
+            done(Err(RuntimeError::Closed), window, cx);
+            return;
+        };
+        let ticket = backend.create_internal(form, password.to_string(), operation);
+        self.watch_opened(ticket, done, cx);
+    }
+    fn watch_opened(
+        &mut self,
+        ticket: Ticket<crate::backend::Opened>,
+        done: impl FnOnce(Result<(), RuntimeError>, &mut Window, &mut Context<Self>) + 'static,
+        cx: &mut Context<Self>,
+    ) {
         self.opening = true;
         self.operation += 1;
         self.notice = None;
@@ -509,16 +572,17 @@ impl WorkspaceStore {
                         super::images::Images::install(&db, preview, cx);
                     }
                     this.catalog.update(cx, |catalog, cx| {
-                        catalog.add_path(db.clone(), path.clone());
+                        catalog.add_path(db.clone(), opened.path.clone());
                         catalog.apply(&db, opened.snapshot);
                         cx.notify();
                     });
-                    this.remember(db.clone(), path, cx);
+                    this.remember(db.clone(), opened.path, cx);
                     this.connections.insert(db.clone(), opened.connection);
                     this.state.unlocked.insert(db.clone());
                     this.state.select_database(db, this.catalog.read(cx));
                     this.start_sync(cx);
                     this.refresh(cx);
+                    this.resume_active_draft(cx);
                     done(Ok(()), window, cx);
                 }
                 Ok(_) => done(Err(RuntimeError::Closed), window, cx),
@@ -543,7 +607,7 @@ impl WorkspaceStore {
         };
         self.open_file(path, password, None, |_, _, _| {}, window, cx);
     }
-    /// Request navigation through validation and dirty-state guards.
+    /// Flush the current form before navigation; only a double durability failure keeps it open.
     pub fn navigate(
         &mut self,
         destination: Destination,
@@ -553,106 +617,146 @@ impl WorkspaceStore {
         if self.busy() || self.state.pending.is_some() {
             return;
         }
-        if self.dirty(cx) {
+        if self.editor.is_some() || self.metadata.is_some() {
             self.state.pending = Some(destination);
-            self.unsaved(window, cx);
+            self.save_requested = true;
+            if let Some(metadata) = &self.metadata {
+                metadata.update(cx, |form, _| form.request_close());
+            }
+            self.poll_autosave(window, cx);
         } else {
             self.perform(destination, window, cx);
         }
         cx.notify();
     }
-    fn unsaved(&self, window: &mut Window, cx: &mut Context<Self>) {
-        let store = cx.entity().downgrade();
-        window.open_dialog(cx, move |dialog, _, _| {
-            let stay = store.clone();
-            let discard = store.clone();
-            let save = store.clone();
-            dialog
-                .title(tr("unsaved"))
-                .child(tr("unsaved_body"))
-                .close_button(false)
-                .overlay_closable(false)
-                .footer(
-                    h_flex()
-                        .gap_2()
-                        .child(Button::new("stay").label(tr("stay")).on_click(
-                            move |_, window, cx| {
-                                let _ = stay.update(cx, |s, cx| {
-                                    s.state.pending = None;
-                                    cx.notify();
-                                });
-                                window.close_dialog(cx);
-                            },
-                        ))
-                        .child(Button::new("discard").label(tr("discard")).on_click(
-                            move |_, window, cx| {
-                                window.close_dialog(cx);
-                                let _ =
-                                    discard.update(cx, |s, cx| s.discard_and_continue(window, cx));
-                            },
-                        ))
-                        .child(Button::new("save").primary().label(tr("save")).on_click(
-                            move |_, window, cx| {
-                                window.close_dialog(cx);
-                                let _ = save.update(cx, |s, cx| s.save(cx));
-                            },
-                        )),
-                )
-        });
-    }
-    fn discard_and_continue(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(connection) = self.connection().cloned() else {
-            return;
-        };
-        self.saving = true;
-        self.operation += 1;
-        if let Some(editor) = &self.editor {
-            editor.update(cx, |editor, cx| {
-                editor.freeze(true);
-                cx.notify();
-            });
-        }
-        self.watch_operation(
-            connection.command::<()>(Command::DiscardDraft),
-            |this, result, window, cx| {
-                this.saving = false;
-                match result {
-                    Ok(()) => {
-                        this.editor = None;
-                        this.continue_navigation(window, cx);
-                    }
-                    Err(error) => {
-                        if let Some(editor) = &this.editor {
-                            editor.update(cx, |editor, cx| {
-                                editor.fail(error);
-                                cx.notify();
-                            });
-                        }
-                        this.notice = Some(error_key(&error));
-                        this.state.pending = None;
-                    }
-                }
-                cx.notify();
-            },
-        );
-        let _ = window;
-    }
     fn continue_navigation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.metadata.is_some() {
+            return;
+        }
         if let Some(destination) = self.state.pending.take() {
+            self.editor = None;
             self.perform(destination, window, cx);
         }
     }
-    fn perform(&mut self, destination: Destination, window: &mut Window, cx: &mut Context<Self>) {
-        if self.editor.is_some() {
-            self.state.pending = Some(destination);
-            self.discard_and_continue(window, cx);
+    fn poll_autosave(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(editor) = self.editor.clone() else {
+            self.save_requested = false;
+            return;
+        };
+        if editor.read(cx).save_blocked() && self.state.pending.is_some() {
+            self.state.pending = None;
+            self.save_requested = false;
+            self.notice = Some(
+                editor
+                    .read(cx)
+                    .error()
+                    .map_or("ui.operation_failed", |error| error.key()),
+            );
             return;
         }
+        let event = editor.update(cx, |editor, _| editor.take_save_event());
+        match event {
+            Some(SaveEvent::Confirmed(outcome)) => {
+                let identity = match &outcome {
+                    taypeer_services::DraftSaveOutcome::Saved { identity, .. }
+                    | taypeer_services::DraftSaveOutcome::LocalDraftSaved { identity, .. }
+                    | taypeer_services::DraftSaveOutcome::Unchanged { identity, .. } => identity,
+                };
+                if matches!(outcome, taypeer_services::DraftSaveOutcome::Saved { .. }) {
+                    if let taypeer_services::DraftTarget::Entry(id)
+                    | taypeer_services::DraftTarget::NewEntry { entry: id, .. } =
+                        &identity.target
+                    {
+                        self.state.selected = Some(id.clone());
+                    }
+                    self.notice = Some("ui.saved");
+                } else {
+                    self.notice = Some("ui.draft_saved");
+                }
+                self.refresh(cx);
+            }
+            Some(SaveEvent::Failed(error)) => {
+                self.notice = Some(error_key(&error));
+                if self.state.pending.is_none() {
+                    self.save_requested = false;
+                }
+                if self.state.pending.is_some() && !self.saving {
+                    if editor.read(cx).save_blocked() {
+                        self.state.pending = None;
+                    } else {
+                        let revision = editor.read(cx).input_revision();
+                        let connection = editor.read(cx).connection().clone();
+                        let expected = editor.entity_id();
+                        self.saving = true;
+                        self.watch(
+                            connection.command::<()>(Command::PersistDrafts),
+                            move |this, result, _, cx| {
+                                this.saving = false;
+                                if this
+                                    .editor
+                                    .as_ref()
+                                    .is_none_or(|editor| editor.entity_id() != expected)
+                                {
+                                    return;
+                                }
+                                match result {
+                                    Ok(()) => editor.update(cx, |editor, cx| {
+                                        editor.confirm_local_fallback(revision);
+                                        cx.notify();
+                                    }),
+                                    Err(error) => {
+                                        this.state.pending = None;
+                                        this.notice = Some(error_key(&error));
+                                    }
+                                }
+                                cx.notify();
+                            },
+                        );
+                    }
+                }
+            }
+            None => {}
+        }
+        let Some(editor) = self.editor.clone() else {
+            return;
+        };
+        if editor.read(cx).durably_current() {
+            self.save_requested = false;
+            self.continue_navigation(window, cx);
+            return;
+        }
+        if !self.saving {
+            editor.update(cx, |editor, cx| {
+                if editor.start_snapshot(self.save_requested || self.state.pending.is_some()) {
+                    cx.notify();
+                }
+            });
+        }
+    }
+    fn perform(&mut self, destination: Destination, window: &mut Window, cx: &mut Context<Self>) {
         self.notice = None;
         if self.state.route == Route::Receive && destination != Destination::Receive {
             self.sync.update(cx, |sync, cx| sync.pause(cx));
         }
         match destination {
+            Destination::Settings => {
+                self.state.route = if self.state.route == Route::Settings {
+                    Route::Workspace
+                } else {
+                    Route::Settings
+                }
+            }
+            Destination::Ungrouped => {
+                self.state.route = Route::Workspace;
+                self.state.group = None;
+                self.state.selected = None;
+                self.state.query.clear();
+                self.state.bookmark = None;
+            }
+            Destination::Draft(id) => {
+                self.resume_draft(id, cx);
+                return;
+            }
             Destination::Home => {
                 self.state.route = if self.state.database.is_some() {
                     Route::Workspace
@@ -676,7 +780,14 @@ impl WorkspaceStore {
                 self.state.query.clear();
                 self.state.bookmark = None;
             }
-            Destination::Entry(db, id) => self.state.select_entry(db, id, self.catalog.read(cx)),
+            Destination::Entry(db, id) => {
+                self.state
+                    .select_entry(db.clone(), id.clone(), self.catalog.read(cx));
+                let draft = self.catalog.read(cx).database(&db).and_then(|db| db.drafts.iter().find(|draft| matches!(&draft.identity.target, taypeer_services::DraftTarget::Entry(entry) | taypeer_services::DraftTarget::NewEntry {entry,..} if entry == &id))).map(|draft| draft.identity.draft.clone());
+                if let Some(draft) = draft {
+                    self.resume_draft(draft, cx);
+                }
+            }
             Destination::ClearEntry => self.state.selected = None,
             Destination::GroupForm { id, parent } => {
                 let store = cx.entity();
@@ -706,11 +817,25 @@ impl WorkspaceStore {
                 });
                 return;
             }
+            Destination::TrashEntry => {
+                if let Some(entry) = self.state.selected.clone() {
+                    self.trash_target(taypeer_services::ObjectId::Entry(entry), cx);
+                }
+                return;
+            }
+            Destination::UndoTrash => {
+                self.undo(cx);
+                return;
+            }
             Destination::NewEntry => {
-                if self.writable(cx)
-                    && let Some(group) = self.state.group.clone()
-                {
-                    self.start_editor(Command::BeginCreate(group), cx);
+                if self.writable(cx) {
+                    self.start_editor(
+                        self.state
+                            .group
+                            .clone()
+                            .map_or(Command::BeginCreateUngrouped, Command::BeginCreate),
+                        cx,
+                    );
                 }
                 return;
             }
@@ -752,121 +877,6 @@ impl WorkspaceStore {
         }
         self.refresh(cx);
     }
-    fn start_editor(&mut self, command: Command, cx: &mut Context<Self>) {
-        let preserve_tab = matches!(&command, Command::BeginEdit(_));
-        let Some(connection) = self.connection().cloned() else {
-            return;
-        };
-        let view_connection = connection.clone();
-        self.saving = true;
-        self.operation += 1;
-        self.watch_operation(
-            connection.command::<()>(command),
-            move |this, result, _, cx| {
-                if let Err(error) = result {
-                    this.saving = false;
-                    this.set_notice(error_key(&error), cx);
-                    return;
-                }
-                let connection = view_connection.clone();
-                this.watch_operation(
-                    connection.command::<taypeer_services::EditorView>(Command::EditorView),
-                    move |this, result, _, cx| {
-                        this.saving = false;
-                        match result {
-                            Ok(view) => {
-                                this.state.suspended.remove(&connection.database);
-                                this.state.group = Some(view.group.clone());
-                                this.state.selected = view.entry.clone();
-                                this.editor =
-                                    Some(cx.new(|_| EditorStore::from_view(connection, view)));
-                                if !preserve_tab {
-                                    this.state.tab = EntryTab::Overview;
-                                }
-                            }
-                            Err(error) => this.notice = Some(error_key(&error)),
-                        }
-                        cx.notify();
-                    },
-                );
-            },
-        );
-        cx.notify();
-    }
-    /// Begin editing the selected entry when the session permits it.
-    pub fn begin_edit(&mut self, cx: &mut Context<Self>) {
-        if !self.writable(cx) || self.editor.is_some() || self.busy() {
-            return;
-        }
-        if let Some(id) = self.state.selected.clone() {
-            self.start_editor(Command::BeginEdit(id), cx);
-        }
-    }
-    /// Submit the current draft through the worker; never report an unconfirmed commit.
-    pub fn save(&mut self, cx: &mut Context<Self>) {
-        if self.saving || self.opening {
-            return;
-        }
-        let Some(editor) = self.editor.clone() else {
-            return;
-        };
-        editor.update(cx, |editor, cx| {
-            editor.freeze(true);
-            cx.notify();
-        });
-        if editor.read(cx).busy() {
-            self.save_requested = true;
-            cx.notify();
-            return;
-        }
-        self.save_requested = false;
-        if editor.read(cx).save_blocked() {
-            editor.update(cx, |editor, cx| {
-                editor.freeze(false);
-                cx.notify();
-            });
-            self.set_notice("ui.operation_failed", cx);
-            return;
-        }
-        let operation = match editor.update(cx, |editor, _| editor.save_operation()) {
-            Ok(operation) => operation,
-            Err(_) => {
-                editor.update(cx, |editor, _| editor.freeze(false));
-                self.set_notice("ui.operation_failed", cx);
-                return;
-            }
-        };
-        let connection = editor.read(cx).connection().clone();
-        self.saving = true;
-        self.operation += 1;
-        self.watch_operation(
-            connection.command::<EntryId>(Command::SaveDraft { operation }),
-            |this, result, window, cx| {
-                this.saving = false;
-                match result {
-                    Ok(id) => {
-                        this.editor = None;
-                        this.state.selected = Some(id);
-                        this.notice = Some("ui.saved");
-                        this.continue_navigation(window, cx);
-                        this.refresh(cx);
-                    }
-                    Err(error) => {
-                        if let Some(editor) = &this.editor {
-                            editor.update(cx, |editor, cx| {
-                                editor.fail(error);
-                                cx.notify();
-                            });
-                        }
-                        this.state.pending = None;
-                        this.notice = Some(error_key(&error));
-                    }
-                }
-                cx.notify();
-            },
-        );
-        cx.notify();
-    }
     fn hide_database(&mut self, db: &DatabaseId, window: &mut Window, cx: &mut Context<Self>) {
         let active = self.state.database.as_ref() == Some(db);
         self.state.lock(db);
@@ -884,6 +894,13 @@ impl WorkspaceStore {
                 self.notice = Some("ui.input_unconfirmed");
             }
             self.editor = None;
+        }
+        if self
+            .metadata
+            .as_ref()
+            .is_some_and(|form| form.read(cx).database() == db)
+        {
+            self.metadata = None;
         }
         self.catalog.update(cx, |catalog, cx| {
             catalog.clear(db);
@@ -914,47 +931,13 @@ impl WorkspaceStore {
             self.hide_database(&db, window, cx);
         }
     }
-    /// Restore or discard the explicitly offered suspended draft.
-    pub fn restore_draft(&mut self, restore: bool, cx: &mut Context<Self>) {
-        if self.busy() || self.editor.is_some() {
-            return;
-        }
-        if restore {
-            self.start_editor(Command::RestoreDraft, cx);
-        } else if let Some(connection) = self.connection() {
-            let db = connection.database.clone();
-            let ticket = connection.command::<()>(Command::DiscardDraft);
-            self.watch(ticket, move |this, result, _, cx| {
-                match result {
-                    Ok(()) => {
-                        this.state.suspended.remove(&db);
-                    }
-                    Err(error) => this.notice = Some(error_key(&error)),
-                }
-                cx.notify();
-            });
-        }
-    }
-    pub(crate) fn after_group_removed(&mut self, cx: &mut Context<Self>) {
-        self.state.group = None;
-        self.state.selected = None;
-        self.refresh(cx);
-    }
     pub(crate) fn select_tab(&mut self, tab: EntryTab, cx: &mut Context<Self>) {
         self.state.tab = tab;
         cx.notify();
     }
     /// Toggle settings while retaining the database workflow.
     pub fn settings(&mut self, cx: &mut Context<Self>) {
-        self.state.route = if self.state.route == Route::Settings {
-            if self.state.database.is_some() {
-                Route::Workspace
-            } else {
-                Route::Welcome
-            }
-        } else {
-            Route::Settings
-        };
+        self.settings_requested = true;
         cx.notify();
     }
     pub(crate) fn load_revision(&mut self, revision: RevisionId, _cx: &mut Context<Self>) {
@@ -1015,9 +998,7 @@ impl WorkspaceStore {
         let Some(view) = self.catalog.read(cx).entry(db, entry) else {
             return;
         };
-        let Some(group) = view.group.clone() else {
-            return;
-        };
+        let group = view.group.clone();
         let revisions: std::collections::BTreeSet<_> =
             view.revisions.iter().map(|r| r.sequence.clone()).collect();
         let entry = entry.clone();
@@ -1158,11 +1139,10 @@ impl taypeer_sync_ui::host::SyncHost for WorkspaceStore {
     fn join_database(
         &mut self,
         code: taypeer_runtime::InvitationCode,
-        path: PathBuf,
         password: String,
         cx: &mut Context<Self>,
     ) {
-        WorkspaceStore::join_database(self, code, path, password, cx)
+        WorkspaceStore::join_database(self, code, password, cx)
     }
     fn resume_join(
         &mut self,
@@ -1213,13 +1193,7 @@ impl WorkspaceStore {
     pub fn has_inspector(&self) -> bool {
         self.is_unlocked() && (self.state.selected.is_some() || self.is_editing())
     }
-    /// Whether the selected database has an explicitly restorable draft.
-    pub fn has_suspended_draft(&self) -> bool {
-        self.state
-            .database
-            .as_ref()
-            .is_some_and(|id| self.state.suspended.contains_key(id))
-    }
+
     /// Last observed size of the selected working file.
     pub fn file_bytes(&self, cx: &App) -> u64 {
         self.state

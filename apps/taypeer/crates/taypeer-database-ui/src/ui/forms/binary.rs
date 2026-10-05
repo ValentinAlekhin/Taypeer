@@ -18,7 +18,7 @@ fn binary_command(
 
 pub(in crate::ui) fn attachment(
     editor: Entity<EditorStore>,
-    index: Option<usize>,
+    id: Option<taypeer_core::AttachmentId>,
     window: &mut Window,
     cx: &mut App,
 ) {
@@ -26,8 +26,16 @@ pub(in crate::ui) fn attachment(
         return;
     }
     let operation = taypeer_services::new_operation_id().ok();
-    if let Some(attachment) = index
-        .and_then(|i| editor.read(cx).content().attachments.get(i))
+    if let Some(attachment) = id
+        .as_ref()
+        .and_then(|id| {
+            editor
+                .read(cx)
+                .content()
+                .attachments
+                .iter()
+                .find(|attachment| &attachment.id == id)
+        })
         .cloned()
     {
         text_form(
@@ -121,6 +129,29 @@ pub(in crate::ui) fn export_attachment(
     else {
         return;
     };
+    let selected = state
+        .catalog()
+        .read(cx)
+        .entry(&connection.database, &entry)
+        .and_then(|entry| {
+            let content = match &revision {
+                Some(id) => entry
+                    .revisions
+                    .iter()
+                    .find(|version| &version.sequence == id)?
+                    .content
+                    .as_ref()?,
+                None => &entry.content,
+            };
+            content
+                .attachments
+                .iter()
+                .find(|row| row.id == attachment)
+                .map(|row| (row.blob.clone(), row.name.clone()))
+        });
+    let Some((selected_blob, selected_name)) = selected else {
+        return;
+    };
     let target = revision.map_or_else(
         || taypeer_services::BinaryTarget::Entry(entry.clone()),
         |revision| taypeer_services::BinaryTarget::Revision {
@@ -139,21 +170,18 @@ pub(in crate::ui) fn export_attachment(
                     .into_iter()
                     .find(|row| row.id == attachment)
             });
-            let Some(row) = row.filter(|r| {
-                !r.deletion_conflict
-                    && r.names.len() == 1
-                    && r.contents.len() == 1
-                    && r.contents[0].bytes.is_some()
+            let Some(row) = row.filter(|row| {
+                row.contents
+                    .iter()
+                    .any(|content| content.id == selected_blob && content.bytes.is_some())
             }) else {
                 store.set_notice("ui.attachment_unavailable", cx);
                 return;
             };
-            let blob = row.contents[0].id.clone();
-            let prompt = taypeer_ui::file_picker::save(
-                cx,
-                &std::env::temp_dir(),
-                row.names.first().map(String::as_str),
-            );
+            let _ = row;
+            let blob = selected_blob;
+            let prompt =
+                taypeer_ui::file_picker::save(cx, &std::env::temp_dir(), Some(&selected_name));
             let handle = window.window_handle();
             let connection = connection.clone();
             let target = target.clone();

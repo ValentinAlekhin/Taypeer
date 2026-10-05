@@ -108,7 +108,6 @@ impl SyncState {
     pub fn join(
         &mut self,
         code: taypeer_runtime::InvitationCode,
-        path: PathBuf,
         password: String,
         cx: &mut Context<Self>,
     ) {
@@ -116,7 +115,6 @@ impl SyncState {
             self.model.join(
                 backend,
                 code,
-                path,
                 password,
                 self.settings.read(cx).values().relay.clone(),
             );
