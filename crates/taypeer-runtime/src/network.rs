@@ -145,8 +145,12 @@ impl RuntimeHost {
                     _ = interval.tick() => {},
                     _ = triggered.notified() => {},
                     event = events.recv() => {
-                        if !matches!(event, Ok(taypeer_sync::CoordinatorEvent::Committed(_))) {
-                            continue;
+                        match event {
+                            // Reconcile inventory, authority and routes even if
+                            // the wakeup that carried their change was lost.
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {},
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                            Ok(_) => {},
                         }
                     }
                 }
@@ -552,7 +556,8 @@ impl RuntimeHost {
         context
             .profile
             .save_state("routes", &context.coordinator.routes().map_err(sync_error)?)?;
-        // Keep the received join resumable until its durable catalog publication.
+        // Keep the resumable request until both ciphertext and the common catalog
+        // are durable. A lost catalog response retries this same registered path.
         self.register_working_copy(&pending.path)?;
         joins.remove(&request);
         let local: BTreeMap<_, _> = joins
@@ -659,16 +664,12 @@ impl RuntimeHost {
                     .map_err(|_| RuntimeError::Transport)?;
                 std::io::copy(&mut object.reader().map_err(storage)?, &mut durable)
                     .map_err(|_| RuntimeError::Transport)?;
-                durable
-                    .as_file()
-                    .sync_all()
-                    .map_err(|_| RuntimeError::Transport)?;
-                durable
-                    .persist_noclobber(&path)
-                    .map_err(|_| RuntimeError::Transport)?;
-                File::open(&directory)
-                    .and_then(|file| file.sync_all())
-                    .map_err(|_| RuntimeError::Transport)?;
+                taypeer_storage::publish_file(
+                    durable,
+                    &path,
+                    taypeer_storage::PublicationMode::Create,
+                )
+                .map_err(storage)?;
                 object
             };
             candidate.insert(object).map_err(storage)?;

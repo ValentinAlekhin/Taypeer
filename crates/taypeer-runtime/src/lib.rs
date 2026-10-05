@@ -23,6 +23,7 @@ use process::Client;
 use protocol::Boot;
 use serde_json::Value;
 use session::{DraftDisposition, LockOutcome, LockReason, SessionController};
+use std::time::Duration;
 use std::{
     path::Path,
     sync::{
@@ -31,7 +32,10 @@ use std::{
     },
 };
 use taypeer_core::DatabaseId;
-use taypeer_sync::CoordinatorEvent;
+use taypeer_sync::{CoordinatorEvent, CoordinatorState};
+
+#[cfg(all(test, feature = "ui-test-support"))]
+mod automation_sync_tests;
 use zeroize::Zeroize;
 
 /// One supervised plaintext process. Access revocation never waits for command I/O.
@@ -128,75 +132,156 @@ impl Worker {
             }
         };
         client.control.opened(database.clone())?;
-        let mut events = contexts.for_database(&database)?.coordinator.subscribe();
-        let watched_context = contexts.for_database(&database)?;
+        let watched_context = contexts.for_database(&database).inspect_err(|_| {
+            client.control.invalidate(LockReason::Transport);
+        })?;
+        // Linux creates its per-database context during boot. Subscribe first,
+        // then reconcile against the exact worker snapshot rather than treating
+        // the broadcast stream as an authoritative inventory.
+        let mut events = watched_context.coordinator.subscribe();
+        let records: Vec<taypeer_trust::SignedControl> = serde_json::from_value(
+            client
+                .request(&Command::SessionAuthority, false)
+                .inspect_err(|_| {
+                    client.control.invalidate(LockReason::Transport);
+                })?,
+        )
+        .map_err(|_| RuntimeError::Protocol)
+        .inspect_err(|_| {
+            client.control.invalidate(LockReason::Transport);
+        })?;
+        let pinned = watched_context
+            .coordinator
+            .snapshot(&database)
+            .map_err(host::sync_error)
+            .and_then(|snapshot| snapshot.chain().root().map_err(|_| RuntimeError::Protocol))
+            .inspect_err(|_| client.control.invalidate(LockReason::Transport))?;
+        let authority = taypeer_trust::ControlChain::validate(records, pinned)
+            .map_err(|_| RuntimeError::Protocol)
+            .inspect_err(|_| client.control.invalidate(LockReason::Transport))?;
+        let mut epoch = authority.head().epoch;
+        let admitted = authority
+            .admit_transport(watched_context.transport.public())
+            .is_ok();
+        let initial = watched_context
+            .coordinator
+            .state(&database)
+            .map_err(host::sync_error)
+            .inspect_err(|_| client.control.invalidate(LockReason::Transport))?;
+        if authority_changed(&initial, epoch, admitted) {
+            client.control.invalidate(LockReason::Authority);
+            return Err(RuntimeError::SessionClosed(LockReason::Authority));
+        }
         let linux_credentials = contexts.profile.is_linux_lazy();
-        let weak = Arc::downgrade(&client);
-        let watched_database = database.clone();
         let application = Arc::new(Mutex::new(None));
         let application_revision = Arc::new(AtomicU64::new(0));
-        let revision = Arc::clone(&application_revision);
-        let updates = Arc::clone(&application);
+        // Cover every durable delivery between the child's initial apply and
+        // this subscription before exposing an unlocked Worker to the caller.
+        let result = client.request(&Command::ApplyReceived, false);
+        let retry = retry_application(&result);
+        record_application(&client, result, &application, &application_revision);
+        client.control.check(false)?;
         let (apply_send, mut apply_receive) = tokio::sync::mpsc::channel(1);
         let apply_client = Arc::downgrade(&client);
+        let updates = Arc::clone(&application);
+        let revision = Arc::clone(&application_revision);
         let apply_task = runtime.spawn(async move {
-            while apply_receive.recv().await.is_some() {
+            let mut retry = retry;
+            let mut backoff = Duration::from_millis(100);
+            loop {
+                if retry {
+                    tokio::select! {
+                        received = apply_receive.recv() => if received.is_none() { break; },
+                        _ = tokio::time::sleep(backoff) => {},
+                    }
+                } else if apply_receive.recv().await.is_none() {
+                    break;
+                }
                 let Some(client) = apply_client.upgrade() else {
                     break;
                 };
+                if client.control.check(false).is_err() {
+                    break;
+                }
                 let updates = Arc::clone(&updates);
                 let revision = Arc::clone(&revision);
-                let _ = tokio::task::spawn_blocking(move || {
-                    let mut result = client.request(&Command::ApplyReceived, false);
-                    if client.control.check(false).is_ok()
-                        && let Ok(mut status) = updates.lock()
-                    {
-                        if let Some(Ok(value)) = status.as_mut() {
-                            erase_view(value);
-                        }
-                        *status = Some(result);
-                        revision.fetch_add(1, Ordering::Release);
-                    } else if let Ok(value) = &mut result {
-                        erase_view(value);
-                    }
+                retry = tokio::task::spawn_blocking(move || {
+                    let result = client.request(&Command::ApplyReceived, false);
+                    let retry = retry_application(&result);
+                    record_application(&client, result, &updates, &revision);
+                    retry && client.control.check(false).is_ok()
                 })
-                .await;
+                .await
+                .unwrap_or(false);
+                backoff = if retry {
+                    (backoff * 2).min(Duration::from_secs(3))
+                } else {
+                    Duration::from_millis(100)
+                };
             }
         });
+        let weak = Arc::downgrade(&client);
+        let watched_database = database.clone();
         let watch = runtime.spawn(async move {
+            let mut fingerprint = initial.fingerprint;
+            let mut pending_rotation = None;
+            let mut interval = tokio::time::interval(Duration::from_secs(1));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
-                let (invalidate, apply, rotation) = match events.recv().await {
-                    Ok(CoordinatorEvent::ControlChanged {
-                        database,
-                        lock: true,
-                        control,
-                    }) => (database == watched_database, false, Some(control)),
-                    Ok(CoordinatorEvent::Frozen(database)) => {
-                        (database == watched_database, false, None)
-                    }
-                    Ok(
-                        CoordinatorEvent::Received { database, .. }
-                        | CoordinatorEvent::ControlChanged {
-                            database,
-                            lock: false,
-                            ..
-                        },
-                    ) => (false, database == watched_database, None),
-                    Ok(_) => (false, false, None),
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => (true, false, None),
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                let event = tokio::select! {
+                    event = events.recv() => Some(event),
+                    _ = interval.tick() => None,
                 };
                 let Some(client) = weak.upgrade() else {
                     break;
                 };
-                if invalidate {
-                    if linux_credentials && let Some(control) = rotation {
-                        let epoch = watched_context
-                            .coordinator
-                            .snapshot(&watched_database)
-                            .ok()
-                            .filter(|snapshot| snapshot.chain().head_hash().ok() == Some(control))
-                            .map(|snapshot| snapshot.chain().head().epoch);
+                if client.control.check(false).is_err() {
+                    break;
+                }
+                match event {
+                    Some(Ok(CoordinatorEvent::Frozen(database)))
+                        if database == watched_database =>
+                    {
+                        // A fork signal revokes immediately, even when its disk
+                        // transaction is still running or cannot retain evidence.
+                        client.control.invalidate(LockReason::Authority);
+                        break;
+                    }
+                    Some(Ok(CoordinatorEvent::ControlChanged {
+                        database,
+                        lock: true,
+                        ..
+                    })) if database == watched_database && !linux_credentials => {
+                        client.control.invalidate(LockReason::Authority);
+                        break;
+                    }
+                    Some(Err(tokio::sync::broadcast::error::RecvError::Closed)) => {
+                        client.control.invalidate(LockReason::Transport);
+                        break;
+                    }
+                    Some(Ok(
+                        CoordinatorEvent::Received { database, .. }
+                        | CoordinatorEvent::ControlChanged { database, .. }
+                        | CoordinatorEvent::Committed(database),
+                    )) if database != watched_database => continue,
+                    Some(Ok(
+                        CoordinatorEvent::JoinRequested { .. } | CoordinatorEvent::Frozen(_),
+                    )) => continue,
+                    _ => {}
+                }
+                let state = match watched_context.coordinator.state(&watched_database) {
+                    Ok(state) => state,
+                    Err(_) => {
+                        client.control.invalidate(LockReason::Transport);
+                        break;
+                    }
+                };
+                if state.frozen || (admitted && !state.admitted) {
+                    client.control.invalidate(LockReason::Authority);
+                    break;
+                }
+                if state.epoch != epoch {
+                    if linux_credentials && state.admitted {
                         let prepared = watched_context
                             .profile
                             .load_state::<Option<u64>>("credential_prepared")
@@ -208,48 +293,34 @@ impl Worker {
                             .load_state::<u64>("credential_final")
                             .ok()
                             .flatten();
-                        if epoch.is_some() && finalized == epoch && prepared.is_none() {
+                        if finalized == Some(state.epoch) && prepared.is_none() {
+                            epoch = state.epoch;
+                            pending_rotation = None;
+                        } else if prepared == Some(state.epoch) {
+                            if pending_rotation != Some(state.epoch) {
+                                pending_rotation = Some(state.epoch);
+                                await_rotation_credentials(
+                                    Arc::clone(&watched_context),
+                                    Arc::downgrade(&client),
+                                    state.epoch,
+                                );
+                            }
                             continue;
+                        } else {
+                            client.control.invalidate(LockReason::Authority);
+                            break;
                         }
-                        if let Some(epoch) = epoch
-                            && prepared == Some(epoch)
-                        {
-                            // The initiating worker must finish the already durable
-                            // rotation's local credentials. Other control changes and
-                            // lifecycle sources continue to revoke independently.
-                            let context = Arc::clone(&watched_context);
-                            let weak = Arc::downgrade(&client);
-                            tokio::spawn(async move {
-                                let deadline =
-                                    tokio::time::Instant::now() + std::time::Duration::from_secs(2);
-                                loop {
-                                    let final_epoch =
-                                        context.profile.load_state::<u64>("credential_final");
-                                    let prepared = context
-                                        .profile
-                                        .load_state::<Option<u64>>("credential_prepared");
-                                    if matches!(final_epoch, Ok(Some(value)) if value == epoch)
-                                        && matches!(prepared, Ok(Some(None)))
-                                    {
-                                        return;
-                                    }
-                                    if tokio::time::Instant::now() >= deadline {
-                                        break;
-                                    }
-                                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-                                }
-                                if let Some(client) = weak.upgrade() {
-                                    client.control.invalidate(LockReason::Authority);
-                                }
-                            });
-                            continue;
-                        }
+                    } else {
+                        client.control.invalidate(LockReason::Authority);
+                        break;
                     }
-                    client.control.invalidate(LockReason::Authority);
-                    break;
                 }
-                if apply {
-                    let _ = apply_send.try_send(());
+                if state.fingerprint != fingerprint {
+                    // One queued wakeup is enough: the serialized service scans
+                    // all durable packets, including reordered dependencies.
+                    if apply_send.try_send(()).is_ok() {
+                        fingerprint = state.fingerprint;
+                    }
                 }
             }
         });
@@ -348,6 +419,88 @@ impl Drop for Worker {
             erase_view(value);
         }
     }
+}
+
+fn authority_changed(state: &CoordinatorState, epoch: u64, admitted: bool) -> bool {
+    state.frozen || state.epoch != epoch || (admitted && !state.admitted)
+}
+
+fn retry_application(result: &Result<Value, RuntimeError>) -> bool {
+    matches!(
+        result,
+        Err(RuntimeError::Service(
+            taypeer_services::ServiceError::Storage(
+                taypeer_storage::Error::Changed
+                    | taypeer_storage::Error::Io
+                    | taypeer_storage::Error::CommitUncertain
+            )
+        ))
+    )
+}
+
+fn record_application(
+    client: &Client,
+    mut result: Result<Value, RuntimeError>,
+    updates: &Mutex<Option<Result<Value, RuntimeError>>>,
+    revision: &AtomicU64,
+) {
+    if matches!(
+        result,
+        Err(RuntimeError::Service(
+            taypeer_services::ServiceError::ExpiredSession
+        ))
+    ) {
+        client.control.invalidate(LockReason::Authority);
+    }
+    // A readable session can intentionally lack author/write capabilities.
+    if matches!(
+        result,
+        Err(RuntimeError::Service(
+            taypeer_services::ServiceError::ReadOnly
+                | taypeer_services::ServiceError::WriteCompatibility
+        ))
+    ) {
+        return;
+    }
+    if client.control.check(false).is_ok()
+        && let Ok(mut status) = updates.lock()
+    {
+        if let Some(Ok(value)) = status.as_mut() {
+            erase_view(value);
+        }
+        *status = Some(result);
+        revision.fetch_add(1, Ordering::Release);
+    } else if let Ok(value) = &mut result {
+        erase_view(value);
+    }
+}
+
+fn await_rotation_credentials(
+    context: Arc<HostContext>,
+    weak: std::sync::Weak<Client>,
+    epoch: u64,
+) {
+    tokio::spawn(async move {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            let final_epoch = context.profile.load_state::<u64>("credential_final");
+            let prepared = context
+                .profile
+                .load_state::<Option<u64>>("credential_prepared");
+            if matches!(final_epoch, Ok(Some(value)) if value == epoch)
+                && matches!(prepared, Ok(Some(None)))
+            {
+                return;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        if let Some(client) = weak.upgrade() {
+            client.control.invalidate(LockReason::Authority);
+        }
+    });
 }
 
 /// Nonsecret control of one process generation, independent of its command queue.

@@ -20,6 +20,12 @@ fn fixture() -> PublicFixture {
     fixture_with_schema(taypeer_core::SchemaDescriptor::current())
 }
 fn fixture_with_schema(schema: taypeer_core::SchemaDescriptor) -> PublicFixture {
+    fixture_with_anchor(schema, None)
+}
+fn fixture_with_anchor(
+    schema: taypeer_core::SchemaDescriptor,
+    anchor: Option<Arc<dyn taypeer_storage::AnchorStore>>,
+) -> PublicFixture {
     let directory = tempfile::tempdir().unwrap();
     let mut authors = Vec::new();
     let mut keys = Vec::new();
@@ -90,7 +96,7 @@ fn fixture_with_schema(schema: taypeer_core::SchemaDescriptor) -> PublicFixture 
             &directory.path().join(format!("PUBLIC-{index}.taypeer")),
             &candidate,
             metadata,
-            None,
+            if index == 0 { anchor.clone() } else { None },
         )
         .unwrap();
         let coordinator = Arc::new(Coordinator::new(Arc::clone(&keys[index])));
@@ -209,7 +215,7 @@ async fn forward(relay: Option<RelayUrl>, schema: taypeer_core::SchemaDescriptor
     assert!(compatibility.receive.is_supported());
     assert_eq!(
         compatibility.read.is_supported(),
-        schema.schema_version() == 5
+        schema.schema_version() == taypeer_core::CURRENT_SCHEMA
     );
 }
 
@@ -315,4 +321,179 @@ async fn a_lost_durable_receipt_retries_without_duplicating_ciphertext() {
     );
     a.close().await;
     b.close().await;
+}
+
+#[tokio::test]
+async fn lagged_and_restarted_subscribers_reconcile_the_complete_durable_inventory() {
+    let f = fixture();
+    let coordinator = &f.coordinators[0];
+    let before = coordinator.state(&f.database).unwrap();
+    let mut lagged = coordinator.subscribe();
+    for _ in 0..260 {
+        let snapshot = coordinator.snapshot(&f.database).unwrap();
+        coordinator
+            .commit(
+                &f.database,
+                PreparedCommit {
+                    expected: snapshot.fingerprint(),
+                    control: snapshot.chain().head_hash().unwrap(),
+                    controls: snapshot.chain().records().to_vec(),
+                    objects: Vec::new(),
+                    remove: BTreeSet::new(),
+                    checkpoint: snapshot.metadata().manifest.body.checkpoint,
+                    baseline: snapshot.metadata().manifest.body.baseline,
+                    journal: snapshot.metadata().journal.clone(),
+                },
+            )
+            .unwrap();
+    }
+    assert!(matches!(
+        lagged.recv().await,
+        Err(tokio::sync::broadcast::error::RecvError::Lagged(_))
+    ));
+    let reconciled = coordinator.state(&f.database).unwrap();
+    assert_ne!(before.fingerprint, reconciled.fingerprint);
+    assert_eq!(before.epoch, reconciled.epoch);
+    assert_eq!(before.control, reconciled.control);
+    assert!(reconciled.admitted && !reconciled.frozen);
+    drop(lagged);
+    let mut restarted = coordinator.subscribe();
+    assert_eq!(coordinator.state(&f.database).unwrap(), reconciled);
+    assert!(matches!(
+        restarted.try_recv(),
+        Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+    ));
+}
+
+#[derive(Default)]
+struct EvidenceAnchor {
+    value: Mutex<Option<taypeer_storage::Anchor>>,
+    fail: AtomicBool,
+}
+impl taypeer_storage::AnchorStore for EvidenceAnchor {
+    fn load(&self) -> Result<Option<taypeer_storage::Anchor>, taypeer_storage::Error> {
+        Ok(self.value.lock().unwrap().clone())
+    }
+    fn save(&self, anchor: &taypeer_storage::Anchor) -> Result<(), taypeer_storage::Error> {
+        if self.fail.load(Ordering::Acquire) {
+            return Err(taypeer_storage::Error::Io);
+        }
+        *self.value.lock().unwrap() = Some(anchor.clone());
+        Ok(())
+    }
+}
+#[test]
+fn a_restarted_observer_detects_a_signed_fork_without_its_original_event() {
+    observe_fork(false);
+}
+#[test]
+fn a_fork_stays_frozen_when_its_evidence_cannot_be_saved() {
+    observe_fork(true);
+}
+fn observe_fork(fail: bool) {
+    let anchor = Arc::new(EvidenceAnchor::default());
+    let f = fixture_with_anchor(
+        taypeer_core::SchemaDescriptor::current(),
+        Some(anchor.clone()),
+    );
+    let old = f.coordinators[0].snapshot(&f.database).unwrap();
+    let author = AuthorKey::from_seed(&[51; 32]);
+    let checkpoint = old.object(old.metadata().manifest.body.checkpoint).unwrap();
+    let key = checkpoint.unlock_key(b"PUBLIC network password").unwrap();
+    let header = checkpoint.password_header().unwrap();
+    let branch = |name: &[u8]| {
+        let chain = old
+            .chain()
+            .transition(
+                &author,
+                Digest::of(name),
+                ControlTransition::Policy(Digest::of(name)),
+            )
+            .unwrap();
+        let objects: Vec<_> = [ObjectKind::Checkpoint, ObjectKind::Baseline]
+            .into_iter()
+            .map(|kind| {
+                EncryptedObject::seal(
+                    &chain,
+                    &author,
+                    kind,
+                    &header,
+                    &key,
+                    b"PUBLIC fork checkpoint".as_slice(),
+                    22,
+                )
+                .unwrap()
+            })
+            .collect();
+        (chain, objects)
+    };
+    let (first, objects) = branch(b"PUBLIC first policy branch");
+    f.coordinators[0]
+        .commit(
+            &f.database,
+            PreparedCommit {
+                expected: old.fingerprint(),
+                control: old.chain().head_hash().unwrap(),
+                controls: first.records().to_vec(),
+                checkpoint: objects[0].descriptor().digest,
+                baseline: objects[1].descriptor().digest,
+                objects,
+                remove: BTreeSet::new(),
+                journal: old.metadata().journal.clone(),
+            },
+        )
+        .unwrap();
+    let (second, objects) = branch(b"PUBLIC second policy branch");
+    let mut candidate = old.candidate();
+    let mut body = old.metadata().manifest.body.clone();
+    body.checkpoint = objects[0].descriptor().digest;
+    body.baseline = objects[1].descriptor().digest;
+    body.control = second.head_hash().unwrap();
+    for object in objects {
+        candidate.insert(object).unwrap();
+    }
+    let metadata = candidate
+        .metadata(&second, &f.keys[1], body, old.metadata().journal.clone())
+        .unwrap();
+    anchor.fail.store(fail, Ordering::Release);
+    let expected = if fail {
+        Error::Storage(taypeer_storage::Error::Io)
+    } else {
+        Error::Trust(taypeer_trust::Error::Fork)
+    };
+    assert_eq!(
+        f.coordinators[0]
+            .command(f.keys[1].public(), Command::Offer(Box::new(metadata)))
+            .err(),
+        Some(expected)
+    );
+    let mut restarted = f.coordinators[0].subscribe();
+    assert!(matches!(
+        restarted.try_recv(),
+        Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+    ));
+    let observed = f.coordinators[0].state(&f.database).unwrap();
+    assert!(observed.frozen);
+    assert!(observed.admitted);
+    assert_eq!(observed.epoch, old.chain().head().epoch);
+    assert_eq!(
+        f.coordinators[0]
+            .snapshot(&f.database)
+            .unwrap()
+            .metadata()
+            .journal
+            .forks
+            .is_empty(),
+        fail
+    );
+    assert!(matches!(
+        f.coordinators[0].command(
+            f.keys[1].public(),
+            Command::Inventory {
+                database: f.database.clone(),
+                address: EndpointAddr::new(f.keys[1].public().to_string().parse().unwrap()),
+            }
+        ),
+        Err(Error::Trust(taypeer_trust::Error::Fork))
+    ));
 }

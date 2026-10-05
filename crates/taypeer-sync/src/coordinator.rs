@@ -48,6 +48,22 @@ pub enum CoordinatorEvent {
     Committed(DatabaseId),
 }
 
+/// Content-free state used to reconcile missed events. It includes a fork which
+/// stopped this coordinator even when saving its evidence failed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CoordinatorState {
+    /// Current durable ciphertext revision, independent of decrypted application.
+    pub fingerprint: Digest,
+    /// Latest verified management record.
+    pub control: Digest,
+    /// Current encryption/authority epoch.
+    pub epoch: u64,
+    /// This coordinator's transport identity remains admitted.
+    pub admitted: bool,
+    /// A contradictory signed chain stops exchange and application.
+    pub frozen: bool,
+}
+
 struct WorkingCopy {
     store: ArchiveStore,
     frozen: bool,
@@ -112,6 +128,20 @@ impl Coordinator {
             .store
             .snapshot()
             .clone())
+    }
+    /// Re-read authority and durable progress atomically after subscribing, on
+    /// broadcast lag, or after restarting a consumer. Events are only wakeups.
+    pub fn state(&self, database: &DatabaseId) -> Result<CoordinatorState, Error> {
+        let copies = self.copies.lock().map_err(|_| Error::State)?;
+        let copy = copies.get(database).ok_or(Error::State)?;
+        let snapshot = copy.store.snapshot();
+        Ok(CoordinatorState {
+            fingerprint: snapshot.fingerprint(),
+            control: snapshot.chain().head_hash()?,
+            epoch: snapshot.chain().head().epoch,
+            admitted: snapshot.chain().admit_transport(self.key.public()).is_ok(),
+            frozen: copy.frozen,
+        })
     }
     /// Subscribe to invalidation/progress. A lagged subscriber must re-read all authority states.
     pub fn subscribe(&self) -> broadcast::Receiver<CoordinatorEvent> {

@@ -8,7 +8,7 @@ mod node;
 mod persistence;
 mod wire;
 
-pub use coordinator::{Coordinator, CoordinatorEvent};
+pub use coordinator::{Coordinator, CoordinatorEvent, CoordinatorState};
 pub use iroh::{EndpointAddr, RelayUrl};
 pub use node::{ExchangeReport, Node, RelaySetting};
 pub use persistence::CoordinatorPersistence;
