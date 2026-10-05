@@ -23,6 +23,7 @@ cp "$helper" "$bundle/Contents/MacOS/taypeer-platform"
 cp apps/taypeer/Info.plist "$bundle/Contents/Info.plist"
 cp target/macos/Taypeer.icns "$bundle/Contents/Resources/Taypeer.icns"
 cp wireframes/assets/LICENSE-LUCIDE.txt "$bundle/Contents/Resources/LICENSE-LUCIDE.txt"
+cp resources/fonts/inter/LICENSE.txt "$bundle/Contents/Resources/LICENSE-INTER.txt"
 /usr/bin/codesign --force --sign "$signing_identity" --timestamp=none \
     --identifier dev.taypeer.demo.platform "$bundle/Contents/MacOS/taypeer-platform"
 /usr/bin/codesign --force --sign "$signing_identity" --timestamp=none \

@@ -25,6 +25,11 @@ pub fn run(profile: Option<std::path::PathBuf>) {
             cx.set_app_identity("io.taypeer.Taypeer", "Taypeer");
             cx.set_global(LaunchProfile::new(profile));
             cx.set_global(file_picker::FileDialogs::native());
+            if let Err(error) = taypeer_ui::fonts::register(cx) {
+                eprintln!("{}: {error}", taypeer_ui::style::tr("ui.font_load_failed"));
+                cx.quit();
+                return;
+            }
             gpui_kit::init(cx);
             if let Ok(platform) = platform::Platform::start() {
                 cx.set_global(platform);

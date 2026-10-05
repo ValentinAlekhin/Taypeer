@@ -31,6 +31,54 @@ mod desktop {
     }
 
     const PASSWORD: &str = "PUBLIC-UI-password-42";
+    fn assert_inter_typography(window: &gpui_kit::Window, cx: &gpui_kit::App) {
+        use gpui_kit::{Font, FontWeight, TextRun, component::ActiveTheme, px};
+
+        assert_eq!(cx.theme().font_family.as_ref(), "Inter");
+        let text = "Taypeer · Настройки 0123456789";
+        for weight in [
+            FontWeight::NORMAL,
+            FontWeight::MEDIUM,
+            FontWeight::SEMIBOLD,
+            FontWeight::BOLD,
+        ] {
+            let font = Font {
+                family: cx.theme().font_family.clone(),
+                weight,
+                ..Default::default()
+            };
+            let font_id = cx.text_system().resolve_font(&font);
+            assert_eq!(
+                cx.text_system()
+                    .get_font_for_id(font_id)
+                    .unwrap()
+                    .family
+                    .as_ref(),
+                "Inter",
+                "UI font must resolve without falling back to the system family"
+            );
+            let line = window.text_system().shape_line(
+                text.into(),
+                px(16.),
+                &[TextRun {
+                    len: text.len(),
+                    font,
+                    ..Default::default()
+                }],
+                None,
+            );
+            assert!(!line.runs.is_empty());
+            assert!(line.width() > px(0.));
+            assert!(line.runs.iter().all(|run| run.font_id == font_id));
+            assert!(
+                line.runs
+                    .iter()
+                    .flat_map(|run| &run.glyphs)
+                    .all(|glyph| glyph.id.0 != 0)
+            );
+        }
+    }
+
     fn start(directory: &Path, scenario: &'static str) -> Session {
         Session::new(
             directory,
@@ -493,6 +541,10 @@ mod desktop {
     fn zoom_and_edit_preserve_entry_identity() {
         let directory = tempfile::tempdir().unwrap();
         let mut app = start(directory.path(), "zoom");
+        app.update(|window, cx| {
+            assert!(window.find("welcome-create").visible());
+            assert_inter_typography(window, cx);
+        });
         create(&mut app, &directory.path().join("PUBLIC.taypeer"));
         create_entry(&mut app);
         let identity =
@@ -512,6 +564,10 @@ mod desktop {
         });
         app.wait("zoom applied", |window, _| {
             f32::from(window.rem_size()) == 18.
+        });
+        app.update(|window, cx| {
+            assert!(window.find("font-size").visible());
+            assert_inter_typography(window, cx);
         });
         app.wait("zoom persisted", |_, _| {
             std::fs::read_to_string(directory.path().join("preferences.toml"))

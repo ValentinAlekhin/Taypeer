@@ -23,6 +23,7 @@ pub fn apply(dark: bool, font_size: u8, window: &mut Window, cx: &mut App) {
     let palette = &PALETTES[if dark { "dark" } else { "light" }];
     let color = |role: &str| -> Hsla { rgb(palette[role]).into() };
     let theme = Theme::global_mut(cx);
+    theme.font_family = crate::fonts::UI_FAMILY.into();
     theme.background = color("background");
     theme.tokens.background = color("background").into();
     theme.foreground = color("foreground");

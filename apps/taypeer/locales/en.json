@@ -303,5 +303,6 @@
   "ui.present": "Present",
   "ui.absent": "Absent",
   "ui.attributes": "Attributes",
-  "ui.autosave_ready": "Changes save automatically"
+  "ui.autosave_ready": "Changes save automatically",
+  "ui.font_load_failed": "The bundled interface font could not be loaded"
 }

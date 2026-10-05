@@ -7,6 +7,8 @@ pub mod clipboard;
 mod common;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 pub mod file_picker;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub mod fonts;
 mod form_error;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 pub mod forms;

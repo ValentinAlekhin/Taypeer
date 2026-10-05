@@ -55,6 +55,7 @@ impl Session {
         );
         let picker = super::file_picker::fixture::ScriptedPicker::default();
         cx.update(|cx| {
+            taypeer_ui::fonts::register(cx).expect("bundled UI font must load");
             cx.set_global(LaunchProfile::new(Some(profile)));
             cx.set_global(TestLaunch::new(
                 directory.join("preferences.toml"),

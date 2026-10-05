@@ -30,6 +30,7 @@
         # UI fixture workers and public demo credentials are gated by ui-test-support.
         doCheck = false;
         postInstall = ''
+          install -Dm644 ${./resources/fonts/inter/LICENSE.txt} $out/share/licenses/taypeer/LICENSE-INTER.txt
           install -Dm644 ${./nix/io.taypeer.Taypeer.desktop} $out/share/applications/io.taypeer.Taypeer.desktop
           mkdir -p $out/share/icons/hicolor/256x256/apps
           magick ${./wireframes/assets/taypeer-app-icon-v1.png} -resize 256x256 $out/share/icons/hicolor/256x256/apps/io.taypeer.Taypeer.png
