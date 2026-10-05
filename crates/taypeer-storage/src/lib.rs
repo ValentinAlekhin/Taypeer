@@ -35,7 +35,9 @@ pub use publication::{PublicationMode, publish_file};
 pub use temporary::{TemporaryFileProvider, TemporaryStorage};
 
 /// Categorized failures without paths, passwords or parser diagnostics.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, thiserror::Error)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, thiserror::Error,
+)]
 #[error("{self:?}")]
 pub enum Error {
     /// Empty master passwords are forbidden; whitespace remains significant.

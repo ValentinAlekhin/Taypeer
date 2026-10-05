@@ -44,19 +44,40 @@ fn publish_with_sync(
     temp.as_file().sync_all()?;
     match mode {
         PublicationMode::Create => {
-            temp.persist_noclobber(&destination).map_err(|error| {
-                if error.error.kind() == io::ErrorKind::AlreadyExists {
-                    Error::AlreadyExists
-                } else {
-                    Error::Io
-                }
-            })?;
+            publish_new(temp, &destination)?;
         }
         PublicationMode::Replace => {
             temp.persist(&destination).map_err(|_| Error::Io)?;
         }
     }
     sync_directory(directory).map_err(|_| Error::CommitUncertain)
+}
+
+#[cfg(not(target_os = "android"))]
+fn publish_new(temp: NamedTempFile, destination: &Path) -> Result<(), Error> {
+    temp.persist_noclobber(destination).map_err(|error| {
+        if error.error.kind() == io::ErrorKind::AlreadyExists {
+            Error::AlreadyExists
+        } else {
+            Error::Io
+        }
+    })?;
+    Ok(())
+}
+
+#[cfg(target_os = "android")]
+fn publish_new(temp: NamedTempFile, destination: &Path) -> Result<(), Error> {
+    // Android app SELinux policy prohibits the hard-link fallback used by
+    // tempfile. NOREPLACE provides the same atomic no-overwrite contract.
+    use rustix::fs::{CWD, RenameFlags, renameat_with};
+    renameat_with(CWD, temp.path(), CWD, destination, RenameFlags::NOREPLACE).map_err(|error| {
+        if error == rustix::io::Errno::EXIST {
+            Error::AlreadyExists
+        } else {
+            Error::Io
+        }
+    })?;
+    Ok(())
 }
 
 #[cfg(test)]
