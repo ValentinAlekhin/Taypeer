@@ -8,12 +8,12 @@ model {
     }
     workspace = component 'Работа с БД' {
       #partial
-      description 'Навигация, открытые файлы БД, поиск, выбор и отложенные переходы. Координирует команды независимых владельцев состояния.'
+      description 'Навигация по внутреннему каталогу, поиск, выбор и немедленное сохранение при переходе. Координирует команды независимых владельцев состояния.'
       metadata { source 'apps/taypeer/crates/taypeer-database-ui/src/ui/workspace.rs'; contract 'docs/macos-ui.md' }
     }
     editor = component 'Черновик UI' {
       #partial
-      description 'Ввод трёх вкладок и состояние доставки правок. Подтверждённый черновик принадлежит сервису; открытые копии удаляются при блокировке.'
+      description 'Ввод трёх вкладок и tickets снимков. Целевое автосохранение не закрывает редактор и не заменяет свежий ввод; открытые копии удаляются при блокировке.'
       metadata { source 'apps/taypeer/crates/taypeer-database-ui/src/ui_state/draft.rs'; contract 'docs/macos-ui.md' }
     }
     catalog = store 'Загруженные представления UI' {
@@ -44,7 +44,7 @@ model {
     }
     platform = component 'Desktop capabilities' {
       #partial
-      description 'Lifecycle, защищённый буфер, пути и платформенное окружение. macOS и явный тестовый адаптер; Linux/Windows отложены.'
+      description 'Общее состояние lifecycle и защищённого взаимодействия; нативные macOS/Linux ресурсы и тестовый адаптер. Профиль принадлежит host; Windows вне v1.'
       metadata { source 'apps/taypeer/crates/taypeer-desktop-platform/src/lib.rs'; contract 'docs/macos-ui.md' }
     }
 
@@ -53,15 +53,16 @@ model {
   taypeer.desktop.exchange -> taypeer.desktop.presentation 'Компонует общие элементы'
   taypeer.desktop.preferences -> taypeer.desktop.presentation 'Компонует общие элементы'
   taypeer.desktop.presentation -> taypeer.desktop.platform 'Ввод и системные capabilities'
+  taypeer.desktop.platform -> taypeer.linuxPlatform 'Нативный адаптер Linux'
   taypeer.desktop.platform -> taypeer.macPlatform 'Текущий адаптер macOS'
   taypeer.desktop.ui -> taypeer.desktop.workspace 'События навигации и представления'
   taypeer.desktop.workspace -> taypeer.desktop.exchange 'Команды обмена и событие сохранённого файла'
   taypeer.desktop.workspace -> taypeer.desktop.preferences 'Настройки устройства через узкий контракт'
   taypeer.desktop.exchange -> taypeer.desktop.preferences 'Relay и имя устройства; сериализованная запись'
   taypeer.desktop.workspace -> taypeer.desktop.platform 'Типизированные события отзыва доступа'
-  taypeer.desktop.ui -> taypeer.desktop.platform 'Сборка адаптера и пути профиля'
+  taypeer.desktop.ui -> taypeer.desktop.platform 'Сборка нативного адаптера'
   taypeer.desktop.workspace -> taypeer.desktop.catalog 'Обновить представления актуального поколения'
-  taypeer.desktop.workspace -> taypeer.desktop.editor 'Ввод, подтверждение и отмена'
+  taypeer.desktop.workspace -> taypeer.desktop.editor 'Ввод, снимки и состояния сохранения'
   taypeer.desktop.workspace -> taypeer.desktop.runtime 'Типизированные команды и ответы'
   taypeer.desktop.runtime -> taypeer.secretWorker 'Приватный IPC; отдельный процесс для БД'
   taypeer.desktop.runtime -> taypeer.sessionGuard 'Активность, наблюдение и блокировка'
@@ -81,21 +82,21 @@ views 'macOS UI' {
     autoLayout LeftRight
   }
   dynamic view uiEdit {
-    title 'Подтверждение правок macOS UI'
+    title 'Автосохранение правок desktop UI'
     taypeer.desktop.ui -> taypeer.desktop.workspace 'Открыть запись'
     taypeer.desktop.workspace -> taypeer.desktop.runtime 'Начать сервисный черновик'
     taypeer.desktop.workspace -> taypeer.desktop.editor 'Создать общий черновик вкладок'
     taypeer.desktop.ui -> taypeer.desktop.editor 'Изменить поля'
-    taypeer.desktop.ui -> taypeer.desktop.workspace 'Подтвердить'
-    taypeer.desktop.workspace -> taypeer.desktop.editor 'Дождаться доставки ввода и заморозить редактор'
+    taypeer.desktop.ui -> taypeer.desktop.workspace '500 мс без ввода или переход'
+    taypeer.desktop.workspace -> taypeer.desktop.editor 'Зафиксировать ревизию снимка; ввод продолжается'
     taypeer.desktop.workspace -> taypeer.desktop.runtime 'Доставить ввод и подтвердить надёжное сохранение'
     taypeer.desktop.runtime -> taypeer.secretWorker 'Команды текущего поколения'
-    taypeer.desktop.workspace -> taypeer.desktop.catalog 'Обновить после подтверждения'
+    taypeer.desktop.workspace -> taypeer.desktop.catalog 'Обновить подтверждённое состояние без замены ввода'
     taypeer.desktop.ui <- taypeer.desktop.workspace 'Показать актуальное состояние'
   }
   dynamic view macosJoin {
     title 'Подключение БД в macOS'
-    taypeer.desktop.ui -> taypeer.desktop.exchange 'Вставить приглашение и выбрать новый файл'
+    taypeer.desktop.ui -> taypeer.desktop.exchange 'Вставить приглашение; использовать внутреннюю рабочую копию'
     taypeer.desktop.exchange -> taypeer.desktop.runtime 'Предъявить приглашение; затем продолжать по ID запроса'
     taypeer.desktop.runtime -> taypeer.sync 'Запросить допуск и получить ciphertext'
     taypeer.sync -> taypeer.coordinator 'Проверить и надёжно сохранить'

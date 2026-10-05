@@ -11,22 +11,22 @@ views 'Сценарии' {
     taypeer.desktop <- taypeer.sessions 'Подтверждено только в памяти; актуальное поколение'
   }
   dynamic view save {
-    title 'Подтверждение записи'
+    title 'Автосохранение снимка'
     description 'Планируемая интеграция macOS UI; Android вызывает те же сценарии через UniFFI. При ошибке записи форма остаётся доступной.'
-    taypeer.desktop -> taypeer.sessions 'Подтвердить черновик'
+    taypeer.desktop -> taypeer.sessions 'Снимок после 500 мс без ввода либо при переходе'
     taypeer.sessions -> taypeer.core 'Проверить команду'
     taypeer.sessions -> taypeer.document 'Подготовить изменение'
     taypeer.sessions -> taypeer.crypto 'Зашифровать'
     taypeer.sessions -> taypeer.storage 'Зафиксировать'
     taypeer.storage -> taypeer.vault 'Надёжно сохранить'
     taypeer.sessions <- taypeer.storage 'Запись завершена'
-    taypeer.desktop <- taypeer.sessions 'Показать сохранённую версию'
+    taypeer.desktop <- taypeer.sessions 'Подтвердить снимок; сохранить свежий ввод'
   }
   dynamic view lock {
     title 'Блокировка с черновиком'
     taypeer.androidPlatform -> taypeer.ffi 'Уход в фон'
     taypeer.ffi -> taypeer.sessions 'Заблокировать сессию'
-    taypeer.sessions -> taypeer.local 'Попытаться сохранить зашифрованный черновик'
+    taypeer.sessions -> taypeer.local 'Попытаться сохранить коллекцию зашифрованных черновиков'
     taypeer.sessions -> taypeer.document 'Освободить открытое состояние'
     taypeer.sessions -> taypeer.crypto 'Закрыть доступ к ключам чтения'
     taypeer.ffi <- taypeer.sessions 'Закрытая сессия, в том числе при ошибке черновика'
@@ -53,9 +53,9 @@ views 'Сценарии' {
     taypeer.sessions -> taypeer.crypto 'Разблокировать и проверить содержимое'
     taypeer.sessions -> taypeer.trust 'Проверить происхождение'
     taypeer.sessions -> taypeer.document 'Применить допустимые изменения'
-    taypeer.document -> taypeer.core 'Получить конфликты и представления'
+    taypeer.document -> taypeer.core 'Выбранные значения и альтернативы истории'
     taypeer.sessions -> taypeer.storage 'Зафиксировать результат'
-    taypeer.desktop <- taypeer.sessions 'Данные, конфликты и ожидающие источники'
+    taypeer.desktop <- taypeer.sessions 'Выбранное состояние и ожидающие зависимости'
   }
   dynamic view admission {
     title 'Подключение устройства'
@@ -79,25 +79,15 @@ views 'Сценарии' {
   }
   dynamic view migrate {
     title 'Миграция схемы'
-    description 'Явная команда управляющего после разблокировки. Преобразование поздних источников следует контракту совместимости.'
-    taypeer.desktop -> taypeer.sessions 'Начать миграцию'
+    description 'Автоматический технический переход на разблокированном управляющем. Преобразование поздних источников следует контракту совместимости.'
+    taypeer.secretWorker -> taypeer.sessions 'Обнаружить необходимый переход после разблокировки'
     taypeer.sessions -> taypeer.evolution 'Подготовить переход'
     taypeer.evolution -> taypeer.trust 'Проверить полномочия'
     taypeer.evolution -> taypeer.document 'Преобразовать представление'
     taypeer.sessions -> taypeer.storage 'Атомарно записать результат и отметки'
     taypeer.desktop <- taypeer.sessions 'Показать завершение'
   }
-  dynamic view recover {
-    title 'Восстановление выбранных данных'
-    description 'Отложенный сценарий. Снимок становится источником новых изменений текущей БД. Восстановление доверенного набора — отдельное действие.'
-    taypeer.desktop -> taypeer.sessions 'Подтвердить выбранный снимок'
-    taypeer.sessions -> taypeer.storage 'Прочитать выбранный источник'
-    taypeer.sessions -> taypeer.crypto 'Проверить и расшифровать источник'
-    taypeer.sessions -> taypeer.evolution 'Подготовить выбранные данные'
-    taypeer.evolution -> taypeer.document 'Новые изменения с происхождением'
-    taypeer.sessions -> taypeer.storage 'Зафиксировать данные и отметку обработки'
-    taypeer.desktop <- taypeer.sessions 'Восстановление завершено'
-  }
+
 }
 
 views 'Локальный файл' {
@@ -144,7 +134,7 @@ views 'Локальный файл' {
   }
   dynamic view fileSave {
     title 'Подтверждение записи в локальном файле'
-    description 'Повтор команды проверяет зашифрованную квитанцию после сессии и прав. Неопределённый результат требует повторного открытия.'
+    description 'Повтор команды проверяет зашифрованную квитанцию после сессии и прав. Неопределённый результат автоматически сверяется с файлом и квитанцией.'
     taypeer.desktop -> taypeer.secretWorker 'Команда и стабильный ID попытки'
     taypeer.secretWorker -> taypeer.sessions 'Проверить сессию, права и точный запрос'
     taypeer.sessions -> taypeer.document 'Проверить квитанцию либо подготовить кандидат с историей и квитанцией'
@@ -154,7 +144,7 @@ views 'Локальный файл' {
     taypeer.coordinator -> taypeer.storage 'Атомарная надёжная запись'
     taypeer.storage -> taypeer.vault 'Заменить файл и синхронизировать'
     taypeer.secretWorker <- taypeer.coordinator 'Результат фиксации'
-    taypeer.desktop <- taypeer.secretWorker 'Первоначальный результат; очистить подтверждённый sidecar'
+    taypeer.desktop <- taypeer.secretWorker 'Подтвердить ревизию снимка; редактор остаётся открытым'
   }
 }
 

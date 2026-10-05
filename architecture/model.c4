@@ -60,6 +60,12 @@ model {
       description 'Общий монотонный таймер, инвалидирование ответов и завершение процессов CLI/desktop независимо от команд. AppKit и Linux-адаптер передают события ОС; нативная приёмка остаётся открытой.'
       metadata { source 'crates/taypeer-runtime/src/session/mod.rs'; contract 'docs/sessions.md'; evidence 'crates/taypeer-runtime/src/worker/tests.rs' }
     }
+    host = component 'Профиль и рабочие копии' {
+      #partial
+      technology 'Rust; runtime'
+      description 'Существующий RuntimeHost; целевой общий владелец профиля, внутреннего каталога и рабочих путей GUI/CLI/Android. Публикация регистрации следует надёжной записи.'
+      metadata { source 'crates/taypeer-runtime/src/host.rs'; contract 'docs/storage.md' }
+    }
     coordinator = component 'Координатор рабочей копии' {
       #partial
       style { border solid }
@@ -78,14 +84,14 @@ model {
       #partial
       style { border solid }
       technology 'Rust'
-      description 'Rust-команды, поколения сессий, кандидаты файловых изменений и зашифрованные локальные черновики. Demo остаётся отдельным режимом.'
+      description 'Rust-команды и поколения сессий. Целевой контракт: адресные снимки автосохранения без завершения редактора, коллекция локальных зашифрованных черновиков и безопасные повторы.'
       metadata { source 'crates/taypeer-services/src/lib.rs'; contract 'docs/architecture.md' }
     }
     document = component 'Документ и объединение' {
       #partial
       style { border solid }
       technology 'Rust + Automerge'
-      description 'Automerge: данные, история, конфликты и бинарные ссылки. Исходные изменения привязаны к автору; допуск проверяет сервис.'
+      description 'Automerge с исходными альтернативами и бинарными ссылками. Целевая проекция детерминирована; история охватывает записи, группы и метаданные БД. Допуск проверяет сервис.'
       metadata { source 'crates/taypeer-document/src/lib.rs'; contract 'docs/data-model.md'; evidence 'spikes/encrypted-sync/REPORT.md' }
     }
     crypto = component 'Защита содержимого' {
@@ -125,14 +131,8 @@ model {
     evolution = component 'Эволюция и восстановление' {
       #planned
       technology 'Rust'
-      description 'Будущие переходы схемы и обработка отложенных источников; восстановление снимков отложено.'
+      description 'Будущие автоматические технические переходы схемы разблокированным управляющим; восстановление резервных снимков исключено.'
       metadata { contract 'docs/compatibility.md' }
-    }
-    kdbx = component 'Перенос KDBX' {
-      #planned
-      technology 'Rust'
-      description 'Преобразование поддерживаемых данных и отчёт потерь.'
-      metadata { contract 'spec.md#импорт-и-экспорт-kdbx' }
     }
     generator = component 'Генератор секретов' {
       #partial
@@ -161,7 +161,7 @@ model {
     linuxPlatform = component 'Адаптеры Linux' {
       #partial
       technology 'Rust; logind / ScreenSaver; Wayland data-control'
-      description 'События ОС, буфер с подтверждением владения, XDG-профиль и зашифрованные credentials каждой БД; без Secret Service и пароля устройства.'
+      description 'События ОС, буфер с подтверждением владения и зашифрованные credentials каждой БД; без Secret Service и пароля устройства.'
       metadata { contract 'docs/linux.md'; source 'apps/taypeer/crates/taypeer-desktop-platform/src/lib.rs' }
     }
     localCredentials = store 'Credentials каждой БД' {
@@ -188,7 +188,7 @@ model {
     }
     local = store 'Локальное состояние устройства' {
       #planned
-      description 'Раздельное хранение приватных допусков, биометрии, зашифрованных черновиков и настроек.'
+      description 'Раздельное хранение приватных допусков, биометрии, коллекции зашифрованных черновиков и настроек; черновики не синхронизируются.'
       metadata { contract 'docs/data-model.md#8-локальная-модель' }
     }
     demo = store 'Демонстрационные данные в памяти' {
@@ -200,8 +200,15 @@ model {
 
   }
 
-  taypeer.desktop -> taypeer.linuxPlatform 'События ОС, буфер, профиль и диалоги'
-  taypeer.cli -> taypeer.linuxPlatform 'Ленивые контексты БД и XDG-профиль'
+  taypeer.desktop -> taypeer.host 'Общий профиль и внутренние рабочие копии'
+  taypeer.cli -> taypeer.host 'Общий профиль; явный --profile'
+  taypeer.ffi -> taypeer.host 'Внутренний каталог через платформенные файловые возможности'
+  taypeer.host -> taypeer.local 'Регистрация и локальная коллекция'
+  taypeer.host -> taypeer.coordinator 'Единственный ciphertext writer'
+  taypeer.host -> taypeer.storage 'Надёжная публикация подготовленных файлов'
+  taypeer.host -> taypeer.vault 'Рабочие пути и явный перенос'
+  taypeer.desktop -> taypeer.linuxPlatform 'События ОС, буфер и диалоги'
+  taypeer.cli -> taypeer.linuxPlatform 'Ленивые credentials контекстов БД'
   taypeer.linuxPlatform -> linuxos 'logind, ScreenSaver и Wayland'
   taypeer.linuxPlatform -> taypeer.sessionGuard 'Немедленно отозвать доступ при сне, блокировке или потере событий'
   taypeer.secretWorker -> taypeer.localCredentials 'Проверить и расшифровать после мастер-пароля'
@@ -250,7 +257,6 @@ model {
   taypeer.trust -> taypeer.compatibility 'Подписанный дескриптор схемы'
   taypeer.storage -> taypeer.compatibility 'Совместимость переносимого файла'
   taypeer.document -> taypeer.compatibility 'Требования модели данных'
-  taypeer.sessions -> taypeer.kdbx 'Импорт и экспорт'
   taypeer.sessions -> taypeer.generator 'Создание секрета'
   taypeer.sessions -> taypeer.iconLoader 'Явная загрузка'
   taypeer.sessions -> taypeer.local 'Зашифрованный черновик'
@@ -266,8 +272,6 @@ model {
   taypeer.trust -> taypeer.local 'Приватные полномочия устройства'
   taypeer.trust -> taypeer.storage 'Подписанное состояние управления'
   taypeer.storage -> taypeer.vault 'Надёжная запись и чтение'
-  taypeer.kdbx -> taypeer.core 'Представимые данные'
-  taypeer.kdbx -> files 'Отдельный импорт или экспорт'
   taypeer.iconLoader -> websites 'Запрос по действию пользователя'
   taypeer.desktop -> taypeer.macPlatform 'Файловые диалоги, буфер и события ОС'
   taypeer.android -> taypeer.androidPlatform 'Платформенные действия'

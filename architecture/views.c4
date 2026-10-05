@@ -44,7 +44,7 @@ views 'Обзор' {
       taypeer.theme,
       taypeer.generator,
       taypeer.iconLoader,
-      taypeer.kdbx,
+      taypeer.host,
       files,
       websites
     autoLayout LeftRight

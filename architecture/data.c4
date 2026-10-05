@@ -6,7 +6,7 @@ model {
     database = entity 'База данных' { #conceptual }
     group = entity 'Группа' {
       #conceptual
-      description '0..1 родитель; 0..* подгрупп. Циклы и конфликты размещения определены контрактом.'
+      description '0..1 родитель; 0..* подгрупп. Детерминированное размещение и устранение циклов определены контрактом.'
     }
     entry = entity 'Запись' { #conceptual }
     attribute = entity 'Атрибут' { #conceptual }
@@ -27,6 +27,9 @@ model {
     packet = entity 'Зашифрованный пакет' { #conceptual }
     provenance = entity 'Происхождение восстановленного набора' { #conceptual }
   }
+  data.database -> data.entry '0..* записей, включая записи без группы'
+  data.group -> data.revision 'История'
+  data.database -> data.revision 'История названия и описания'
   data.database -> data.group '0..* групп'
   data.group -> data.entry '0..* активных записей'
   data.entry -> data.attribute '0..* атрибутов'
