@@ -14,6 +14,7 @@ import org.junit.Test
 class GeneratorTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
     @Test fun configurationRecreationRetainsOnlyTheInMemoryForm() {
+        compose.onNodeWithText(compose.activity.getString(R.string.generator_short)).performClick()
         compose.onNodeWithTag("length").performTextReplacement("44")
         compose.onNodeWithText(compose.activity.getString(R.string.generate)).performScrollTo().performClick()
         compose.waitUntil(10_000) {
@@ -25,6 +26,7 @@ class GeneratorTest {
         compose.onNodeWithTag("generated-password").assertExists()
     }
     @Test fun actualComposeToRustResultIsRemovedWhenActivityStops() {
+        compose.onNodeWithText(compose.activity.getString(R.string.generator_short)).performClick()
         compose.onNodeWithText(compose.activity.getString(R.string.generate)).performScrollTo().performClick()
         compose.waitUntil(10_000) {
             compose.onAllNodes(androidx.compose.ui.test.hasTestTag("generated-password"))
