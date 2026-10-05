@@ -131,15 +131,16 @@ pub fn run_platform_worker(
             )?;
             document.create(seed)?;
         }
-        let snapshot = document.snapshot().map_err(crate::cipher_ipc::storage)?;
-        let authenticated = snapshot.fingerprint();
-        let session = service.open_managed(
+        let session = service.open_managed_with_author(
             Box::new(Persistence(Arc::clone(&document))),
             boot.password.as_bytes(),
-            || {
+            |snapshot| {
                 document
-                    .author(Some(authenticated))
-                    .map_err(|_| taypeer_services::ServiceError::Credentials)
+                    .author(Some(snapshot.fingerprint()))
+                    .map_err(|error| match error {
+                        RuntimeError::Service(error) => error,
+                        _ => taypeer_services::ServiceError::Credentials,
+                    })
             },
         )?;
         if service.can_write(&session)? {
@@ -258,6 +259,7 @@ impl crate::RuntimeHost {
             context: Arc::clone(&self.context),
             path,
             registration: Mutex::new(None),
+            authentication: Mutex::new(None),
         }))
     }
 }
@@ -268,6 +270,9 @@ pub struct PlatformCipherWriter {
     context: Arc<HostContext>,
     path: PathBuf,
     registration: Mutex<Option<crate::profile::Registration>>,
+    // One issued immutable generation per authentication attempt. Consumption
+    // prevents an old digest from becoming a reusable author capability.
+    authentication: Mutex<Option<ArchiveSnapshot>>,
 }
 impl PlatformCipherWriter {
     fn registration(&self) -> Result<crate::profile::Registration, RuntimeError> {
@@ -283,10 +288,16 @@ impl PlatformCipherWriter {
     /// Immutable verified archive generation, without its filesystem writer.
     pub fn snapshot(&self) -> Result<ArchiveSnapshot, RuntimeError> {
         let registration = self.registration()?;
-        self.context
+        let snapshot = self
+            .context
             .coordinator
             .snapshot(&registration.database)
-            .map_err(crate::host::sync_error)
+            .map_err(crate::host::sync_error)?;
+        *self
+            .authentication
+            .lock()
+            .map_err(|_| RuntimeError::Transport)? = Some(snapshot.clone());
+        Ok(snapshot)
     }
     /// Stable local-only draft binding supplied by the protected profile.
     pub fn working_copy(&self) -> Result<Digest, RuntimeError> {
@@ -299,18 +310,56 @@ impl PlatformCipherWriter {
     /// Author seed stays on the trusted host-to-worker adapter. The worker calls
     /// this only after authenticating the specified snapshot; it is never a UI API.
     pub fn author(&self, authenticated: Option<Digest>) -> Result<AuthorKey, RuntimeError> {
-        if let Some(expected) = authenticated {
-            if self.snapshot()?.fingerprint() != expected {
+        let issued = if let Some(expected) = authenticated {
+            let snapshot = self
+                .authentication
+                .lock()
+                .map_err(|_| RuntimeError::Transport)?
+                .take()
+                .ok_or_else(|| crate::cipher_ipc::storage(taypeer_storage::Error::Changed))?;
+            if snapshot.fingerprint() != expected {
                 return Err(crate::cipher_ipc::storage(taypeer_storage::Error::Changed));
             }
+            self.check_authenticated_authority(&snapshot)?;
+            Some(snapshot)
         } else if self
             .path
             .try_exists()
             .map_err(|_| RuntimeError::Transport)?
         {
             return Err(RuntimeError::Protocol);
+        } else {
+            None
+        };
+        let author = self.context.profile.author()?;
+        // A native credential prompt can block while a rotation or revocation
+        // arrives. Never return its seed after that authority has changed.
+        if let Some(snapshot) = &issued {
+            self.check_authenticated_authority(snapshot)?;
         }
-        Ok(self.context.profile.author()?)
+        Ok(author)
+    }
+
+    fn check_authenticated_authority(
+        &self,
+        snapshot: &ArchiveSnapshot,
+    ) -> Result<(), RuntimeError> {
+        let state = self
+            .context
+            .coordinator
+            .state(&snapshot.chain().head().database)
+            .map_err(crate::host::sync_error)?;
+        if state.frozen
+            || state.control
+                != snapshot
+                    .chain()
+                    .head_hash()
+                    .map_err(|_| RuntimeError::Protocol)?
+            || state.epoch != snapshot.chain().head().epoch
+        {
+            return Err(crate::cipher_ipc::storage(taypeer_storage::Error::Changed));
+        }
+        Ok(())
     }
     /// Publish a complete encrypted genesis and its protected registration.
     pub fn create(&self, seed: ArchiveSeed) -> Result<(), RuntimeError> {

@@ -546,6 +546,18 @@ impl DatabaseService {
         password: &[u8],
         author: impl FnOnce() -> Result<Option<AuthorKey>, ServiceError>,
     ) -> Result<SessionToken, ServiceError> {
+        self.open_managed_with_author(port, password, |_| author())
+    }
+
+    /// Authenticate one immutable generation and pass that exact ciphertext snapshot
+    /// to the author capability handshake. The callback must recheck current authority;
+    /// ciphertext receipt alone need not invalidate successful authentication.
+    pub fn open_managed_with_author(
+        &mut self,
+        port: Box<dyn CipherPersistence>,
+        password: &[u8],
+        author: impl FnOnce(&ArchiveSnapshot) -> Result<Option<AuthorKey>, ServiceError>,
+    ) -> Result<SessionToken, ServiceError> {
         let snapshot = port.snapshot()?;
         let compatibility = self.capabilities.assess(&snapshot.chain().head().schema);
         compatibility::require_read(&compatibility)?;
@@ -578,7 +590,7 @@ impl DatabaseService {
         let key = selected.unlock_key(password)?;
         let (mut metadata, mut document) =
             codec::read_checkpoint(&selected, &key, snapshot.chain())?;
-        let author = author()?;
+        let author = author(&snapshot)?;
         let admitted = author
             .as_ref()
             .is_some_and(|a| snapshot.chain().head().members.contains_key(&a.device_id()));

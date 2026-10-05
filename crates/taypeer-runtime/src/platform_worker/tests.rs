@@ -268,24 +268,35 @@ fn child() {
     );
     std::process::exit(if result.is_ok() { 0 } else { 70 });
 }
+type AuthHook = Box<dyn FnOnce() + Send>;
 #[derive(Default)]
-struct Credentials(Mutex<BTreeMap<(String, String), Vec<u8>>>);
+struct Credentials {
+    values: Mutex<BTreeMap<(String, String), Vec<u8>>>,
+    author_prompt: Mutex<Option<AuthHook>>,
+}
 impl CredentialStore for Credentials {
     fn get(
         &self,
         service: &str,
         account: &str,
     ) -> Result<Option<Zeroizing<Vec<u8>>>, ProfileError> {
-        Ok(self
-            .0
+        let value = self
+            .values
             .lock()
             .unwrap()
             .get(&(service.into(), account.into()))
             .cloned()
-            .map(Zeroizing::new))
+            .map(Zeroizing::new);
+        if account == "author" {
+            let hook = self.author_prompt.lock().unwrap().take();
+            if let Some(hook) = hook {
+                hook();
+            }
+        }
+        Ok(value)
     }
     fn set(&self, service: &str, account: &str, bytes: &[u8]) -> Result<(), ProfileError> {
-        self.0
+        self.values
             .lock()
             .unwrap()
             .insert((service.into(), account.into()), bytes.to_vec());
@@ -301,6 +312,7 @@ struct Faults {
     hold_commit: Mutex<bool>,
     hold_changed: Condvar,
     commit_entered: AtomicBool,
+    before_author: Mutex<Option<AuthHook>>,
 }
 struct Server {
     writer: Arc<PlatformCipherWriter>,
@@ -368,6 +380,12 @@ impl Server {
             Request::WorkingCopy => Ok(Reply::Digest(self.writer.working_copy()?)),
             Request::Author(authenticated) => {
                 self.faults.author_calls.fetch_add(1, Ordering::Relaxed);
+                if authenticated.is_some() {
+                    let hook = self.faults.before_author.lock().unwrap().take();
+                    if let Some(hook) = hook {
+                        hook();
+                    }
+                }
                 Ok(Reply::Author(
                     self.writer.author(authenticated)?.secret_seed(),
                 ))
@@ -539,14 +557,16 @@ struct Fixture {
     host: RuntimeHost,
     path: PathBuf,
     launcher: Launcher,
+    credentials: Arc<Credentials>,
 }
 impl Fixture {
     fn new() -> Self {
         let directory = tempfile::tempdir().unwrap();
+        let credentials = Arc::new(Credentials::default());
         let host = RuntimeHost::with_platform_credentials(
             &directory.path().join("profile"),
             SessionController::new(Default::default()),
-            Arc::new(Credentials::default()),
+            credentials.clone(),
         )
         .unwrap();
         let path = directory.path().join("PUBLIC descriptor.taypeer");
@@ -561,6 +581,7 @@ impl Fixture {
             host,
             path,
             launcher,
+            credentials,
         }
     }
     fn open(&self, password: &str, create: bool) -> Result<Worker, RuntimeError> {
@@ -609,6 +630,119 @@ fn wait(mut ready: impl FnMut() -> bool) {
         );
         std::thread::sleep(Duration::from_millis(20));
     }
+}
+
+fn authority_change(fixture: &Fixture, database: &taypeer_core::DatabaseId) -> AuthHook {
+    let mut service = DatabaseService::new();
+    let session = fixture
+        .host
+        .open_local(&mut service, &fixture.path, PASSWORD.as_bytes(), None)
+        .unwrap();
+    assert_eq!(&session.database, database);
+    Box::new(move || {
+        service
+            .rotate_password(
+                &session,
+                Digest::of(b"PUBLIC rotation during authentication"),
+                b"PUBLIC rotated descriptor password",
+                None,
+            )
+            .unwrap();
+    })
+}
+
+#[test]
+fn ciphertext_receipt_during_authentication_keeps_exact_snapshot_authority_valid() {
+    let fixture = Fixture::new();
+    let mut original = fixture.open(PASSWORD, true).unwrap();
+    edit(&mut original, "PUBLIC authenticated before receipt");
+    let view = editor(&mut original);
+    let saved: DraftSaveOutcome = serde_json::from_value(
+        save(
+            &mut original,
+            &view,
+            OperationId::new("PUBLIC auth receipt snapshot"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert!(matches!(saved, DraftSaveOutcome::Saved { .. }));
+    let entry = editor(&mut original).entry.unwrap();
+    let database = original.database_id().clone();
+    original.close().unwrap();
+    let coordinator = Arc::clone(fixture.host.coordinator());
+    let expected = coordinator.snapshot(&database).unwrap().fingerprint();
+    *fixture.launcher.faults.before_author.lock().unwrap() = Some(Box::new(move || {
+        let snapshot = coordinator.snapshot(&database).unwrap();
+        let mut journal = snapshot.metadata().journal.clone();
+        journal
+            .retained
+            .insert(snapshot.metadata().manifest.body.checkpoint);
+        let received = coordinator
+            .commit(
+                &database,
+                PreparedCommit {
+                    expected: snapshot.fingerprint(),
+                    control: snapshot.chain().head_hash().unwrap(),
+                    controls: snapshot.chain().records().to_vec(),
+                    objects: Vec::new(),
+                    remove: BTreeSet::new(),
+                    checkpoint: snapshot.metadata().manifest.body.checkpoint,
+                    baseline: snapshot.metadata().manifest.body.baseline,
+                    journal,
+                },
+            )
+            .unwrap();
+        assert_ne!(received.fingerprint(), expected);
+        assert_eq!(received.chain(), snapshot.chain());
+    }));
+    let mut reopened = fixture.open(PASSWORD, false).unwrap();
+    assert_eq!(
+        reopened.request(&Command::Entry(entry)).unwrap()["title"],
+        "PUBLIC authenticated before receipt"
+    );
+    // Consumed or arbitrary fingerprints cannot become reusable author capabilities.
+    assert!(fixture.launcher.writer.author(Some(expected)).is_err());
+    assert!(
+        fixture
+            .launcher
+            .writer
+            .author(Some(Digest::of(b"PUBLIC arbitrary generation")))
+            .is_err()
+    );
+    reopened.close().unwrap();
+}
+
+#[test]
+fn rotation_after_snapshot_authentication_does_not_publish_a_session() {
+    let fixture = Fixture::new();
+    let mut original = fixture.open(PASSWORD, true).unwrap();
+    let database = original.database_id().clone();
+    original.close().unwrap();
+    *fixture.launcher.faults.before_author.lock().unwrap() =
+        Some(authority_change(&fixture, &database));
+    assert!(matches!(
+        fixture.open(PASSWORD, false),
+        Err(RuntimeError::Service(
+            taypeer_services::ServiceError::Storage(StorageError::Changed)
+        ))
+    ));
+}
+
+#[test]
+fn rotation_during_native_credential_prompt_does_not_release_author() {
+    let fixture = Fixture::new();
+    let mut original = fixture.open(PASSWORD, true).unwrap();
+    let database = original.database_id().clone();
+    original.close().unwrap();
+    *fixture.credentials.author_prompt.lock().unwrap() =
+        Some(authority_change(&fixture, &database));
+    assert!(matches!(
+        fixture.open(PASSWORD, false),
+        Err(RuntimeError::Service(
+            taypeer_services::ServiceError::Storage(StorageError::Changed)
+        ))
+    ));
 }
 
 #[test]
