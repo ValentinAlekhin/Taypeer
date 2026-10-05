@@ -353,24 +353,40 @@ impl RuntimeHost {
         let mut worker =
             self.open_configured(executable, &path, password, (!exists).then(|| form.clone()))?;
         if exists {
-            let mut info = worker.request(&crate::Command::DatabaseInfo)?;
-            let matches = info.get("name").and_then(serde_json::Value::as_str) == Some(&form.name)
-                && info.get("description").and_then(serde_json::Value::as_str)
-                    == form.description.as_deref();
-            crate::erase_view(&mut info);
-            let policy = worker.request(&crate::Command::DatabasePolicy)?;
-            let actual: taypeer_core::DatabasePolicy =
-                serde_json::from_value(policy).map_err(|_| RuntimeError::Protocol)?;
-            if !matches || actual != form.policy {
-                worker.invalidate(crate::session::LockReason::Transport);
-                return Err(RuntimeError::Protocol);
-            }
+            Self::validate_creation_retry(&mut worker, &form)?;
         }
         if let Err(error) = self.register_working_copy(&path) {
             worker.invalidate(crate::session::LockReason::Transport);
             return Err(error);
         }
         Ok(worker)
+    }
+
+    /// Verify an authenticated retry against its original creation form. A mismatch
+    /// or unreadable policy revokes the worker before the caller can expose it.
+    pub fn validate_creation_retry(
+        worker: &mut Worker,
+        form: &taypeer_services::CreateDatabase,
+    ) -> Result<(), RuntimeError> {
+        let result = (|| {
+            let mut info = worker.request(&crate::Command::DatabaseInfo)?;
+            let matches = info.get("name").and_then(serde_json::Value::as_str) == Some(&form.name)
+                && info.get("description").and_then(serde_json::Value::as_str)
+                    == form.description.as_deref();
+            crate::erase_view(&mut info);
+            let actual: taypeer_core::DatabasePolicy =
+                serde_json::from_value(worker.request(&crate::Command::DatabasePolicy)?)
+                    .map_err(|_| RuntimeError::Protocol)?;
+            if matches && actual == form.policy {
+                Ok(())
+            } else {
+                Err(RuntimeError::Protocol)
+            }
+        })();
+        if result.is_err() {
+            worker.invalidate(crate::session::LockReason::Transport);
+        }
+        result
     }
 
     /// Explicitly relocate a catalog item after its worker and coordinator writer are closed.
