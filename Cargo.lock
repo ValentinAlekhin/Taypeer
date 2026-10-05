@@ -2135,6 +2135,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "directories"
+version = "6.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "16f5094c54661b38d03bd7e50df373292118db60b585c08a411c6d840017fe7d"
+dependencies = [
+ "dirs-sys 0.5.0",
+]
+
+[[package]]
 name = "dirs"
 version = "5.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9178,6 +9187,7 @@ dependencies = [
  "fractional_index",
  "serde",
  "serde_json",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -9230,6 +9240,7 @@ dependencies = [
  "serde",
  "serde_json",
  "taypeer-core",
+ "thiserror 2.0.18",
  "zeroize",
 ]
 
@@ -9237,6 +9248,7 @@ dependencies = [
 name = "taypeer-runtime"
 version = "0.1.0"
 dependencies = [
+ "directories",
  "rand_core 0.6.4",
  "security-framework",
  "serde",
@@ -9247,6 +9259,7 @@ dependencies = [
  "taypeer-sync",
  "taypeer-trust",
  "tempfile",
+ "thiserror 2.0.18",
  "tokio",
  "zeroize",
 ]
@@ -9283,6 +9296,7 @@ dependencies = [
  "taypeer-sync",
  "taypeer-trust",
  "tempfile",
+ "thiserror 2.0.18",
  "url",
  "usvg 0.46.0",
  "zeroize",
@@ -9319,6 +9333,7 @@ dependencies = [
  "taypeer-core",
  "taypeer-trust",
  "tempfile",
+ "thiserror 2.0.18",
  "zeroize",
 ]
 

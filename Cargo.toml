@@ -10,6 +10,8 @@ rust-version = "1.97.1"
 publish = false
 
 [workspace.dependencies]
+directories = "=6.0.0"
+thiserror = "=2.0.18"
 wayland-server = "=0.31.13"
 wayland-client = "=0.31.14"
 wayland-protocols = { version = "=0.32.12", features = ["client", "staging"] }

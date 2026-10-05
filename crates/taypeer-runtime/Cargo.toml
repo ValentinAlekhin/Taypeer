@@ -10,6 +10,8 @@ publish.workspace = true
 ui-test-support = []
 
 [dependencies]
+directories.workspace = true
+thiserror.workspace = true
 taypeer-services.workspace = true
 taypeer-core.workspace = true
 taypeer-storage.workspace = true
