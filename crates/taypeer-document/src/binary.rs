@@ -48,16 +48,23 @@ impl Document {
                 continue;
             }
             match &address.object {
-                ObjectId::Group(_) => {
-                    for icon in groups::read_group(&self.doc, &address)?.icons {
-                        if let Some(id) = icon.blob() {
+                ObjectId::Group(group) => {
+                    if let Some(id) = groups::read_group(&self.doc, &address)?.icon.blob() {
+                        refs.retained.insert(id.clone());
+                    }
+                    for revision in self.group_history(group)? {
+                        if revision.snapshot.group.generation == address.generation
+                            && let Some(id) = revision.snapshot.group.icon.blob()
+                        {
                             refs.retained.insert(id.clone());
                         }
                     }
                 }
                 ObjectId::Entry(id) => {
                     refs.snapshot(
-                        &projection::read_entry_generation(&self.doc, &address, None)?,
+                        &projection::selected_snapshot(projection::read_entry_generation(
+                            &self.doc, &address, None,
+                        )?)?,
                         true,
                     );
                     for stored in stored_revisions(&self.doc, id)? {
@@ -179,10 +186,20 @@ impl Document {
         candidate.prepare_write()?;
         let mut tx = candidate.doc.transaction_at(PatchLog::null(), &base);
         let node = objects::generation_object(&tx, &address)?;
-        tx.put(&node, "icon", encode(&icon)?)?;
-        // Record the content event so concurrent trash/purge retains this change as a late source.
-        tx.put(&node, "icon_modified_at", now)?;
-        objects::record_event(&mut tx, &address, None)?;
+        let changed = groups::read_group(&basis, &address)?.icon != icon;
+        if changed {
+            tx.put(&node, "icon", encode(&icon)?)?;
+            // Record the content event so concurrent trash/purge retains this change as a late source.
+            tx.put(&node, "icon_modified_at", now)?;
+            history::record_group_revision(
+                &mut tx,
+                &address,
+                RevisionKind::Save,
+                now,
+                &base.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            )?;
+            objects::record_event(&mut tx, &address, None)?;
+        }
         lifecycle::put_receipt(
             &mut tx,
             operation,

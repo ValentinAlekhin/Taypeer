@@ -118,11 +118,18 @@ pub(super) fn current(read: &impl ReadDoc, id: &ObjectId) -> Result<Vec<ObjectAd
 }
 
 pub(super) fn single(read: &impl ReadDoc, id: &ObjectId) -> Result<ObjectAddress, Error> {
-    let mut current = current(read, id)?;
-    if current.len() != 1 {
-        return Err(Error::Conflict);
-    }
-    current.pop().ok_or(Error::InvalidDocument)
+    let shell = shell(read, id)?;
+    let (value, _) = read
+        .get_all(shell, "current")?
+        .into_iter()
+        .max_by(|left, right| left.1.cmp(&right.1))
+        .ok_or(Error::InvalidDocument)?;
+    let address = ObjectAddress {
+        object: id.clone(),
+        generation: GenerationId::new(value.to_str().ok_or(Error::InvalidDocument)?),
+    };
+    generation_object(read, &address)?;
+    Ok(address)
 }
 
 pub(super) fn generation_object(

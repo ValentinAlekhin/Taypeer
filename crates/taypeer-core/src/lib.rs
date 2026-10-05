@@ -15,6 +15,10 @@ mod order;
 pub use order::{OrderError, OrderKey};
 mod session;
 pub use session::SessionPolicy;
+mod patch;
+pub use patch::{DatabaseMetadataPatch, FieldUpdate, GroupMetadataPatch};
+mod history;
+pub use history::{DatabaseSnapshot, GroupSnapshot, SavedDatabaseRevision, SavedGroupRevision};
 
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -52,6 +56,10 @@ identifier!(GroupId, "Stable identity of a group.");
 identifier!(OperationId, "Identity of one idempotent user operation.");
 identifier!(EntryId, "Stable identity of an entry.");
 identifier!(
+    DraftId,
+    "Stable identity of a local, encrypted editor draft."
+);
+identifier!(
     AttachmentId,
     "Identity of an attachment independent of its name."
 );
@@ -62,7 +70,7 @@ identifier!(
 identifier!(AttributeId, "Stable identity of a custom attribute.");
 identifier!(
     RevisionId,
-    "Stable identity of one confirmed entry revision."
+    "Stable identity of one confirmed object revision."
 );
 
 /// UTC milliseconds, used for presentation rather than conflict resolution.
@@ -121,7 +129,7 @@ pub struct AttributeValue {
 pub struct Attribute {
     /// Identity retained when the attribute is renamed.
     pub id: AttributeId,
-    /// Exact, nonempty name, unique within one local entry form.
+    /// Exact, nonempty name; distinct IDs may have the same name.
     pub name: String,
     /// Atomic value and protection flag.
     pub value: AttributeValue,
@@ -153,7 +161,8 @@ pub struct EntryFields {
 }
 
 /// A structural validation failure; it never contains user-entered content.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("{self:?}")]
 pub enum ValidationError {
     /// A group name is empty.
     EmptyGroupName,
@@ -165,18 +174,11 @@ pub enum ValidationError {
     EmptyTitle,
     /// An attribute name is empty.
     EmptyAttributeName,
-    /// Two local attributes have exactly the same name.
+    /// Retained diagnostic from previous development schemas; duplicate names are now allowed.
     DuplicateAttributeName,
     /// A map key and its attribute's identity disagree.
     AttributeIdentityMismatch,
 }
-
-impl fmt::Display for ValidationError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{self:?}")
-    }
-}
-impl std::error::Error for ValidationError {}
 
 /// Validates a group name without trimming or normalizing it.
 pub fn validate_group_name(name: &str) -> Result<(), ValidationError> {
@@ -214,13 +216,9 @@ impl EntryFields {
 pub fn validate_attribute_names<'a>(
     names: impl IntoIterator<Item = &'a str>,
 ) -> Result<(), ValidationError> {
-    let mut unique = BTreeSet::new();
     for name in names {
         if name.is_empty() {
             return Err(ValidationError::EmptyAttributeName);
-        }
-        if !unique.insert(name) {
-            return Err(ValidationError::DuplicateAttributeName);
         }
     }
     Ok(())
@@ -305,18 +303,22 @@ pub struct FieldState {
 /// A conflicting field and every retained alternative.
 pub type FieldConflict = FieldState;
 
-/// A complete logical view, without choosing a CRDT winner.
+/// A selected editable view together with the original concurrent alternatives.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EntrySnapshot {
     /// Stable identity.
     pub id: EntryId,
-    /// Fixed placement in this increment.
+    /// Selected group, or no group.
     pub group_id: Option<GroupId>,
     /// State generation containing these fields.
     pub generation: GenerationId,
-    /// All atomic destination alternatives, never an implicit winner.
+    /// Retained actual group destinations; explicit absence is in `placement_alternatives`.
     pub placements: Vec<GroupRef>,
-    /// A regular editable form, available only when every field is unambiguous.
+    /// Selected destination, or no group.
+    pub placement: Option<GroupRef>,
+    /// Lossless destinations, including explicit absence.
+    pub placement_alternatives: Vec<Option<GroupRef>>,
+    /// Selected editable form; concurrent alternatives never prevent ordinary editing.
     pub fields: Option<EntryFields>,
     /// Conflicting fields; all alternatives remain in `values` as well.
     pub conflicts: Vec<FieldConflict>,
@@ -329,9 +331,9 @@ pub struct EntrySnapshot {
 }
 
 impl EntrySnapshot {
-    /// Whether ordinary editing must defer to an explicit conflict workflow.
+    /// Whether original alternatives remain available for historical inspection.
     pub fn has_conflicts(&self) -> bool {
-        !self.conflicts.is_empty() || self.placements.len() != 1
+        !self.conflicts.is_empty() || self.placement_alternatives.len() > 1
     }
 }
 
@@ -363,7 +365,7 @@ pub struct SavedRevision {
     pub kind: RevisionKind,
     /// Original causal heads, encoded opaquely by the document adapter.
     pub base: Vec<String>,
-    /// Complete logical snapshot, including unresolved alternatives.
+    /// Selected logical snapshot; original branch versions retain alternatives separately.
     pub snapshot: EntrySnapshot,
 }
 
@@ -440,10 +442,7 @@ mod tests {
             .get_mut(&AttributeId::new("b"))
             .unwrap()
             .name = "Code".into();
-        assert_eq!(
-            fields.validate(),
-            Err(ValidationError::DuplicateAttributeName)
-        );
+        assert_eq!(fields.validate(), Ok(()));
     }
 
     #[test]

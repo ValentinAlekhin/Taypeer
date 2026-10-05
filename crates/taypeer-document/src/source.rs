@@ -156,17 +156,21 @@ pub(crate) fn prepare_actor(
     document: &mut Automerge,
     author: Option<[u8; 32]>,
 ) -> Result<(), Error> {
+    let mut suffix = [0; 16];
+    OsRng
+        .try_fill_bytes(&mut suffix)
+        .map_err(|_| Error::Random)?;
     if let Some(author) = author {
-        let mut suffix = [0; 16];
-        OsRng
-            .try_fill_bytes(&mut suffix)
-            .map_err(|_| Error::Random)?;
         let mut bytes = ACTOR_PREFIX.to_vec();
         bytes.extend(author);
         bytes.extend(suffix);
         // A fresh actor for every transaction also prevents transaction_at from
         // introducing Automerge's own concurrency prefix over the author binding.
         document.set_actor(ActorId::from(bytes));
+    } else {
+        // Unbound demo writers also need fresh branches: mixing an isolated branch with a later
+        // ordinary transaction under the old actor can make Automerge 0.7.4 lose its op range.
+        document.set_actor(ActorId::from(suffix));
     }
     Ok(())
 }
@@ -204,7 +208,7 @@ mod tests {
             .unwrap();
         assert_eq!(left.heads(), heads);
         assert_eq!(left.history(&entry).unwrap().len(), 3);
-        assert!(left.entry(&entry).unwrap().fields.is_none());
+        assert!(left.entry(&entry).unwrap().fields.is_some());
     }
 
     #[test]

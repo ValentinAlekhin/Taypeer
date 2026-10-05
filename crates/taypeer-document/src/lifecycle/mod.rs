@@ -50,7 +50,7 @@ pub struct ObjectState {
     pub address: ObjectAddress,
     /// Product visibility.
     pub status: ObjectStatus,
-    /// An explicit review is needed before destructive cleanup.
+    /// Retained content alternatives are available for historical inspection.
     pub conflicted: bool,
 }
 
@@ -127,15 +127,12 @@ impl Document {
         }
         let snapshot = projection::read_entry_generation(&self.doc, address, None)?;
         conflict |= snapshot.has_conflicts();
-        let current = objects::current(&self.doc, &address.object)?;
-        if current.len() != 1 || !current.contains(address) {
+        let current = objects::single(&self.doc, &address.object)?;
+        if &current != address {
             conflict = true;
             if status == ObjectStatus::Active {
                 status = ObjectStatus::Unplaced;
             }
-        }
-        if snapshot.placements.len() != 1 && status == ObjectStatus::Active {
-            status = ObjectStatus::Unplaced;
         }
         for placement in &snapshot.placements {
             let parent = ObjectAddress::from(placement.clone());
@@ -143,19 +140,19 @@ impl Document {
                 Some(parent) if parent.status == ObjectStatus::Trashed => {
                     if status != ObjectStatus::Trashed {
                         status = ObjectStatus::Trashed;
-                        conflict = true;
                     }
                 }
                 Some(parent)
                     if parent.status == ObjectStatus::Active
                         && parent.current
                         && !parent.placement_conflict => {}
-                _ => {
+                _ if snapshot.placement.as_ref() == Some(placement) => {
                     conflict = true;
                     if status == ObjectStatus::Active {
                         status = ObjectStatus::Unplaced;
                     }
                 }
+                _ => {}
             }
         }
         Ok((status, conflict))
@@ -177,7 +174,7 @@ impl Document {
         .transpose()
     }
 
-    fn at_heads(&self, heads: &[String]) -> Result<Self, Error> {
+    pub(super) fn at_heads(&self, heads: &[String]) -> Result<Self, Error> {
         let hashes = parse_heads(&self.doc, heads)?;
         let doc = self.doc.fork_at(&hashes)?;
         Ok(Self {
@@ -259,15 +256,9 @@ impl Document {
             }
             None
         };
-        if action == LifecycleAction::Restore
-            && matches!(target, ObjectId::Entry(_))
-            && destination.is_none()
-        {
-            return Err(Error::InvalidContext);
-        }
         let mut affected = BTreeMap::new();
         for address in self.selected_subtree(&address)? {
-            let (status, conflict) = self.object_status(&address)?;
+            let (status, _) = self.object_status(&address)?;
             if status == ObjectStatus::Purged {
                 return Err(Error::NotFound);
             }
@@ -275,9 +266,6 @@ impl Document {
                 && status != ObjectStatus::Trashed
             {
                 return Err(Error::InvalidContext);
-            }
-            if action == LifecycleAction::Purge && conflict {
-                return Err(Error::Conflict);
             }
             affected.insert(address.clone(), objects::events(&self.doc, &address)?);
         }
@@ -325,7 +313,7 @@ impl Document {
         Ok(Some(receipt.result))
     }
 
-    pub(super) fn validate_v5_structure(&self) -> Result<(), Error> {
+    pub(super) fn validate_v6_structure(&self) -> Result<(), Error> {
         groups::tree(&self.doc)?;
         let mut owners = BTreeMap::new();
         let mut attachment_owners = BTreeMap::new();
@@ -356,9 +344,17 @@ impl Document {
                 stored_revisions(&self.doc, id)?;
             }
         }
-        for root_name in ["events", "purges", "recoveries", "lifecycle_receipts"] {
+        for root_name in [
+            "events",
+            "purges",
+            "recoveries",
+            "lifecycle_receipts",
+            "group_revisions",
+            "database_revisions",
+        ] {
             object(&self.doc, &ROOT, root_name)?;
         }
+        history::validate(&self.doc)?;
         Ok(())
     }
 }
@@ -416,7 +412,11 @@ fn confirm_revision(
         &target,
         &preliminary.values,
     )?);
-    let snapshot = projection::read_entry_generation(tx, address, Some((&changed, now)))?;
+    let snapshot = projection::selected_snapshot(projection::read_entry_generation(
+        tx,
+        address,
+        Some((&changed, now)),
+    )?)?;
     let stored = StoredRevision {
         revision: SavedRevision {
             id: revision_id.clone(),

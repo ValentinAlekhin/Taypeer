@@ -42,7 +42,7 @@ impl std::fmt::Debug for RecoveryRequest {
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
 pub enum SourcePreview {
     /// Group names and placements at the source change.
-    Group(GroupNode),
+    Group(Box<GroupNode>),
     /// Entry field variants at the source change.
     Entry(Box<EntrySnapshot>),
 }
@@ -85,7 +85,16 @@ impl Document {
         let shell = objects::shell(&tx, &address.object)?;
         tx.put(shell, "current", address.generation.as_str())?;
         match address.object {
-            ObjectId::Group(_) => objects::record_event(&mut tx, address, None)?,
+            ObjectId::Group(_) => {
+                history::record_group_revision(
+                    &mut tx,
+                    address,
+                    RevisionKind::Resolve,
+                    now,
+                    heads,
+                )?;
+                objects::record_event(&mut tx, address, None)?;
+            }
             ObjectId::Entry(_) => confirm_revision(
                 &mut tx,
                 address,
@@ -153,10 +162,10 @@ impl Document {
         let source = self.late_source(id)?;
         let basis = self.at_heads(std::slice::from_ref(&source.change))?;
         match source.address.object {
-            ObjectId::Group(_) => Ok(SourcePreview::Group(groups::read_group(
+            ObjectId::Group(_) => Ok(SourcePreview::Group(Box::new(groups::read_group(
                 &basis.doc,
                 &source.address,
-            )?)),
+            )?))),
             ObjectId::Entry(_) => Ok(SourcePreview::Entry(Box::new(
                 projection::read_entry_generation(&basis.doc, &source.address, None)?,
             ))),
@@ -189,9 +198,6 @@ impl Document {
             None
         };
         let destination = self.destination(request.destination.clone())?;
-        if matches!(source.address.object, ObjectId::Entry(_)) && destination.is_none() {
-            return Err(Error::InvalidContext);
-        }
         if request.mode == RecoveryMode::Restore {
             let current = objects::current(&self.doc, &source.address.object)?;
             for address in current {
@@ -244,12 +250,7 @@ impl Document {
                 }
                 let name = match &request.name {
                     Some(name) => name.as_str(),
-                    None => {
-                        let [name] = original.names.as_slice() else {
-                            return Err(Error::Conflict);
-                        };
-                        name
-                    }
+                    None => &original.name,
                 };
                 validate_group_name(name)?;
                 let created = if request.mode == RecoveryMode::Restore {
@@ -269,16 +270,22 @@ impl Document {
                 )?;
                 let icon = match &request.icon {
                     Some(icon) => icon,
-                    None => {
-                        let [icon] = original.icons.as_slice() else {
-                            return Err(Error::Conflict);
-                        };
-                        icon
-                    }
+                    None => &original.icon,
                 };
                 tx.put(&node, "icon", encode(icon)?)?;
                 tx.put(&node, "description", encode(&description)?)?;
                 tx.put(&node, "created_at", created)?;
+                history::record_group_revision(
+                    &mut tx,
+                    &target,
+                    if request.mode == RecoveryMode::Clone {
+                        RevisionKind::Clone
+                    } else {
+                        RevisionKind::Restore
+                    },
+                    now,
+                    &heads,
+                )?;
                 objects::record_event(&mut tx, &target, None)?;
             }
             SourcePreview::Entry(original) => {
@@ -311,7 +318,7 @@ impl Document {
                     &mut tx,
                     &target,
                     &fields,
-                    destination.as_ref().ok_or(Error::InvalidContext)?,
+                    destination.as_ref(),
                     created,
                     &revision,
                 )?;

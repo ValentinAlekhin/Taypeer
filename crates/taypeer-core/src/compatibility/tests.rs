@@ -39,12 +39,16 @@ fn unknown_features_and_schemas_require_the_right_update() {
     let base = SchemaDescriptor::current();
     let mut writes = base.required_write_features().clone();
     writes.insert(FeatureId::new("future.retention").unwrap());
-    let schema =
-        SchemaDescriptor::new(5, base.required_read_features().clone(), writes.clone()).unwrap();
+    let schema = SchemaDescriptor::new(
+        CURRENT_SCHEMA,
+        base.required_read_features().clone(),
+        writes.clone(),
+    )
+    .unwrap();
     let report = ClientCapabilities::default().assess(&schema);
     assert!(report.read.is_supported());
     assert!(!report.write.is_supported());
-    let schema = SchemaDescriptor::new(5, writes.clone(), writes).unwrap();
+    let schema = SchemaDescriptor::new(CURRENT_SCHEMA, writes.clone(), writes).unwrap();
     assert!(
         !ClientCapabilities::default()
             .assess(&schema)
@@ -87,14 +91,12 @@ fn deserialization_cannot_drop_mandatory_semantics_or_accept_unbounded_identifie
 }
 
 #[test]
-fn development_five_contract_is_independent_of_current_writer_defaults() {
+fn older_development_five_contract_requires_an_update() {
     let frozen = r#"{"schema_version":5,"required_read_features":["taypeer.binary","taypeer.entries","taypeer.history","taypeer.lifecycle"],"required_write_features":["taypeer.binary","taypeer.entries","taypeer.history","taypeer.lifecycle"]}"#;
     let descriptor: SchemaDescriptor = serde_json::from_str(frozen).unwrap();
-    assert!(
-        ClientCapabilities::default()
-            .assess(&descriptor)
-            .write
-            .is_supported()
+    assert_eq!(
+        ClientCapabilities::default().assess(&descriptor).read,
+        CompatibilityAccess::UnsupportedSchema { schema_version: 5 }
     );
     assert_eq!(serde_json::to_string(&descriptor).unwrap(), frozen);
     assert_eq!(schema::current().version, CURRENT_SCHEMA);

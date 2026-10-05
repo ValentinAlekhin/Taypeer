@@ -22,6 +22,7 @@ pub use source::{OriginalChange, SourceMetadata};
 mod codec;
 mod fields;
 mod groups;
+mod history;
 mod lifecycle;
 mod metadata;
 mod objects;
@@ -39,7 +40,8 @@ use projection::read_entry;
 use taypeer_core::{GenerationId, GroupPlacement, GroupRef, OrderKey};
 
 /// A document failure without user content or third-party parser diagnostics.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("{self:?}")]
 pub enum Error {
     /// A local form violated a domain invariant.
     Validation(ValidationError),
@@ -59,12 +61,6 @@ pub enum Error {
     Random,
 }
 
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{self:?}")
-    }
-}
-impl std::error::Error for Error {}
 impl From<ValidationError> for Error {
     fn from(error: ValidationError) -> Self {
         Self::Validation(error)
@@ -83,7 +79,7 @@ impl From<automerge::AutomergeError> for Error {
 pub struct EntryDraft {
     database_id: DatabaseId,
     entry_id: EntryId,
-    group_id: GroupId,
+    group_id: Option<GroupId>,
     generation: GenerationId,
     revision_id: RevisionId,
     base: Vec<ChangeHash>,
@@ -96,9 +92,13 @@ impl EntryDraft {
     pub fn entry_id(&self) -> &EntryId {
         &self.entry_id
     }
-    /// Destination group; moving entries is outside this increment.
-    pub fn group_id(&self) -> &GroupId {
-        &self.group_id
+    /// Destination group, or no group for an ungrouped entry.
+    pub fn group_id(&self) -> Option<&GroupId> {
+        self.group_id.as_ref()
+    }
+    /// Identity of this immutable confirmation attempt.
+    pub fn revision_id(&self) -> &RevisionId {
+        &self.revision_id
     }
     /// Current unconfirmed form.
     pub fn fields(&self) -> &EntryFields {
@@ -253,6 +253,45 @@ impl Document {
         now: Timestamp,
         receipt: Option<&CommandReceipt<'_>>,
     ) -> Result<Group, Error> {
+        self.create_group_metadata_command(name, None, IconRef::Default, parent, now, receipt)
+    }
+
+    /// Create the complete group form and one revision in the same transaction.
+    pub fn create_group_metadata_command(
+        &mut self,
+        name: String,
+        description: Option<String>,
+        icon: IconRef,
+        parent: Option<GroupId>,
+        now: Timestamp,
+        receipt: Option<&CommandReceipt<'_>>,
+    ) -> Result<Group, Error> {
+        self.create_group_metadata_with_id_command(
+            GroupId::new(random_id()),
+            name,
+            description,
+            icon,
+            parent,
+            now,
+            receipt,
+        )
+    }
+
+    /// Confirm a reserved new-group identity with its complete form and retry receipt.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the command carries one complete group form and its confirmation context"
+    )]
+    pub fn create_group_metadata_with_id_command(
+        &mut self,
+        id: GroupId,
+        name: String,
+        description: Option<String>,
+        icon: IconRef,
+        parent: Option<GroupId>,
+        now: Timestamp,
+        receipt: Option<&CommandReceipt<'_>>,
+    ) -> Result<Group, Error> {
         validate_group_name(&name)?;
         let groups = self.groups()?;
         if parent
@@ -265,7 +304,6 @@ impl Document {
             .iter()
             .filter(|group| group.parent == parent)
             .collect();
-        let id = GroupId::new(random_id());
         let order = OrderKey::between(
             siblings.last().map(|g| (&g.order, g.id.as_str())),
             None,
@@ -282,10 +320,11 @@ impl Document {
             name,
             parent,
             order,
-            icon: IconRef::Default,
+            icon,
             created_at: now,
             modified_at: now,
         };
+        let heads = self.heads();
         self.prepare_write()?;
         let mut tx = self.doc.transaction();
         let (address, object) = objects::initialize(&mut tx, &ObjectId::Group(group.id.clone()))?;
@@ -303,6 +342,8 @@ impl Document {
         tx.put_object(&object, "name_times", ObjType::Map)?;
         put_group_name(&mut tx, &object, &group.name, now)?;
         tx.put(&object, "icon", encode(&group.icon)?)?;
+        tx.put(&object, "description", encode(&description)?)?;
+        history::record_group_revision(&mut tx, &address, RevisionKind::Create, now, &heads)?;
         objects::record_event(&mut tx, &address, None)?;
         if let Some(receipt) = receipt {
             receipt.write(&mut tx, &group)?;
@@ -328,36 +369,16 @@ impl Document {
         now: Timestamp,
         receipt: Option<&CommandReceipt<'_>>,
     ) -> Result<Group, Error> {
-        validate_group_name(&name)?;
-        let mut group = self
-            .groups()?
-            .into_iter()
-            .find(|group| &group.id == id)
-            .ok_or(Error::NotFound)?;
-        let changed = group.name != name;
-        if !changed && receipt.is_none() {
-            return Ok(group);
-        }
-        if changed {
-            group.name = name;
-        }
-        self.prepare_write()?;
-        let mut tx = self.doc.transaction();
-        if changed {
-            let address = objects::single(&tx, &ObjectId::Group(id.clone()))?;
-            let group_object = objects::generation_object(&tx, &address)?;
-            put_group_name(&mut tx, &group_object, &group.name, now)?;
-            objects::record_event(&mut tx, &address, None)?;
-        }
-        let group = read_groups(&tx)?
-            .into_iter()
-            .find(|group| &group.id == id)
-            .ok_or(Error::NotFound)?;
-        if let Some(receipt) = receipt {
-            receipt.write(&mut tx, &group)?;
-        }
-        tx.commit();
-        Ok(group)
+        self.update_group_metadata_command(
+            id,
+            &taypeer_core::GroupMetadataPatch {
+                name: taypeer_core::FieldUpdate::Set(name),
+                ..Default::default()
+            },
+            &self.heads(),
+            now,
+            receipt,
+        )
     }
 
     /// Lists groups in deterministic parent/order/ID order.
@@ -367,7 +388,19 @@ impl Document {
 
     /// Opens an empty local form and captures the current document heads.
     pub fn begin_create_entry(&self, group: GroupId) -> Result<EntryDraft, Error> {
-        self.require_group(&group)?;
+        self.begin_create_entry_in(Some(group))
+    }
+
+    /// Open an empty form without creating an implicit group.
+    pub fn begin_create_entry_ungrouped(&self) -> Result<EntryDraft, Error> {
+        self.begin_create_entry_in(None)
+    }
+
+    /// Open an empty local form at an optional group destination.
+    pub fn begin_create_entry_in(&self, group: Option<GroupId>) -> Result<EntryDraft, Error> {
+        if let Some(group) = &group {
+            self.require_group(group)?;
+        }
         let entry_id = EntryId::new(random_id());
         Ok(EntryDraft {
             database_id: self.database_id.clone(),
@@ -381,19 +414,74 @@ impl Document {
         })
     }
 
-    /// Opens an unambiguous entry. Existing conflicts need a later explicit workflow.
+    /// Open selected entry values while retaining the original causal context.
     pub fn begin_edit_entry(&self, id: &EntryId) -> Result<EntryDraft, Error> {
         let snapshot = self.entry(id)?;
         let fields = snapshot.fields.ok_or(Error::Conflict)?;
         Ok(EntryDraft {
             database_id: self.database_id.clone(),
             entry_id: id.clone(),
-            group_id: snapshot.group_id.ok_or(Error::Conflict)?,
+            group_id: snapshot.group_id,
             generation: snapshot.generation,
             revision_id: RevisionId::new(random_id()),
             base: self.doc.get_heads(),
             original: Some(fields.clone()),
             fields,
+        })
+    }
+
+    /// Continue an editor after confirming an immutable snapshot, preserving subsequent input.
+    ///
+    /// Only the confirmed revision's causal change becomes the new base. Incoming changes that
+    /// the editor has not observed are not acknowledged by the next save.
+    pub fn continue_entry_draft(
+        &self,
+        confirmed: &EntryDraft,
+        newer_fields: EntryFields,
+    ) -> Result<EntryDraft, Error> {
+        if confirmed.database_id != self.database_id {
+            return Err(Error::InvalidContext);
+        }
+        let address = self.require_active_entry(&confirmed.entry_id)?;
+        if address.generation != confirmed.generation {
+            return Err(Error::InvalidContext);
+        }
+        let revisions = object(&self.doc, &ROOT, "revisions")?;
+        let stored = self
+            .doc
+            .get_all(&revisions, confirmed.revision_id.as_str())?;
+        let base = match stored.as_slice() {
+            [] if confirmed.original.as_ref() == Some(&confirmed.fields) => confirmed.base.clone(),
+            [(value, operation)] => {
+                let stored: StoredRevision = decode(value)?;
+                if stored.revision.entry_id != confirmed.entry_id
+                    || stored.submitted.as_ref() != Some(&confirmed.fields)
+                    || stored.revision.base
+                        != confirmed
+                            .base
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect::<Vec<_>>()
+                {
+                    return Err(Error::InvalidContext);
+                }
+                vec![
+                    self.doc
+                        .hash_for_opid(operation)
+                        .ok_or(Error::InvalidContext)?,
+                ]
+            }
+            _ => return Err(Error::InvalidContext),
+        };
+        Ok(EntryDraft {
+            database_id: self.database_id.clone(),
+            entry_id: confirmed.entry_id.clone(),
+            group_id: confirmed.group_id.clone(),
+            generation: confirmed.generation.clone(),
+            revision_id: RevisionId::new(random_id()),
+            base,
+            original: Some(confirmed.fields.clone()),
+            fields: newer_fields,
         })
     }
 
@@ -433,7 +521,9 @@ impl Document {
         if draft.database_id != self.database_id {
             return Err(Error::InvalidContext);
         }
-        self.require_group(&draft.group_id)?;
+        if let Some(group) = &draft.group_id {
+            self.require_group(group)?;
+        }
         draft.fields.validate()?;
         if draft
             .base
@@ -470,10 +560,10 @@ impl Document {
             if address.generation != draft.generation {
                 return Err(Error::InvalidContext);
             }
-        } else {
+        } else if let Some(group) = &draft.group_id {
             // An old create form must not silently save under a closed parent lifetime.
             let basis = self.doc.fork_at(&draft.base)?;
-            let parent = ObjectId::Group(draft.group_id.clone());
+            let parent = ObjectId::Group(group.clone());
             if objects::single(&basis, &parent)? != objects::single(&self.doc, &parent)? {
                 return Err(Error::InvalidContext);
             }
@@ -532,8 +622,11 @@ impl Document {
             }
             let (_, entry) =
                 objects::initialize(&mut tx, &ObjectId::Entry(draft.entry_id.clone()))?;
-            let destination =
-                objects::single(&tx, &ObjectId::Group(draft.group_id.clone()))?.group_ref()?;
+            let destination = draft
+                .group_id
+                .as_ref()
+                .map(|group| objects::single(&tx, &ObjectId::Group(group.clone()))?.group_ref())
+                .transpose()?;
             tx.put(&entry, "group", encode(&destination)?)?;
             tx.put(&entry, "created_at", now)?;
             tx.put_object(&entry, "attributes", ObjType::Map)?;
@@ -549,7 +642,11 @@ impl Document {
             &draft.fields,
             &draft.revision_id,
         )?;
-        let snapshot = read_entry(&tx, &draft.entry_id, Some((&changed, now)))?;
+        let snapshot = projection::selected_snapshot(read_entry(
+            &tx,
+            &draft.entry_id,
+            Some((&changed, now)),
+        )?)?;
         let revision = SavedRevision {
             id: draft.revision_id.clone(),
             entry_id: draft.entry_id.clone(),
@@ -584,7 +681,7 @@ impl Document {
         Ok(draft.entry_id)
     }
 
-    /// Applies an addressed edit to unambiguous scalar fields while retaining other conflicts.
+    /// Apply an addressed scalar edit to the observed state, retaining unseen operations.
     ///
     /// This Rust-only command supports domain tests; ordinary UI forms use drafts. Attribute
     /// commands remain on the draft API, which validates their complete local form.
@@ -610,9 +707,6 @@ impl Document {
             ) {
                 return Err(Error::InvalidDocument);
             }
-            if before.conflicts.iter().any(|state| &state.field == field) {
-                return Err(Error::Conflict);
-            }
             validate_field(field, value)?;
         }
         let updates: BTreeMap<_, _> = updates
@@ -620,7 +714,8 @@ impl Document {
             .filter(|(field, value)| {
                 !before.values.iter().any(|state| {
                     &state.field == field
-                        && matches!(state.variants.as_slice(), [variant] if &variant.value == value)
+                        && fields::selected_variant(state)
+                            .is_ok_and(|variant| &variant.value == value)
                 })
             })
             .collect();
@@ -637,7 +732,7 @@ impl Document {
         for (field, value) in updates {
             put_field(&mut tx, &entry, &field, value, &revision_id, &mut changed)?;
         }
-        let snapshot = read_entry(&tx, id, Some((&changed, now)))?;
+        let snapshot = projection::selected_snapshot(read_entry(&tx, id, Some((&changed, now)))?)?;
         let stored = StoredRevision {
             revision: SavedRevision {
                 id: revision_id.clone(),
@@ -660,18 +755,15 @@ impl Document {
         Ok(id.clone())
     }
 
-    /// Returns active, placed entries without selecting an arbitrary field conflict winner.
+    /// Return active entries with deterministic selected fields and optional groups.
     pub fn entries(&self) -> Result<Vec<EntrySnapshot>, Error> {
         let root = object(&self.doc, &ROOT, "entries")?;
         let groups = self.groups()?;
         let mut result = Vec::new();
         for key in self.doc.keys(root) {
             let id = EntryId::new(key);
-            let addresses = objects::current(&self.doc, &ObjectId::Entry(id.clone()))?;
-            if addresses.len() != 1 {
-                continue;
-            }
-            let (status, _) = self.object_status(&addresses[0])?;
+            let address = objects::single(&self.doc, &ObjectId::Entry(id.clone()))?;
+            let (status, _) = self.object_status(&address)?;
             if status != ObjectStatus::Active {
                 continue;
             }
@@ -679,7 +771,7 @@ impl Document {
             if snapshot
                 .group_id
                 .as_ref()
-                .is_some_and(|id| groups.iter().any(|group| &group.id == id))
+                .is_none_or(|id| groups.iter().any(|group| &group.id == id))
             {
                 result.push(snapshot);
             }
@@ -687,7 +779,7 @@ impl Document {
         Ok(result)
     }
 
-    /// Reads one active, placed entry. Trash and placement review use explicit inspection.
+    /// Read one active entry. Retained trash generations use explicit inspection.
     pub fn entry(&self, id: &EntryId) -> Result<EntrySnapshot, Error> {
         self.require_active_entry(id)?;
         read_entry(&self.doc, id, None)
@@ -695,7 +787,10 @@ impl Document {
 
     /// Reads immutable confirmations, sorted by display time and stable revision ID.
     pub fn history(&self, id: &EntryId) -> Result<Vec<SavedRevision>, Error> {
-        self.entry(id)?;
+        let address = objects::single(&self.doc, &ObjectId::Entry(id.clone()))?;
+        if objects::purge(&self.doc, &address)?.is_some() {
+            return Err(Error::NotFound);
+        }
         let mut revisions = Vec::new();
         for stored in stored_revisions(&self.doc, id)? {
             let address = ObjectAddress {
@@ -783,6 +878,8 @@ fn stored_revisions<R: ReadDoc>(read: &R, id: &EntryId) -> Result<Vec<StoredRevi
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+mod automation_tests;
 #[cfg(test)]
 mod binary_tests;
 

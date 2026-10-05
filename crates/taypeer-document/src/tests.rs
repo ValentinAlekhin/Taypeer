@@ -8,9 +8,12 @@ fn descriptor_requirements_are_checked_before_loading_document_contents() {
     let schema = SchemaDescriptor::current();
     let mut required = schema.required_write_features().clone();
     required.insert(FeatureId::new("future.retention").unwrap());
-    let writer =
-        SchemaDescriptor::new(5, schema.required_read_features().clone(), required.clone())
-            .unwrap();
+    let writer = SchemaDescriptor::new(
+        taypeer_core::CURRENT_SCHEMA,
+        schema.required_read_features().clone(),
+        required.clone(),
+    )
+    .unwrap();
     let mut readable = original.clone();
     let mut tx = readable.doc.transaction();
     tx.put(ROOT, "schema_descriptor", codec::encode(&writer).unwrap())
@@ -23,8 +26,12 @@ fn descriptor_requirements_are_checked_before_loading_document_contents() {
             .unwrap(),
         writer
     );
-    let reader =
-        SchemaDescriptor::new(5, required, schema.required_write_features().clone()).unwrap();
+    let reader = SchemaDescriptor::new(
+        taypeer_core::CURRENT_SCHEMA,
+        required,
+        schema.required_write_features().clone(),
+    )
+    .unwrap();
     let mut tx = readable.doc.transaction();
     tx.put(ROOT, "schema_descriptor", codec::encode(&reader).unwrap())
         .unwrap();
@@ -261,7 +268,7 @@ fn stale_draft_changes_only_user_modified_fields() {
 }
 
 #[test]
-fn same_field_conflicts_remain_whole_values_despite_clock_skew() {
+fn same_field_alternatives_have_a_selected_whole_value_despite_clock_skew() {
     let (mut document, _, entry) = setup();
     let mut remote = document.fork();
     let mut local = document.begin_edit_entry(&entry).unwrap();
@@ -273,7 +280,7 @@ fn same_field_conflicts_remain_whole_values_despite_clock_skew() {
     document.merge(&remote).unwrap();
     remote.merge(&document).unwrap();
     let snapshot = document.entry(&entry).unwrap();
-    assert!(snapshot.fields.is_none());
+    assert!(snapshot.fields.is_some());
     assert!(snapshot.has_conflicts());
     let notes = state(&document, &entry, EntryField::Notes);
     assert_eq!(notes.variants.len(), 2);
@@ -290,10 +297,7 @@ fn same_field_conflicts_remain_whole_values_despite_clock_skew() {
         values,
         BTreeSet::from(["PUBLIC left complete note", "PUBLIC right complete note"])
     );
-    assert_eq!(
-        document.begin_edit_entry(&entry).unwrap_err(),
-        Error::Conflict
-    );
+    assert!(document.begin_edit_entry(&entry).is_ok());
 }
 
 #[test]
@@ -359,7 +363,7 @@ fn identical_parallel_values_share_one_presentation_but_keep_origins() {
 }
 
 #[test]
-fn a_later_unrelated_edit_preserves_conflicts_in_its_saved_snapshot() {
+fn a_later_unrelated_edit_preserves_live_alternatives_but_saves_selected_values() {
     let (mut document, _, entry) = setup();
     let mut other = document.fork();
     for (replica, value) in [(&mut document, "PUBLIC A"), (&mut other, "PUBLIC B")] {
@@ -382,28 +386,34 @@ fn a_later_unrelated_edit_preserves_conflicts_in_its_saved_snapshot() {
     assert_eq!(state(&document, &entry, EntryField::Password), before);
     let history = document.history(&entry).unwrap();
     assert_eq!(history.len(), 4);
+    let saved = history
+        .last()
+        .unwrap()
+        .snapshot
+        .values
+        .iter()
+        .find(|state| state.field == EntryField::Password)
+        .unwrap();
+    assert_eq!(saved.variants.len(), 1);
     assert_eq!(
-        history
-            .last()
-            .unwrap()
-            .snapshot
-            .values
-            .iter()
-            .find(|state| state.field == EntryField::Password),
-        Some(&before)
+        saved.variants[0],
+        fields::selected_variant(&before).unwrap().clone()
     );
+    document
+        .edit_fields(
+            &entry,
+            BTreeMap::from([(
+                EntryField::Password,
+                FieldValue::Text(Some("PUBLIC deliberate edit".into())),
+            )]),
+            4_000,
+        )
+        .unwrap();
     assert_eq!(
-        document
-            .edit_fields(
-                &entry,
-                BTreeMap::from([(
-                    EntryField::Password,
-                    FieldValue::Text(Some("PUBLIC implicit resolution".into()))
-                )]),
-                4_000
-            )
-            .unwrap_err(),
-        Error::Conflict
+        state(&document, &entry, EntryField::Password)
+            .variants
+            .len(),
+        1
     );
 }
 
@@ -431,14 +441,18 @@ fn attribute_value_and_protection_are_one_register() {
     document.save_entry(unprotect, 3_000).unwrap();
     other.save_entry(replace, 3_000).unwrap();
     document.merge(&other).unwrap();
-    let variants = state(&document, &entry, EntryField::AttributeValue(attr)).variants;
+    let variants = state(&document, &entry, EntryField::AttributeValue(attr.clone())).variants;
     assert_eq!(variants.len(), 2);
     assert!(variants.iter().any(|variant| variant.value
         == FieldValue::Attribute(AttributeValue {
             value: "PUBLIC new protected value".into(),
             protected: true
         })));
-    assert!(document.entry(&entry).unwrap().fields.is_none());
+    assert!(
+        document.entry(&entry).unwrap().fields.unwrap().attributes[&attr]
+            .value
+            .protected
+    );
 }
 
 #[test]
@@ -482,8 +496,9 @@ fn concurrent_duplicate_attribute_names_keep_both_ids_for_review() {
     }
     document.merge(&other).unwrap();
     let snapshot = document.entry(&entry).unwrap();
-    assert!(snapshot.fields.is_none());
-    assert_eq!(snapshot.conflicts.len(), 2);
+    assert!(snapshot.fields.is_some());
+    assert!(snapshot.conflicts.is_empty());
+    assert_eq!(snapshot.fields.as_ref().unwrap().attributes.len(), 2);
     assert_eq!(
         snapshot
             .values
@@ -526,11 +541,23 @@ fn attribute_deletion_and_concurrent_rename_retain_the_object() {
         2
     );
     assert!(
-        state(&document, &entry, EntryField::AttributeValue(attr))
-            .variants
-            .iter()
-            .any(|variant| matches!(variant.value, FieldValue::Attribute(_)))
+        document
+            .entry(&entry)
+            .unwrap()
+            .fields
+            .unwrap()
+            .attributes
+            .is_empty()
     );
+    assert!(document.history(&entry).unwrap().iter().any(|revision| {
+        revision
+            .snapshot
+            .fields
+            .as_ref()
+            .unwrap()
+            .attributes
+            .contains_key(&attr)
+    }));
 }
 
 #[test]
@@ -653,7 +680,7 @@ fn group_rename_preserves_unknown_fields_and_coalesces_equal_names() {
 }
 
 #[test]
-fn conflicting_group_names_are_preserved_without_a_winner() {
+fn concurrent_group_names_keep_alternatives_and_a_selected_name() {
     let (mut document, group, _) = setup();
     let mut other = document.fork();
     document
@@ -663,7 +690,7 @@ fn conflicting_group_names_are_preserved_without_a_winner() {
         .rename_group(&group, "PUBLIC right name".into(), 3_000)
         .unwrap();
     document.merge(&other).unwrap();
-    assert!(document.groups().unwrap().is_empty());
+    assert_eq!(document.groups().unwrap().len(), 1);
     assert_eq!(document.tree().unwrap()[0].names.len(), 2);
     let groups = object(&document.doc, &ROOT, "groups").unwrap();
     let group_object = object(&document.doc, &groups, group.as_str()).unwrap();

@@ -36,15 +36,9 @@ impl TryFrom<String> for FeatureId {
 }
 
 /// Invalid or incomplete schema declaration; contains no document contents.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("invalid schema descriptor")]
 pub struct DescriptorError;
-impl std::fmt::Display for DescriptorError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("invalid schema descriptor")
-    }
-}
-impl std::error::Error for DescriptorError {}
-
 /// Manager-authenticated requirements, immutable throughout the current control chain.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "DescriptorData")]

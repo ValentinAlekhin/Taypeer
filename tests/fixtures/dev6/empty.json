@@ -1,0 +1,70 @@
+{
+  "database": "bbe237df53fd6f1e281a58ff1ece6a15",
+  "entries": [],
+  "groups": [],
+  "histories": [],
+  "objects": [],
+  "pending": [],
+  "received": [],
+  "schema": {
+    "required_read_features": [
+      "taypeer.auto_merge",
+      "taypeer.binary",
+      "taypeer.entries",
+      "taypeer.history",
+      "taypeer.lifecycle",
+      "taypeer.object_history",
+      "taypeer.optional_group"
+    ],
+    "required_write_features": [
+      "taypeer.auto_merge",
+      "taypeer.binary",
+      "taypeer.entries",
+      "taypeer.history",
+      "taypeer.lifecycle",
+      "taypeer.object_history",
+      "taypeer.optional_group"
+    ],
+    "schema_version": 6
+  },
+  "sources": [
+    {
+      "author": [
+        250,
+        224,
+        145,
+        15,
+        27,
+        219,
+        231,
+        5,
+        152,
+        159,
+        50,
+        161,
+        208,
+        194,
+        70,
+        233,
+        184,
+        39,
+        141,
+        150,
+        214,
+        120,
+        23,
+        40,
+        201,
+        129,
+        42,
+        65,
+        3,
+        137,
+        252,
+        231
+      ],
+      "dependencies": [],
+      "hash": "77719f44c30c34dd07a081eacedc205369c5429651d69e92593c5c1c819a4adc"
+    }
+  ]
+}

@@ -326,3 +326,44 @@ pub(super) fn read_field<R: ReadDoc>(
     variants.sort_by(|a, b| a.origins.cmp(&b.origins));
     Ok(FieldState { field, variants })
 }
+
+/// Select by the numeric operation rank, with protection and deletion taking priority.
+pub(super) fn selected_variant(state: &FieldState) -> Result<&ValueVariant, Error> {
+    let mut selected = None;
+    for variant in &state.variants {
+        let rank = variant
+            .origins
+            .iter()
+            .map(|origin| operation_rank(origin))
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .max()
+            .ok_or(Error::InvalidDocument)?;
+        let priority = match (&state.field, &variant.value) {
+            (EntryField::AttributeValue(_), FieldValue::Attribute(value)) => value.protected,
+            (
+                EntryField::AttributePresence(_) | EntryField::AttachmentPresence(_),
+                FieldValue::Presence(present),
+            ) => !present,
+            _ => false,
+        };
+        if selected
+            .as_ref()
+            .is_none_or(|(_, old_priority, old_rank)| (priority, &rank) > (*old_priority, old_rank))
+        {
+            selected = Some((variant, priority, rank));
+        }
+    }
+    selected
+        .map(|(variant, _, _)| variant)
+        .ok_or(Error::InvalidDocument)
+}
+
+fn operation_rank(origin: &str) -> Result<ObjId, Error> {
+    let (counter, actor) = origin.split_once('@').ok_or(Error::InvalidDocument)?;
+    Ok(ObjId::Id(
+        counter.parse().map_err(|_| Error::InvalidDocument)?,
+        automerge::ActorId::try_from(actor).map_err(|_| Error::InvalidDocument)?,
+        0,
+    ))
+}

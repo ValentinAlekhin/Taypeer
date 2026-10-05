@@ -1,7 +1,7 @@
 //! Creation and decoding are separate: selecting a new writer must not remove a reader.
 use super::*;
 
-const VERSION: u16 = 5;
+const VERSION: u16 = 6;
 
 pub(super) fn initialize(
     doc: &mut Automerge,
@@ -9,13 +9,13 @@ pub(super) fn initialize(
     name: &str,
     now: Timestamp,
 ) -> Result<(), Error> {
-    // Adding a writer requires an explicit initializer rather than relabeling v5 bytes.
+    // Development schemas are rejected rather than relabelled or migrated in place.
     match taypeer_core::CURRENT_SCHEMA {
-        5 => initialize_v5(doc, database_id, name, now),
+        6 => initialize_v6(doc, database_id, name, now),
         _ => Err(Error::UnsupportedSchema),
     }
 }
-fn initialize_v5(
+fn initialize_v6(
     doc: &mut Automerge,
     database_id: &DatabaseId,
     name: &str,
@@ -36,9 +36,12 @@ fn initialize_v5(
     tx.put_object(ROOT, "revisions", ObjType::Map)?;
     tx.put_object(ROOT, "operations", ObjType::Map)?;
     tx.put_object(ROOT, "purged_revisions", ObjType::Map)?;
+    tx.put_object(ROOT, "group_revisions", ObjType::Map)?;
+    tx.put_object(ROOT, "database_revisions", ObjType::Map)?;
     for root in ["events", "purges", "lifecycle_receipts", "recoveries"] {
         tx.put_object(ROOT, root, ObjType::Map)?;
     }
+    crate::history::record_database_revision(&mut tx, database_id, RevisionKind::Create, now, &[])?;
     tx.commit();
     Ok(())
 }
@@ -50,12 +53,12 @@ pub(super) fn load(bytes: &[u8]) -> Result<Document, Error> {
         .filter(|value| *value > 0 && *value <= u64::from(u16::MAX))
         .ok_or(Error::InvalidDocument)?;
     match schema {
-        5 => load_v5(doc),
+        6 => load_v6(doc),
         _ => Err(Error::UnsupportedSchema),
     }
 }
 
-fn load_v5(doc: Automerge) -> Result<Document, Error> {
+fn load_v6(doc: Automerge) -> Result<Document, Error> {
     let database_id = DatabaseId::new(
         unique(&doc, &ROOT, "database_id")?
             .to_str()
@@ -87,7 +90,7 @@ impl Document {
             return Err(Error::UnsupportedSchema);
         }
         match descriptor.schema_version() {
-            5 => self.validate_v5_structure(),
+            6 => self.validate_v6_structure(),
             _ => Err(Error::UnsupportedSchema),
         }
     }

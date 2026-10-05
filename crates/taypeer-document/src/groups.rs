@@ -32,15 +32,21 @@ pub enum ObjectStatus {
 pub struct GroupNode {
     /// Exact lifetime.
     pub address: ObjectAddress,
-    /// Distinct names. Multiple names require explicit resolution.
+    /// Original names retained for historical inspection.
     pub names: Vec<String>,
     /// All stored icon alternatives, including acquisition provenance.
     pub icons: Vec<taypeer_core::IconRef>,
     /// Complete placement alternatives.
     pub placements: Vec<GroupPlacement>,
+    /// Selected exact name; alternatives do not obstruct ordinary use.
+    pub name: String,
+    /// Selected icon.
+    pub icon: taypeer_core::IconRef,
+    /// Selected acyclic placement, projected from the original parent register.
+    pub placement: GroupPlacement,
     /// Product availability.
     pub status: ObjectStatus,
-    /// Whether lifecycle, placement, name or generation needs review.
+    /// Whether original content alternatives remain available for historical inspection.
     pub conflicted: bool,
     /// Whether a parent edge must be excluded from the ordinary tree.
     pub placement_conflict: bool,
@@ -65,20 +71,19 @@ pub(super) fn own_status(
         return Ok((ObjectStatus::Purged, false));
     }
     let marks = objects::life(read, address)?;
-    let events = objects::events(read, address)?;
-    let trashed: Vec<_> = marks.iter().filter(|m| m.trashed).collect();
-    if trashed.is_empty() {
+    if !marks.iter().any(|mark| mark.trashed) {
         return Ok((ObjectStatus::Active, false));
     }
-    let conflict =
-        marks.iter().any(|m| !m.trashed) || trashed.iter().any(|m| !events.is_subset(&m.observed));
-    Ok((ObjectStatus::Trashed, conflict))
+    // A causally later restore supersedes the trash mark. Concurrent content never does.
+    Ok((ObjectStatus::Trashed, false))
 }
 
 pub(super) fn read_group(read: &impl ReadDoc, address: &ObjectAddress) -> Result<GroupNode, Error> {
     let obj = objects::generation_object(read, address)?;
     let mut names = BTreeSet::new();
     let mut placements = Vec::new();
+    let mut selected_name = None;
+    let mut selected_placement = None;
     let mut times = Vec::new();
     for key in ["name", "placement"] {
         let time_map = object(read, &obj, &format!("{key}_times"))?;
@@ -87,10 +92,22 @@ pub(super) fn read_group(read: &impl ReadDoc, address: &ObjectAddress) -> Result
                 let name = value.to_str().ok_or(Error::InvalidDocument)?;
                 validate_group_name(name)?;
                 names.insert(name.to_owned());
+                if selected_name
+                    .as_ref()
+                    .is_none_or(|(_, rank)| &operation > rank)
+                {
+                    selected_name = Some((name.to_owned(), operation.clone()));
+                }
             } else {
                 let placement: GroupPlacement = decode(&value)?;
                 if !placements.contains(&placement) {
-                    placements.push(placement);
+                    placements.push(placement.clone());
+                }
+                if selected_placement
+                    .as_ref()
+                    .is_none_or(|(_, rank)| &operation > rank)
+                {
+                    selected_placement = Some((placement, operation.clone()));
                 }
             }
             times.push(
@@ -112,26 +129,37 @@ pub(super) fn read_group(read: &impl ReadDoc, address: &ObjectAddress) -> Result
         .to_i64()
         .ok_or(Error::InvalidDocument)?;
     let mut icons = Vec::new();
-    for (value, _) in read.get_all(&obj, "icon")? {
-        let icon = decode(&value)?;
+    let mut selected_icon = None;
+    for (value, operation) in read.get_all(&obj, "icon")? {
+        let icon: taypeer_core::IconRef = decode(&value)?;
         if !icons.contains(&icon) {
-            icons.push(icon);
+            icons.push(icon.clone());
+        }
+        if selected_icon
+            .as_ref()
+            .is_none_or(|(_, rank)| &operation > rank)
+        {
+            selected_icon = Some((icon, operation));
         }
     }
     if icons.is_empty() {
         return Err(Error::InvalidDocument);
     }
     let (status, conflict) = own_status(read, address)?;
-    let current = objects::current(read, &address.object)?;
+    let current = objects::single(read, &address.object)?;
+    let conflicted = conflict || names.len() > 1 || placements.len() > 1 || icons.len() > 1;
     Ok(GroupNode {
         address: address.clone(),
         names: names.into_iter().collect(),
-        placement_conflict: placements.len() != 1 || current.len() != 1,
+        name: selected_name.ok_or(Error::InvalidDocument)?.0,
+        placement: selected_placement.ok_or(Error::InvalidDocument)?.0,
+        icon: selected_icon.ok_or(Error::InvalidDocument)?.0,
+        placement_conflict: false,
         placements,
         status,
-        conflicted: conflict || current.len() != 1 || icons.len() != 1,
+        conflicted,
         icons,
-        current: current.contains(address),
+        current: &current == address,
         created_at,
         modified_at: times.into_iter().max().unwrap_or(created_at),
     })
@@ -139,76 +167,113 @@ pub(super) fn read_group(read: &impl ReadDoc, address: &ObjectAddress) -> Result
 
 pub(super) fn tree(read: &impl ReadDoc) -> Result<Vec<GroupNode>, Error> {
     let mut nodes = BTreeMap::new();
+    let mut ranks = BTreeMap::new();
     for address in objects::all(read)? {
         if matches!(address.object, ObjectId::Group(_)) {
+            let object = objects::generation_object(read, &address)?;
+            let rank = read
+                .get_all(object, "placement")?
+                .into_iter()
+                .map(|(_, operation)| operation)
+                .max()
+                .ok_or(Error::InvalidDocument)?;
+            ranks.insert(address.clone(), rank);
             nodes.insert(address.clone(), read_group(read, &address)?);
         }
     }
-    let mut bad = BTreeSet::new();
-    // A functional parent graph permits iterative cycle detection without a call-stack limit.
+    // Break one selected edge per cycle; rank rather than traversal order chooses the root.
+    let mut roots = BTreeSet::new();
     for start in nodes.keys() {
         let mut path = Vec::new();
         let mut positions = BTreeMap::new();
         let mut cursor = Some(start.clone());
         while let Some(address) = cursor {
             if let Some(&position) = positions.get(&address) {
-                bad.extend(path[position..].iter().cloned());
+                let root = path[position..]
+                    .iter()
+                    .min_by(|left, right| {
+                        ranks[*left]
+                            .cmp(&ranks[*right])
+                            .then_with(|| left.cmp(right))
+                    })
+                    .ok_or(Error::InvalidDocument)?;
+                roots.insert(root.clone());
                 break;
             }
             let Some(node) = nodes.get(&address) else {
                 break;
             };
-            if node.placements.len() != 1 {
+            if !node.current {
                 break;
             }
             positions.insert(address.clone(), path.len());
-            path.push(address.clone());
-            cursor = node.placements[0].parent.clone().map(ObjectAddress::from);
-            if cursor.as_ref().is_some_and(|p| !nodes.contains_key(p)) {
-                bad.insert(address);
-                break;
-            }
+            path.push(address);
+            cursor = node.placement.parent.clone().map(ObjectAddress::from);
         }
     }
-    for address in &bad {
-        if let Some(node) = nodes.get_mut(address) {
-            node.placement_conflict = true;
+    for address in roots {
+        if let Some(node) = nodes.get_mut(&address) {
+            node.placement.parent = None;
         }
     }
-    // Propagate unavailable ancestry monotonically; retained children remain addressable.
+    // Truly absent parents are orphans. A closed generation is retained but never adopted.
+    let known: BTreeSet<_> = nodes.keys().cloned().collect();
+    for node in nodes.values_mut() {
+        if node
+            .placement
+            .parent
+            .as_ref()
+            .is_some_and(|parent| !known.contains(&ObjectAddress::from(parent.clone())))
+        {
+            node.placement.parent = None;
+        }
+        if !node.current && node.status == ObjectStatus::Active {
+            node.status = ObjectStatus::Unplaced;
+        }
+    }
     loop {
-        let previous = nodes.clone();
+        let previous: BTreeMap<_, _> = nodes
+            .iter()
+            .map(|(address, node)| (address.clone(), (node.status, node.current)))
+            .collect();
         let mut changed = false;
         for node in nodes.values_mut() {
             if node.status == ObjectStatus::Purged {
                 continue;
             }
-            for placement in &node.placements {
-                if let Some(parent) = &placement.parent {
-                    match previous.get(&ObjectAddress::from(parent.clone())) {
-                        Some(parent) if parent.status == ObjectStatus::Trashed => {
-                            if node.status != ObjectStatus::Trashed {
-                                node.status = ObjectStatus::Trashed;
-                                node.conflicted = true;
-                                changed = true;
-                            }
-                        }
-                        Some(parent)
-                            if (parent.status == ObjectStatus::Purged
-                                || !parent.current
-                                || parent.placement_conflict
-                                || parent.names.len() != 1)
-                                && !node.placement_conflict =>
-                        {
-                            node.placement_conflict = true;
+            if node
+                .placements
+                .iter()
+                .filter_map(|placement| placement.parent.as_ref())
+                .any(|parent| {
+                    previous
+                        .get(&ObjectAddress::from(parent.clone()))
+                        .is_some_and(|(status, _)| *status == ObjectStatus::Trashed)
+                })
+                && node.status != ObjectStatus::Trashed
+            {
+                node.status = ObjectStatus::Trashed;
+                changed = true;
+            }
+            if let Some(parent) = &node.placement.parent {
+                match previous.get(&ObjectAddress::from(parent.clone())) {
+                    Some((ObjectStatus::Trashed, _)) => {
+                        if node.status != ObjectStatus::Trashed {
+                            node.status = ObjectStatus::Trashed;
                             changed = true;
                         }
-                        None if !node.placement_conflict => {
-                            node.placement_conflict = true;
-                            changed = true;
-                        }
-                        _ => {}
                     }
+                    Some((status, current))
+                        if node.status == ObjectStatus::Active
+                            && (*status == ObjectStatus::Purged
+                                || !current
+                                || *status == ObjectStatus::Unplaced) =>
+                    {
+                        node.status = ObjectStatus::Unplaced;
+                        node.placement_conflict = true;
+                        changed = true;
+                    }
+                    _ => {}
                 }
             }
         }
@@ -216,71 +281,40 @@ pub(super) fn tree(read: &impl ReadDoc) -> Result<Vec<GroupNode>, Error> {
             break;
         }
     }
-    for node in nodes.values_mut() {
-        node.conflicted |= node.placement_conflict || node.names.len() != 1;
-        if node.status == ObjectStatus::Active && (node.placement_conflict || !node.current) {
-            node.status = ObjectStatus::Unplaced;
-        }
-    }
     Ok(nodes.into_values().collect())
 }
 
+pub(super) fn selected_group(node: &GroupNode) -> Result<Group, Error> {
+    let ObjectId::Group(id) = &node.address.object else {
+        return Err(Error::InvalidDocument);
+    };
+    Ok(Group {
+        id: id.clone(),
+        generation: node.address.generation.clone(),
+        name: node.name.clone(),
+        icon: node.icon.clone(),
+        parent: node
+            .placement
+            .parent
+            .as_ref()
+            .map(|parent| parent.id.clone()),
+        order: node.placement.order.clone(),
+        created_at: node.created_at,
+        modified_at: node.modified_at,
+    })
+}
+
 pub(super) fn read_groups(read: &impl ReadDoc) -> Result<Vec<Group>, Error> {
-    let nodes = tree(read)?;
-    let mut accepted: BTreeSet<_> = nodes
+    let mut result = tree(read)?
         .iter()
-        .filter(|n| n.status == ObjectStatus::Active && n.names.len() == 1)
-        .map(|n| n.address.clone())
-        .collect();
-    loop {
-        let previous = accepted.clone();
-        for node in &nodes {
-            if let [placement] = node.placements.as_slice() {
-                if placement
-                    .parent
-                    .as_ref()
-                    .is_some_and(|p| !previous.contains(&ObjectAddress::from(p.clone())))
-                {
-                    accepted.remove(&node.address);
-                }
-            } else {
-                accepted.remove(&node.address);
-            }
-        }
-        if previous == accepted {
-            break;
-        }
-    }
-    let mut result = Vec::new();
-    for node in nodes {
-        if !accepted.contains(&node.address) {
-            continue;
-        }
-        let ObjectId::Group(id) = node.address.object else {
-            return Err(Error::InvalidDocument);
-        };
-        let [placement] = node.placements.as_slice() else {
-            return Err(Error::InvalidDocument);
-        };
-        result.push(Group {
-            id,
-            generation: node.address.generation,
-            name: node.names[0].clone(),
-            icon: if node.icons.len() == 1 {
-                node.icons[0].clone()
-            } else {
-                taypeer_core::IconRef::Default
-            },
-            parent: placement.parent.as_ref().map(|p| p.id.clone()),
-            order: placement.order.clone(),
-            created_at: node.created_at,
-            modified_at: node.modified_at,
-        });
-    }
-    result.sort_by(|a, b| {
-        a.parent
-            .cmp(&b.parent)
-            .then_with(|| a.order.compare(a.id.as_str(), &b.order, b.id.as_str()))
+        .filter(|node| node.status == ObjectStatus::Active && node.current)
+        .map(selected_group)
+        .collect::<Result<Vec<_>, _>>()?;
+    result.sort_by(|left, right| {
+        left.parent.cmp(&right.parent).then_with(|| {
+            left.order
+                .compare(left.id.as_str(), &right.order, right.id.as_str())
+        })
     });
     Ok(result)
 }

@@ -16,6 +16,25 @@ struct Receipt {
     result: serde_json::Value,
 }
 impl Document {
+    /// Causal heads of the exact acknowledged command, excluding subsequently received changes.
+    /// Missing or mismatched receipts cannot advance an editor's base.
+    pub fn command_heads(&self, operation: &OperationId, kind: &str) -> Result<Vec<String>, Error> {
+        if self.command_receipt(operation, kind)?.is_none() {
+            return Err(Error::NotFound);
+        }
+        let root = object(&self.doc, &ROOT, "lifecycle_receipts")?;
+        let values = self.doc.get_all(root, operation.as_str())?;
+        let [(_, operation)] = values.as_slice() else {
+            return Err(Error::InvalidDocument);
+        };
+        Ok(vec![
+            self.doc
+                .hash_for_opid(operation)
+                .ok_or(Error::InvalidContext)?
+                .to_string(),
+        ])
+    }
+
     /// Read a command result, rejecting IDs occupied by another operation kind.
     pub fn command_receipt(
         &self,

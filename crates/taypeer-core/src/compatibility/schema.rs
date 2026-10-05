@@ -18,26 +18,29 @@ impl Definition {
 fn features(ids: &[&str]) -> BTreeSet<FeatureId> {
     ids.iter().map(|id| FeatureId((*id).into())).collect()
 }
-const DEVELOPMENT_V5_FEATURES: [&str; 4] = [
+const DEVELOPMENT_V6_FEATURES: [&str; 7] = [
     "taypeer.entries",
     "taypeer.history",
     "taypeer.lifecycle",
     "taypeer.binary",
+    "taypeer.auto_merge",
+    "taypeer.optional_group",
+    "taypeer.object_history",
 ];
-const DEVELOPMENT_V5: Definition = Definition {
-    version: 5,
-    read: &DEVELOPMENT_V5_FEATURES,
-    write: &DEVELOPMENT_V5_FEATURES,
+const DEVELOPMENT_V6: Definition = Definition {
+    version: 6,
+    read: &DEVELOPMENT_V6_FEATURES,
+    write: &DEVELOPMENT_V6_FEATURES,
 };
 // Adding a new writer does not implicitly remove any compiled reader.
-const SUPPORTED: &[Definition] = &[DEVELOPMENT_V5];
+const SUPPORTED: &[Definition] = &[DEVELOPMENT_V6];
 /// Semantic requirements written by this build; retained for API compatibility.
-pub const DOCUMENT_FEATURES: [&str; 4] = DEVELOPMENT_V5_FEATURES;
+pub const DOCUMENT_FEATURES: [&str; 7] = DEVELOPMENT_V6_FEATURES;
 /// Schema written by this build; not a stable-format release or the reader support list.
-pub const CURRENT_SCHEMA: u16 = DEVELOPMENT_V5.version;
+pub const CURRENT_SCHEMA: u16 = DEVELOPMENT_V6.version;
 
 pub(super) fn current() -> &'static Definition {
-    &DEVELOPMENT_V5
+    &DEVELOPMENT_V6
 }
 pub(super) fn definition(version: u16) -> Option<&'static Definition> {
     SUPPORTED

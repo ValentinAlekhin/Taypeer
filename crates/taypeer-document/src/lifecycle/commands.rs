@@ -45,13 +45,11 @@ impl Document {
             return Err(Error::InvalidContext);
         }
         for address in prepared.affected.keys() {
-            let (status, conflict) = self.object_status(address)?;
+            let (status, _) = self.object_status(address)?;
             if status == ObjectStatus::Purged {
                 return Err(Error::NotFound);
             }
-            if prepared.action == LifecycleAction::Purge
-                && (status != ObjectStatus::Trashed || conflict)
-            {
+            if prepared.action == LifecycleAction::Purge && status != ObjectStatus::Trashed {
                 return Err(Error::Conflict);
             }
         }
@@ -83,16 +81,7 @@ impl Document {
                     if address == &root {
                         match &address.object {
                             ObjectId::Entry(_) => {
-                                tx.put(
-                                    &node,
-                                    "group",
-                                    encode(
-                                        prepared
-                                            .destination
-                                            .as_ref()
-                                            .ok_or(Error::InvalidContext)?,
-                                    )?,
-                                )?;
+                                tx.put(&node, "group", encode(&prepared.destination)?)?;
                             }
                             ObjectId::Group(_) => {
                                 groups::put_placement(
@@ -108,7 +97,16 @@ impl Document {
                         }
                     }
                     match address.object {
-                        ObjectId::Group(_) => objects::record_event(&mut tx, address, None)?,
+                        ObjectId::Group(_) => {
+                            history::record_group_revision(
+                                &mut tx,
+                                address,
+                                RevisionKind::Restore,
+                                now,
+                                &prepared.heads,
+                            )?;
+                            objects::record_event(&mut tx, address, None)?;
+                        }
                         ObjectId::Entry(_) => confirm_revision(
                             &mut tx,
                             address,
@@ -218,9 +216,6 @@ impl Document {
         if objects::single(&self.doc, &address.object)? != address {
             return Err(Error::InvalidContext);
         }
-        if request.review.is_none() && (node.placements.len() != 1 || node.names.len() != 1) {
-            return Err(Error::Conflict);
-        }
         let destination = self.destination(request.parent.clone())?;
         let subtree = basis.selected_subtree(&address)?;
         if destination
@@ -251,11 +246,8 @@ impl Document {
         candidate.prepare_write()?;
         let mut tx = candidate.doc.transaction_at(PatchLog::null(), &hashes);
         let target = objects::generation_object(&tx, &address)?;
-        let changed_placement = node.placements != [placement.clone()] || request.review.is_some();
-        let changed_name = request
-            .name
-            .as_ref()
-            .is_some_and(|name| node.names != [name.clone()]);
+        let changed_placement = node.placement != placement;
+        let changed_name = request.name.as_ref().is_some_and(|name| &node.name != name);
         if changed_placement {
             groups::put_placement(&mut tx, &target, &placement, now)?;
         }
@@ -268,6 +260,7 @@ impl Document {
             )?;
         }
         if changed_placement || changed_name {
+            history::record_group_revision(&mut tx, &address, RevisionKind::Save, now, &heads)?;
             objects::record_event(&mut tx, &address, None)?;
         }
         let result = vec![address.object];
@@ -283,6 +276,18 @@ impl Document {
         &mut self,
         id: &EntryId,
         group: GroupId,
+        review: Option<Vec<String>>,
+        operation: &OperationId,
+        now: Timestamp,
+    ) -> Result<Vec<ObjectId>, Error> {
+        self.move_entry_to(id, Some(group), review, operation, now)
+    }
+
+    /// Move an entry to an optional group without overwriting unseen concurrent destinations.
+    pub fn move_entry_to(
+        &mut self,
+        id: &EntryId,
+        group: Option<GroupId>,
         review: Option<Vec<String>>,
         operation: &OperationId,
         now: Timestamp,
@@ -305,13 +310,8 @@ impl Document {
             return Err(Error::InvalidContext);
         }
         let before = projection::read_entry_generation(&basis.doc, &address, None)?;
-        if before.placements.len() != 1 && review.is_none() {
-            return Err(Error::Conflict);
-        }
-        let destination = self
-            .destination(Some(group.clone()))?
-            .ok_or(Error::InvalidContext)?;
-        if basis.destination(Some(group.clone()))?.as_ref() != Some(&destination) {
+        let destination = self.destination(group.clone())?;
+        if basis.destination(group.clone())? != destination {
             return Err(Error::InvalidContext);
         }
         let heads = basis.heads();
@@ -319,7 +319,7 @@ impl Document {
         let mut candidate = self.clone();
         candidate.prepare_write()?;
         let mut tx = candidate.doc.transaction_at(PatchLog::null(), &hashes);
-        if before.placements != [destination.clone()] || review.is_some() {
+        if before.placement != destination {
             let node = objects::generation_object(&tx, &address)?;
             tx.put(node, "group", encode(&destination)?)?;
             confirm_revision(
@@ -372,8 +372,8 @@ impl Document {
         let heads = self.heads();
         let mut mapping = BTreeMap::new();
         for address in &selected {
-            let (status, conflict) = self.object_status(address)?;
-            if status != ObjectStatus::Active || conflict {
+            let (status, _) = self.object_status(address)?;
+            if status != ObjectStatus::Active {
                 return Err(Error::Conflict);
             }
             let id = match address.object {
@@ -402,9 +402,7 @@ impl Document {
             let original = groups::read_group(&self.doc, address)?;
             let target_address = &mapping[address];
             let target = objects::generation_object(&tx, target_address)?;
-            let [placement] = original.placements.as_slice() else {
-                return Err(Error::Conflict);
-            };
+            let placement = &original.placement;
             let parent = if address == &source {
                 destination.clone()
             } else {
@@ -423,9 +421,9 @@ impl Document {
                 &mut tx,
                 &target,
                 if address == &source {
-                    name.as_deref().unwrap_or(&original.names[0])
+                    name.as_deref().unwrap_or(&original.name)
                 } else {
-                    &original.names[0]
+                    &original.name
                 },
                 GroupPlacement {
                     parent,
@@ -437,11 +435,18 @@ impl Document {
                 },
                 now,
             )?;
-            tx.put(&target, "icon", encode(&original.icons[0])?)?;
+            tx.put(&target, "icon", encode(&original.icon)?)?;
             let original_object = objects::generation_object(&self.doc, address)?;
             let description =
                 crate::metadata::optional_text(&self.doc, &original_object, "description")?;
             tx.put(&target, "description", encode(&description)?)?;
+            history::record_group_revision(
+                &mut tx,
+                target_address,
+                RevisionKind::Clone,
+                now,
+                &heads,
+            )?;
             objects::record_event(&mut tx, target_address, None)?;
         }
         for address in &selected {
@@ -460,11 +465,20 @@ impl Document {
                 })
                 .collect();
             let parent = mapping
-                .get(&ObjectAddress::from(original.placements[0].clone()))
+                .get(&ObjectAddress::from(
+                    original.placement.ok_or(Error::InvalidContext)?,
+                ))
                 .ok_or(Error::InvalidContext)?
                 .group_ref()?;
             let revision = RevisionId::new(random_id());
-            initialize_entry(&mut tx, &mapping[address], &fields, &parent, now, &revision)?;
+            initialize_entry(
+                &mut tx,
+                &mapping[address],
+                &fields,
+                Some(&parent),
+                now,
+                &revision,
+            )?;
             confirm_revision(
                 &mut tx,
                 &mapping[address],
@@ -530,14 +544,14 @@ pub(super) fn initialize_entry(
     tx: &mut Transaction<'_>,
     address: &ObjectAddress,
     fields: &EntryFields,
-    parent: &GroupRef,
+    parent: Option<&GroupRef>,
     now: Timestamp,
     revision: &RevisionId,
 ) -> Result<(), Error> {
     fields.validate()?;
     let node = objects::generation_object(tx, address)?;
     tx.put(&node, "created_at", now)?;
-    tx.put(&node, "group", encode(parent)?)?;
+    tx.put(&node, "group", encode(&parent)?)?;
     tx.put_object(&node, "attributes", ObjType::Map)?;
     tx.put_object(&node, "attachments", ObjType::Map)?;
     apply_form(tx, &node, None, fields, revision)?;

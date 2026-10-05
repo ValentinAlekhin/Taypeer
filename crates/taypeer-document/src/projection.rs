@@ -1,16 +1,16 @@
-//! Logical entry snapshots; ambiguous values never become an implicit winner.
+//! Deterministic editable entry projection with lossless original alternatives.
 
 use super::{
     Error,
     codec::{object, unique},
-    fields::read_field,
+    fields::{read_field, selected_variant},
     stored_revisions,
 };
 use automerge::ReadDoc;
 use std::collections::{BTreeMap, BTreeSet};
 use taypeer_core::{
     Attachment, AttachmentId, Attribute, AttributeId, EntryField, EntryFields, EntryId,
-    EntrySnapshot, FieldState, FieldValue, GroupRef, Timestamp, ValidationError,
+    EntrySnapshot, FieldState, FieldValue, GroupRef, Timestamp,
 };
 
 pub(super) fn read_entry<R: ReadDoc>(
@@ -31,38 +31,44 @@ pub(super) fn read_entry_generation<R: ReadDoc>(
         return Err(Error::InvalidContext);
     };
     let entry = super::objects::generation_object(read, address)?;
-    let mut placements: Vec<GroupRef> = Vec::new();
-    for (value, _) in read.get_all(&entry, "group")? {
-        let destination = super::decode(&value)?;
-        if !placements.contains(&destination) {
-            placements.push(destination);
+    let mut placement_alternatives: Vec<Option<GroupRef>> = Vec::new();
+    let mut selected_placement = None;
+    for (value, operation) in read.get_all(&entry, "group")? {
+        let destination: Option<GroupRef> = super::decode(&value)?;
+        if !placement_alternatives.contains(&destination) {
+            placement_alternatives.push(destination.clone());
+        }
+        if selected_placement
+            .as_ref()
+            .is_none_or(|(_, rank)| &operation > rank)
+        {
+            selected_placement = Some((destination, operation));
         }
     }
-    if placements.is_empty() {
-        return Err(Error::InvalidDocument);
-    }
-    let group_id = if let [group] = placements.as_slice() {
-        Some(group.id.clone())
-    } else {
-        None
-    };
+    let placement = selected_placement.ok_or(Error::InvalidDocument)?.0;
+    let group_id = placement.as_ref().map(|group| group.id.clone());
+    let placements = placement_alternatives.iter().flatten().cloned().collect();
+    placement_alternatives.sort();
     let created_at = unique(read, &entry, "created_at")?
         .to_i64()
         .ok_or(Error::InvalidDocument)?;
     let values = read_values(read, &entry)?;
-    let mut conflicts: Vec<_> = values
+    let conflicts: Vec<_> = values
         .iter()
         .filter(|state| state.variants.len() > 1)
         .cloned()
         .collect();
     let modified_at = modification_time(read, id, &entry, &values, pending, created_at)?;
-    let fields = unambiguous_fields(&values, &mut conflicts)?;
+    let fields = project_fields(&values)?;
+    fields.validate()?;
     Ok(EntrySnapshot {
         id: id.clone(),
         group_id,
         generation: address.generation.clone(),
         placements,
-        fields,
+        placement,
+        placement_alternatives,
+        fields: Some(fields),
         conflicts,
         values,
         created_at,
@@ -90,7 +96,7 @@ fn read_values<R: ReadDoc>(read: &R, entry: &automerge::ObjId) -> Result<Vec<Fie
     for key in read.keys(attributes) {
         let attr = AttributeId::new(key);
         let presence = read_field(read, entry, EntryField::AttributePresence(attr.clone()))?;
-        let removed = matches!(presence.variants.as_slice(), [variant] if variant.value == FieldValue::Presence(false));
+        let removed = selected_variant(&presence)?.value == FieldValue::Presence(false);
         if !removed {
             for field in [
                 EntryField::AttributeName(attr.clone()),
@@ -105,7 +111,7 @@ fn read_values<R: ReadDoc>(read: &R, entry: &automerge::ObjId) -> Result<Vec<Fie
     for key in read.keys(attachments) {
         let id = AttachmentId::new(key);
         let presence = read_field(read, entry, EntryField::AttachmentPresence(id.clone()))?;
-        if !matches!(presence.variants.as_slice(), [v] if v.value == FieldValue::Presence(false)) {
+        if selected_variant(&presence)?.value != FieldValue::Presence(false) {
             values.push(read_field(
                 read,
                 entry,
@@ -156,34 +162,6 @@ fn modification_time<R: ReadDoc>(
     Ok(modified_at)
 }
 
-fn unambiguous_fields(
-    values: &[FieldState],
-    conflicts: &mut Vec<FieldState>,
-) -> Result<Option<EntryFields>, Error> {
-    if !conflicts.is_empty() {
-        return Ok(None);
-    }
-    let fields = project_fields(values)?;
-    match fields.validate() {
-        Ok(()) => Ok(Some(fields)),
-        Err(ValidationError::DuplicateAttributeName) => {
-            let mut names: BTreeMap<&str, Vec<&Attribute>> = BTreeMap::new();
-            for attribute in fields.attributes.values() {
-                names.entry(&attribute.name).or_default().push(attribute);
-            }
-            let duplicate_ids: BTreeSet<_> = names
-                .values()
-                .filter(|attrs| attrs.len() > 1)
-                .flatten()
-                .map(|attr| &attr.id)
-                .collect();
-            conflicts.extend(values.iter().filter(|state| matches!(&state.field, EntryField::AttributeName(id) if duplicate_ids.contains(id))).cloned());
-            Ok(None)
-        }
-        Err(error) => Err(error.into()),
-    }
-}
-
 fn project_fields(values: &[FieldState]) -> Result<EntryFields, Error> {
     let mut result = EntryFields::default();
     let mut names = BTreeMap::new();
@@ -193,9 +171,7 @@ fn project_fields(values: &[FieldState]) -> Result<EntryFields, Error> {
     let mut attachment_blobs = BTreeMap::new();
     let mut attachments = BTreeSet::new();
     for state in values {
-        let [variant] = state.variants.as_slice() else {
-            return Err(Error::Conflict);
-        };
+        let variant = selected_variant(state)?;
         match (&state.field, &variant.value) {
             (EntryField::Title, FieldValue::Text(Some(value))) => result.title = value.clone(),
             (EntryField::Username, FieldValue::Text(value)) => result.username = value.clone(),
@@ -249,4 +225,15 @@ fn project_fields(values: &[FieldState]) -> Result<EntryFields, Error> {
             .insert(id.clone(), Attachment { id, name, blob });
     }
     Ok(result)
+}
+
+/// Saved states retain selected values only; earlier branch revisions retain alternatives.
+pub(super) fn selected_snapshot(mut snapshot: EntrySnapshot) -> Result<EntrySnapshot, Error> {
+    for state in &mut snapshot.values {
+        state.variants = vec![selected_variant(state)?.clone()];
+    }
+    snapshot.conflicts.clear();
+    snapshot.placement_alternatives = vec![snapshot.placement.clone()];
+    snapshot.placements = snapshot.placement.iter().cloned().collect();
+    Ok(snapshot)
 }

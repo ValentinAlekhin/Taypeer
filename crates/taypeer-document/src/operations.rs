@@ -28,20 +28,20 @@ pub(super) enum Intent {
     Extract {
         source: EntryId,
         change: String,
-        group: GroupId,
+        group: Option<GroupId>,
     },
     Binary {
         request: serde_json::Value,
     },
     Clone {
         source: EntryId,
-        group: GroupId,
+        group: Option<GroupId>,
         title: Option<String>,
     },
     Restore {
         entry: EntryId,
         revision: RevisionId,
-        group: GroupId,
+        group: Option<GroupId>,
     },
     Resolve {
         entry: EntryId,
@@ -109,6 +109,18 @@ impl Document {
         operation: &OperationId,
         now: Timestamp,
     ) -> Result<EntryId, Error> {
+        self.clone_entry_in(source, Some(group), title, operation, now)
+    }
+
+    /// Perform the operation with an optional group destination.
+    pub fn clone_entry_in(
+        &mut self,
+        source: &EntryId,
+        group: Option<GroupId>,
+        title: Option<String>,
+        operation: &OperationId,
+        now: Timestamp,
+    ) -> Result<EntryId, Error> {
         let intent = Intent::Clone {
             source: source.clone(),
             group: group.clone(),
@@ -131,7 +143,7 @@ impl Document {
             .collect();
         super::binary::renew_attachment_ids(&mut fields);
         let mut candidate = self.clone();
-        let mut draft = candidate.begin_create_entry(group)?;
+        let mut draft = candidate.begin_create_entry_in(group)?;
         draft.fields = fields;
         let id = candidate.confirm_entry(
             draft,
@@ -152,6 +164,17 @@ impl Document {
         group: &GroupId,
         operation: &OperationId,
     ) -> Result<Option<EntryId>, Error> {
+        self.extracted_entry_in(source, change, Some(group), operation)
+    }
+
+    /// Find a durable extraction receipt for an optional group destination.
+    pub fn extracted_entry_in(
+        &self,
+        source: &EntryId,
+        change: &str,
+        group: Option<&GroupId>,
+        operation: &OperationId,
+    ) -> Result<Option<EntryId>, Error> {
         change
             .parse::<ChangeHash>()
             .map_err(|_| Error::InvalidContext)?;
@@ -160,7 +183,7 @@ impl Document {
             &Intent::Extract {
                 source: source.clone(),
                 change: change.to_owned(),
-                group: group.clone(),
+                group: group.cloned(),
             },
         )
     }
@@ -175,11 +198,23 @@ impl Document {
         operation: &OperationId,
         now: Timestamp,
     ) -> Result<EntryId, Error> {
+        self.extract_entry_in(source, selection, Some(group), operation, now)
+    }
+
+    /// Perform the operation with an optional group destination.
+    pub fn extract_entry_in(
+        &mut self,
+        source: &Document,
+        selection: (&EntryId, &str),
+        group: Option<GroupId>,
+        operation: &OperationId,
+        now: Timestamp,
+    ) -> Result<EntryId, Error> {
         let (entry, change) = selection;
         if source.database_id() != self.database_id() {
             return Err(Error::InvalidContext);
         }
-        if let Some(id) = self.extracted_entry(entry, change, &group, operation)? {
+        if let Some(id) = self.extracted_entry_in(entry, change, group.as_ref(), operation)? {
             return Ok(id);
         }
         let selected = source.at_source(change)?;
@@ -199,7 +234,7 @@ impl Document {
             group: group.clone(),
         };
         let mut candidate = self.clone();
-        let mut draft = candidate.begin_create_entry(group)?;
+        let mut draft = candidate.begin_create_entry_in(group)?;
         draft.fields = fields;
         let id = candidate.confirm_entry(
             draft,
@@ -221,6 +256,18 @@ impl Document {
         operation: &OperationId,
         now: Timestamp,
     ) -> Result<EntryId, Error> {
+        self.restore_revision_in(entry, revision, Some(group), operation, now)
+    }
+
+    /// Perform the operation with an optional group destination.
+    pub fn restore_revision_in(
+        &mut self,
+        entry: &EntryId,
+        revision: &RevisionId,
+        group: Option<GroupId>,
+        operation: &OperationId,
+        now: Timestamp,
+    ) -> Result<EntryId, Error> {
         let intent = Intent::Restore {
             entry: entry.clone(),
             revision: revision.clone(),
@@ -229,7 +276,9 @@ impl Document {
         if let Some(result) = self.receipt(operation, &intent)? {
             return Ok(result);
         }
-        self.require_group(&group)?;
+        if let Some(group) = &group {
+            self.require_group(group)?;
+        }
         let source = self
             .history(entry)?
             .into_iter()
@@ -349,7 +398,10 @@ impl Document {
             tx.put_object(&attachments, id.as_str(), ObjType::Map)?;
         }
         if let Intent::Restore { group, .. } = intent {
-            let destination = objects::single(&tx, &ObjectId::Group(group.clone()))?.group_ref()?;
+            let destination = group
+                .as_ref()
+                .map(|group| objects::single(&tx, &ObjectId::Group(group.clone()))?.group_ref())
+                .transpose()?;
             tx.put(&target, "group", encode(&destination)?)?;
         }
         let mut changed = BTreeSet::new();
@@ -363,7 +415,8 @@ impl Document {
                 &mut changed,
             )?;
         }
-        let snapshot = read_entry(&tx, &context.entry, Some((&changed, now)))?;
+        let snapshot =
+            projection::selected_snapshot(read_entry(&tx, &context.entry, Some((&changed, now)))?)?;
         let stored = StoredRevision {
             revision: SavedRevision {
                 id: revision.clone(),
@@ -426,7 +479,7 @@ impl Document {
         Ok(!self.doc.get_all(root, revision.as_str())?.is_empty())
     }
 
-    /// Hide exactly the selected revisions. Current unresolved conflicts prohibit cleanup.
+    /// Hide exactly the selected revisions, including original concurrent alternatives.
     /// Concurrent unseen revisions are not part of this operation and remain available.
     pub fn purge_history(
         &mut self,
@@ -440,9 +493,6 @@ impl Document {
         };
         if self.receipt(operation, &intent)?.is_some() {
             return Ok(());
-        }
-        if self.entry(entry)?.has_conflicts() {
-            return Err(Error::Conflict);
         }
         let existing: BTreeSet<_> = self.history(entry)?.into_iter().map(|r| r.id).collect();
         if revisions.is_empty() || !revisions.is_subset(&existing) {
@@ -667,9 +717,9 @@ mod tests {
                     .into_iter()
                     .map(|r| r.id)
                     .collect(),
-                &OperationId::new("PUBLIC blocked purge")
+                &OperationId::new("PUBLIC exact purge")
             )
-            .is_err()
+            .is_ok()
         );
     }
 
