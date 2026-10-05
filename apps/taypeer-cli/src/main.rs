@@ -22,6 +22,11 @@ use output::{CliError, print_error, print_result};
 
 fn main() {
     let cli = Cli::parse();
+    #[cfg(feature = "ui-test-support")]
+    if matches!(cli.command, Action::PublicFixtureWorker) {
+        let result = taypeer_runtime::run_test_worker(std::io::stdin(), std::io::stdout());
+        std::process::exit(if result.is_ok() { 0 } else { 1 });
+    }
     if matches!(cli.command, Action::Worker) {
         let result = taypeer_runtime::run_worker(std::io::stdin(), std::io::stdout());
         std::process::exit(if result.is_ok() { 0 } else { 1 });

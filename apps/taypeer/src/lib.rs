@@ -22,6 +22,11 @@ rust_i18n::i18n!("locales", fallback = "en");
 
 /// Start the native application or its private worker mode.
 pub fn run() {
+    #[cfg(feature = "ui-test-support")]
+    if std::env::args().skip(1).eq(["__public_fixture_worker"]) {
+        let result = taypeer_runtime::run_test_worker(std::io::stdin(), std::io::stdout());
+        std::process::exit(if result.is_ok() { 0 } else { 1 });
+    }
     #[cfg(target_os = "macos")]
     if std::env::args().skip(1).eq(["__platform-helper"]) {
         println!("{}", taypeer_desktop_platform::helper_path());

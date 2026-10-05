@@ -68,8 +68,15 @@ impl Worker {
             spool: spool.path().to_owned(),
             invitation: Some(invitation),
         };
+        let boot_profile = context.profile.clone();
         let callbacks = Callbacks::new(context, destination.to_owned(), spool.path().to_owned());
-        let client = Client::spawn(executable, sessions, Box::new(callbacks), spool)?;
+        let client = Client::spawn(
+            executable,
+            &boot_profile,
+            sessions,
+            Box::new(callbacks),
+            spool,
+        )?;
         let result = client
             .request(&boot, true)
             .and_then(|value| serde_json::from_value(value).map_err(|_| RuntimeError::Protocol));

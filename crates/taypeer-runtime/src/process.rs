@@ -30,13 +30,18 @@ pub(crate) struct Client {
 impl Client {
     pub fn spawn(
         executable: &std::path::Path,
+        profile: &crate::profile::NativeProfile,
         sessions: &crate::session::SessionController,
         callbacks: Box<dyn CallbackHandler>,
         spool: tempfile::TempDir,
     ) -> Result<Arc<Self>, RuntimeError> {
         use crate::platform::ProcessLauncher;
         Self::connect(
-            crate::platform::DesktopLauncher(executable).launch()?,
+            crate::platform::ProfileDesktopLauncher {
+                executable,
+                profile,
+            }
+            .launch()?,
             sessions,
             callbacks,
             spool,

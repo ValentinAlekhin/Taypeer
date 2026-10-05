@@ -302,6 +302,8 @@ impl Host {
             Action::Generate(command) => return generate(command),
             Action::Search { query } => return self.search(&query),
             Action::Session | Action::Worker => return Err(CliError::SessionOnly),
+            #[cfg(feature = "ui-test-support")]
+            Action::PublicFixtureWorker => return Err(CliError::SessionOnly),
             Action::Exit => {
                 self.close_all()?;
                 return Ok(Value::Null);

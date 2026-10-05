@@ -61,6 +61,14 @@ impl Client {
             Some(PASSWORD),
         ));
         self.file = Some(PathBuf::from(result["file"].as_str().unwrap()));
+        let profile = taypeer_runtime::profile::NativeProfile::load_test(&self.profile).unwrap();
+        let identity = profile
+            .identity()
+            .unwrap()
+            .expect("Worker enrolled the fixture identity");
+        let archive =
+            taypeer_storage::ArchiveSnapshot::open(self.file.as_ref().unwrap(), None).unwrap();
+        assert_eq!(archive.chain().head().manager, identity.device);
         result
     }
     fn write_input(&self, name: &str, value: Value) -> PathBuf {

@@ -50,34 +50,55 @@ pub trait ProcessLauncher {
 pub struct DesktopLauncher<'a>(pub &'a Path);
 impl ProcessLauncher for DesktopLauncher<'_> {
     fn launch(&self) -> Result<ProcessConnection, RuntimeError> {
-        let child = Command::new(self.0)
-            .arg("__worker")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|_| RuntimeError::Transport)?;
-        let mut process = DesktopProcess(Some(child));
-        let input = process
-            .0
-            .as_mut()
-            .ok_or(RuntimeError::Transport)?
-            .stdin
-            .take()
-            .ok_or(RuntimeError::Transport)?;
-        let output = process
-            .0
-            .as_mut()
-            .ok_or(RuntimeError::Transport)?
-            .stdout
-            .take()
-            .ok_or(RuntimeError::Transport)?;
-        Ok(ProcessConnection::new(
-            Box::new(process),
-            Box::new(input),
-            Box::new(output),
-        ))
+        launch_entry_point(self.0, "__worker")
     }
+}
+
+pub(crate) struct ProfileDesktopLauncher<'a> {
+    pub executable: &'a Path,
+    pub profile: &'a crate::profile::NativeProfile,
+}
+impl ProcessLauncher for ProfileDesktopLauncher<'_> {
+    fn launch(&self) -> Result<ProcessConnection, RuntimeError> {
+        if self.profile.is_public_fixture() {
+            launch_entry_point(self.executable, "__public_fixture_worker")
+        } else {
+            DesktopLauncher(self.executable).launch()
+        }
+    }
+}
+
+fn launch_entry_point(
+    executable: &Path,
+    entry_point: &str,
+) -> Result<ProcessConnection, RuntimeError> {
+    let child = Command::new(executable)
+        .arg(entry_point)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|_| RuntimeError::Transport)?;
+    let mut process = DesktopProcess(Some(child));
+    let input = process
+        .0
+        .as_mut()
+        .ok_or(RuntimeError::Transport)?
+        .stdin
+        .take()
+        .ok_or(RuntimeError::Transport)?;
+    let output = process
+        .0
+        .as_mut()
+        .ok_or(RuntimeError::Transport)?
+        .stdout
+        .take()
+        .ok_or(RuntimeError::Transport)?;
+    Ok(ProcessConnection::new(
+        Box::new(process),
+        Box::new(input),
+        Box::new(output),
+    ))
 }
 pub(crate) struct DesktopProcess(pub Option<Child>);
 impl ProcessHandle for DesktopProcess {

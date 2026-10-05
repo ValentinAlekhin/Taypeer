@@ -230,6 +230,17 @@ impl NativeProfile {
     pub fn transport_public(&self) -> PublicKey {
         self.public.transport
     }
+    /// Explicit test credential provenance, never inferred from files or failed native access.
+    pub(crate) fn is_public_fixture(&self) -> bool {
+        #[cfg(feature = "ui-test-support")]
+        {
+            matches!(self.credentials, Credentials::Fixture(_))
+        }
+        #[cfg(not(feature = "ui-test-support"))]
+        {
+            false
+        }
+    }
     /// Acquire only the endpoint/manifest credential in the coordinator process.
     pub fn transport(&self) -> Result<TransportKey, ProfileError> {
         let seed = read_seed(&self.credentials, &self.service(), "transport")?

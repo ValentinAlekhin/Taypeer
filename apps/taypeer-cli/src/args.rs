@@ -87,6 +87,9 @@ pub(crate) enum Action {
     Exit,
     #[command(name = "__worker", hide = true)]
     Worker,
+    #[cfg(feature = "ui-test-support")]
+    #[command(name = "__public_fixture_worker", hide = true)]
+    PublicFixtureWorker,
 }
 
 #[derive(Subcommand)]

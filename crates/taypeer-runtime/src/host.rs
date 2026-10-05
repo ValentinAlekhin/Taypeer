@@ -248,7 +248,10 @@ impl RuntimeHost {
         form: Option<taypeer_services::CreateDatabase>,
     ) -> Result<Worker, RuntimeError> {
         self.open_with_launcher(
-            &crate::platform::DesktopLauncher(executable),
+            &crate::platform::ProfileDesktopLauncher {
+                executable,
+                profile: &self.context.profile,
+            },
             path,
             password,
             form,
