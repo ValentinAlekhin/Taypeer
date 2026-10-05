@@ -41,7 +41,7 @@ deployment {
   android = device 'Телефон владельца' {
     technology 'Android 12+; ARM64'
     host = process 'Host приложения' {
-      description 'Единственный координатор файлов и network host для Activity, WorkManager и foreground Service; без открытого документа.'
+      description 'Единственный координатор файлов и network host для Activity, фоновых заданий и foreground Service; без открытого документа.'
       ui = instanceOf taypeer.android
       ffi = instanceOf taypeer.ffi
       guard = instanceOf taypeer.sessionGuard

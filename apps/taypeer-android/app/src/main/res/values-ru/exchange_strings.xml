@@ -1,0 +1,5 @@
+<resources>
+    <string name="exchange_channel">Обмен шифротекстом</string>
+    <string name="exchange_notification">Обмен зашифрованными данными</string>
+    <string name="exchange_notification_detail">Нажмите, чтобы вернуться в Taypeer</string>
+</resources>

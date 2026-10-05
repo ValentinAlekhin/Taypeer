@@ -9,8 +9,8 @@ import android.os.IBinder
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.taypeer.bridge.AndroidException
-import dev.taypeer.platform.DocumentService
-import dev.taypeer.platform.IDocumentProcess
+import dev.taypeer.platform.LifecycleProbeService
+import dev.taypeer.platform.ILifecycleProbe
 import dev.taypeer.platform.KeystoreCredentials
 import org.junit.Assert.*
 import org.junit.Test
@@ -84,12 +84,12 @@ class PlatformTest {
         private val connected = CountDownLatch(1)
         val died = CountDownLatch(1)
         lateinit var binder: IBinder
-        lateinit var remote: IDocumentProcess
+        lateinit var remote: ILifecycleProbe
         var pid = 0
         private var bound = false
         private val owner = Binder()
         fun bind() {
-            bound = context.bindIsolatedService(Intent(context, DocumentService::class.java),
+            bound = context.bindIsolatedService(Intent(context, LifecycleProbeService::class.java),
                 Context.BIND_AUTO_CREATE, "generation_${UUID.randomUUID().toString().replace("-", "")}", executor, this)
             assertTrue(bound)
             assertTrue(connected.await(10, TimeUnit.SECONDS))
@@ -97,7 +97,7 @@ class PlatformTest {
         }
         override fun onServiceConnected(name: ComponentName, service: IBinder) {
             binder = service
-            remote = IDocumentProcess.Stub.asInterface(service)
+            remote = ILifecycleProbe.Stub.asInterface(service)
             service.linkToDeath({ died.countDown() }, 0)
             connected.countDown()
         }

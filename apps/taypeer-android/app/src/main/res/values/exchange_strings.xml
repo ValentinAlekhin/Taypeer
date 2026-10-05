@@ -1,0 +1,5 @@
+<resources>
+    <string name="exchange_channel">Encrypted exchange</string>
+    <string name="exchange_notification">Exchanging encrypted data</string>
+    <string name="exchange_notification_detail">Tap to return to Taypeer</string>
+</resources>

@@ -1,29 +1,35 @@
 package dev.taypeer
 
 import androidx.test.platform.app.InstrumentationRegistry
+import dev.taypeer.bridge.Host
+import dev.taypeer.platform.KeystoreCredentials
 import dev.taypeer.platform.WorkingCopies
 import org.junit.Assert.*
 import org.junit.Test
 import java.io.ByteArrayInputStream
+import java.io.File
 import java.io.IOException
 import java.io.InputStream
+import java.util.UUID
 
 class ImportTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
-    private val copies = WorkingCopies(instrumentation.targetContext)
-
-    @Test fun importsVerifiedCiphertextAndKeepsTheSourceUnchanged() {
+    private inline fun fixture(block: (WorkingCopies) -> Unit) {
+        val context = instrumentation.targetContext
+        val profile = File(context.noBackupFilesDir, "PUBLIC-import-${UUID.randomUUID()}")
+        try { Host(profile.path, KeystoreCredentials(context)).use { host -> block(WorkingCopies(context, host)) } }
+        finally { assertTrue(profile.deleteRecursively()) }
+    }
+    @Test fun importsVerifiedCiphertextAndKeepsTheSourceUnchanged() = fixture { copies ->
         val source = instrumentation.context.assets.open("empty.taypeer").use { it.readBytes() }
         val expected = source.copyOf()
         val imported = copies.importStream { ByteArrayInputStream(source) }
-        try {
-            assertArrayEquals(expected, source)
-            assertArrayEquals(expected, imported.readBytes())
-            assertTrue(copies.catalog().contains(imported))
-        } finally { assertTrue(imported.delete()) }
+        assertArrayEquals(expected, source)
+        assertArrayEquals(expected, imported.readBytes())
+        // A staged encrypted archive has no authenticated catalog entry or new admission.
+        assertFalse(copies.catalog().contains(imported))
     }
-
-    @Test fun interruptedProviderAndInvalidFormatNeverEnterTheCatalog() {
+    @Test fun interruptedProviderAndInvalidFormatNeverEnterTheCatalog() = fixture { copies ->
         val before = copies.catalog()
         assertThrows(IOException::class.java) {
             copies.importStream { object : InputStream() {

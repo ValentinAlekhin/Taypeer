@@ -21,6 +21,12 @@ class CiphertextDescriptors(private val allocateFile: () -> ParcelFileDescriptor
         return id
     }
     @Synchronized override fun allocate(): ULong = guarded { accept(allocateFile()) }
+    /** Duplicate one outgoing lease and release the table's ownership exactly once. */
+    @Synchronized fun transfer(file: ULong): ParcelFileDescriptor = guarded {
+        val duplicate = ParcelFileDescriptor.dup(descriptor(file).fileDescriptor)
+        release(file)
+        duplicate
+    }
     @Synchronized override fun length(file: ULong): ULong = guarded {
         val size = Os.fstat(descriptor(file).fileDescriptor).st_size
         if (size < 0) throw AndroidException.InvalidFile()

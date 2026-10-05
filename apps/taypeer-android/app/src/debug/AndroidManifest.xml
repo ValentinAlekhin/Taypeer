@@ -1,5 +1,14 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application>
+        <provider android:name="dev.taypeer.platform.PublicSelectedProvider"
+            android:authorities="dev.taypeer.publicselected" android:exported="false"/>
+        <!-- Pinned lint 31.9 checks this probe overlay instead of the merged main
+             manifest. Restate the production type without changing its lifetime. -->
+        <service android:name="dev.taypeer.platform.ExchangeService"
+            android:foregroundServiceType="dataSync"/>
+        <service android:name="dev.taypeer.platform.LifecycleProbeService"
+            android:exported="false" android:isolatedProcess="true"
+            android:process=":lifecycle_probe" android:stopWithTask="true"/>
         <service android:name="dev.taypeer.platform.DescriptorProbeService"
             android:exported="false" android:isolatedProcess="true"
             android:process=":descriptor_probe" android:stopWithTask="true"/>

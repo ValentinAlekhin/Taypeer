@@ -1,7 +1,11 @@
 package dev.taypeer.platform;
 import android.os.IBinder;
-/** Private lifecycle control, separate from the future document command stream. */
+import android.os.ParcelFileDescriptor;
+import dev.taypeer.platform.ICipherPersistence;
+import dev.taypeer.platform.ISelectedTransfers;
+/** Private pipes carry framed document requests; selected plaintext has a separate bounded port. */
 interface IDocumentProcess {
-    int initialize(IBinder host);
+    int initialize(IBinder host, in ParcelFileDescriptor commands,
+        in ParcelFileDescriptor responses, ICipherPersistence persistence, ISelectedTransfers selected);
     oneway void terminate();
 }
