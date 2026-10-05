@@ -5,7 +5,7 @@ use taypeer_storage::{
     ArchiveSnapshot, CiphertextFile, CiphertextIo, TemporaryFileProvider, TemporaryStorage,
 };
 
-const TRANSFER_CHUNK: usize = 64 * 1024;
+pub(crate) const TRANSFER_CHUNK: usize = 64 * 1024;
 
 /// Private worker file table. Handles are opaque leases, not OS descriptor numbers.
 /// Methods address only already-transferred ciphertext files, never arbitrary paths.
@@ -23,6 +23,12 @@ pub trait CiphertextFiles: Send + Sync {
     fn release(&self, file: u64);
 }
 struct Files(Arc<dyn CiphertextFiles>);
+pub(crate) fn temporary(files: Arc<dyn CiphertextFiles>) -> TemporaryStorage {
+    TemporaryStorage::new(Arc::new(Files(files)))
+}
+pub(crate) fn source(files: Arc<dyn CiphertextFiles>, id: u64) -> CiphertextFile {
+    CiphertextFile::new(Arc::new(Lease { files, id }))
+}
 impl TemporaryFileProvider for Files {
     fn create(&self) -> io::Result<CiphertextFile> {
         let id = self.0.allocate().map_err(file_error)?;

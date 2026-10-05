@@ -1,15 +1,18 @@
 //! Typed Android application boundary. No document tree, JSON dispatch or read keys cross it.
 mod credentials;
 mod descriptors;
+mod document;
 mod palette;
 pub use credentials::{CredentialPort, Host};
 pub use descriptors::{CiphertextArchive, CiphertextFiles};
+pub use document::*;
 pub use palette::{Palette, palette};
 
 uniffi::setup_scaffolding!();
 
 /// Sanitized platform/FFI failure, localized by the Android UI.
-#[derive(Debug, uniffi::Error)]
+#[derive(Debug, thiserror::Error, uniffi::Error)]
+#[error("{self:?}")]
 pub enum AndroidError {
     /// Invalid generator parameters.
     InvalidOptions,
@@ -27,13 +30,15 @@ pub enum AndroidError {
     ProfileIo,
     /// A public profile or protected registration is malformed.
     ProfileInvalid,
+    /// Ciphertext could not be written; no durable success is claimed.
+    StorageIo,
+    /// A fresher ciphertext generation must be reconciled before retrying.
+    StorageChanged,
+    /// Publication may have happened, but durability is not confirmed.
+    CommitUncertain,
+    /// A different ciphertext file already occupies the destination.
+    AlreadyExists,
 }
-impl std::fmt::Display for AndroidError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{self:?}")
-    }
-}
-impl std::error::Error for AndroidError {}
 
 /// Exact generator choices; validation belongs to the common Rust service.
 #[derive(uniffi::Record)]
@@ -80,7 +85,7 @@ pub fn generate_password(options: PasswordOptions) -> Result<String, AndroidErro
 /// Version of the application-owned typed bridge, checked independently of the file format.
 #[uniffi::export]
 pub fn bridge_version() -> u32 {
-    1
+    2
 }
 
 /// Validate a transferred encrypted file before publishing it in the private catalog.

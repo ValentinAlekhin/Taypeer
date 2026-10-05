@@ -38,7 +38,7 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
-    sourceSets["androidTest"].assets.srcDir("../../../tests/fixtures/dev5")
+    sourceSets["androidTest"].assets.srcDir("../../../tests/fixtures/dev6")
     sourceSets["main"].jniLibs.srcDir(layout.buildDirectory.dir("generated/jniLibs"))
     sourceSets["main"].java.srcDir(layout.buildDirectory.dir("generated/uniffi"))
     packaging { resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" }

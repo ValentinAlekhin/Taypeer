@@ -9150,9 +9150,15 @@ name = "taypeer-android"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "serde_json",
+ "taypeer-core",
+ "taypeer-document",
  "taypeer-runtime",
  "taypeer-services",
  "taypeer-storage",
+ "taypeer-sync",
+ "taypeer-trust",
+ "thiserror 2.0.18",
  "toml 0.9.12+spec-1.1.0",
  "uniffi",
  "zeroize",

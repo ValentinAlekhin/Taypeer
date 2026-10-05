@@ -39,7 +39,7 @@ impl CredentialStore for Credentials {
 /// of Activity recreation and document service lifetimes. No database is unlocked here.
 #[derive(uniffi::Object)]
 pub struct Host {
-    runtime: RuntimeHost,
+    pub(crate) runtime: Arc<RuntimeHost>,
 }
 #[uniffi::export]
 impl Host {
@@ -67,7 +67,9 @@ impl Host {
             }
             _ => AndroidError::Runtime,
         })?;
-        Ok(Arc::new(Self { runtime }))
+        Ok(Arc::new(Self {
+            runtime: Arc::new(runtime),
+        }))
     }
     /// Revoke all document generations on background entry without waiting for I/O.
     pub fn background(&self) {
