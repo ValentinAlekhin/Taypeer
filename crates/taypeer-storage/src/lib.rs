@@ -20,7 +20,7 @@ pub use archive::{
 };
 pub use cipher_persistence::{
     ArchiveSeed, CipherPersistence, PreparedCommit, discard_local_draft, read_local_draft,
-    save_local_draft,
+    read_local_draft_in, save_local_draft,
 };
 pub use encrypted_object::{EncryptedObject, ObjectReader, create_epoch};
 

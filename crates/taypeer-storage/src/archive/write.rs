@@ -140,7 +140,7 @@ impl ArchiveStore {
             }
             return Err(error);
         }
-        self.snapshot = snapshot;
+        self.snapshot = snapshot.with_temporary_storage(self.snapshot.temporary_storage());
         let finish = (|| {
             if let Some(anchor) = &self.anchor {
                 anchor.save(&Anchor {

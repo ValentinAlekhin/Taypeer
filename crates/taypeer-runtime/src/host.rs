@@ -368,6 +368,9 @@ pub(crate) fn sync_error(error: taypeer_sync::Error) -> RuntimeError {
     }
 }
 impl HostContext {
+    pub(crate) fn ciphertext_staging(&self) -> taypeer_storage::TemporaryStorage {
+        taypeer_storage::TemporaryStorage::in_directory(self.profile.directory().to_owned())
+    }
     fn has_path(self: &Arc<Self>, path: &Path) -> Result<bool, RuntimeError> {
         for context in self.active_contexts()? {
             if context
@@ -473,7 +476,8 @@ impl HostContext {
             Some(registration.root),
             Some(self.profile.anchor(&registration)),
         )
-        .map_err(cipher_ipc::storage)?;
+        .map_err(cipher_ipc::storage)?
+        .with_temporary_storage(self.ciphertext_staging());
         self.coordinator.register(store).map_err(sync_error)?;
         copies.insert(path.to_owned(), registration.clone());
         Ok(registration)
@@ -514,7 +518,10 @@ impl HostContext {
                 Some(self.profile.anchor(&registration)),
             )
             .map_err(cipher_ipc::storage)?;
-        Ok((registration, store))
+        Ok((
+            registration,
+            store.with_temporary_storage(self.ciphertext_staging()),
+        ))
     }
     fn publish_recovery(&self, path: &Path, seed: ArchiveSeed) -> Result<(), RuntimeError> {
         let path = canonical_path(path)?;
@@ -701,10 +708,11 @@ impl Callbacks {
                     .coordinator
                     .snapshot(&registration.database)
                     .map_err(sync_error)?;
-                let object = taypeer_storage::read_local_draft(
+                let object = taypeer_storage::read_local_draft_in(
                     &self.path,
                     registration.working_copy,
                     snapshot.chain(),
+                    self.context.ciphertext_staging(),
                 )
                 .map_err(cipher_ipc::storage)?;
                 let path = if let Some(object) = object {

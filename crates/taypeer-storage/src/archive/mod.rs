@@ -380,6 +380,12 @@ pub struct ArchiveStore {
     uncertain: bool,
 }
 impl ArchiveStore {
+    /// Bind ciphertext object staging to a private host allocator. Commits retain
+    /// this policy in every new immutable snapshot; they never fall back to temp_dir.
+    pub fn with_temporary_storage(mut self, temporary: crate::TemporaryStorage) -> Self {
+        self.snapshot = self.snapshot.with_temporary_storage(temporary);
+        self
+    }
     /// Current verified immutable generation.
     pub fn snapshot(&self) -> &ArchiveSnapshot {
         &self.snapshot

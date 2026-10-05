@@ -113,11 +113,27 @@ pub fn read_local_draft(
     working_copy: Digest,
     chain: &ControlChain,
 ) -> Result<Option<EncryptedObject>, Error> {
+    read_local_draft_in(
+        path,
+        working_copy,
+        chain,
+        crate::TemporaryStorage::default(),
+    )
+}
+
+/// Read the local-only role with an explicit ciphertext allocator. Android hosts
+/// and isolated workers must not inherit the desktop system-temp convenience.
+pub fn read_local_draft_in(
+    path: &Path,
+    working_copy: Digest,
+    chain: &ControlChain,
+    temporary: crate::TemporaryStorage,
+) -> Result<Option<EncryptedObject>, Error> {
     let source = file::sibling(path, &format!(".{working_copy}.draft"));
     if !source.try_exists()? {
         return Ok(None);
     }
-    let object = EncryptedObject::open(&source, chain)?;
+    let object = EncryptedObject::open_file(File::open(&source)?, chain, temporary)?;
     if object.envelope().kind != ObjectKind::LocalDraft {
         return Err(Error::InvalidFile);
     }

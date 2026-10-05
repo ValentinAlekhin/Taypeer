@@ -64,7 +64,15 @@ impl CipherPersistence for CoordinatorPersistence {
         &self,
         chain: &ControlChain,
     ) -> Result<Option<EncryptedObject>, taypeer_storage::Error> {
-        taypeer_storage::read_local_draft(&self.path, self.working_copy, chain)
+        taypeer_storage::read_local_draft_in(
+            &self.path,
+            self.working_copy,
+            chain,
+            self.coordinator
+                .snapshot(&self.database)
+                .map_err(storage)?
+                .temporary_storage(),
+        )
     }
     fn discard_draft(&self) -> Result<(), taypeer_storage::Error> {
         taypeer_storage::discard_local_draft(&self.path, self.working_copy)

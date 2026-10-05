@@ -12,6 +12,51 @@ use taypeer_core::DatabaseId;
 use taypeer_trust::{AuthorKey, ControlTransition, Identity, ObjectKind};
 
 const PASSWORD: &[u8] = b"PUBLIC archive password";
+
+#[test]
+fn host_staging_policy_survives_a_durable_commit() {
+    struct Denied;
+    impl crate::TemporaryFileProvider for Denied {
+        fn create(&self) -> std::io::Result<crate::CiphertextFile> {
+            Err(std::io::ErrorKind::PermissionDenied.into())
+        }
+    }
+    let fixture = Fixture::new();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("PUBLIC explicit allocator.taypeer");
+    let (candidate, metadata) = fixture.initial();
+    let mut store = ArchiveStore::create(&path, &candidate, metadata, None)
+        .unwrap()
+        .with_temporary_storage(crate::TemporaryStorage::new(Arc::new(Denied)));
+    let before = store.snapshot().clone();
+    let checkpoint = before.metadata().manifest.body.checkpoint;
+    assert!(matches!(before.object(checkpoint), Err(Error::Io)));
+    let mut body = before.metadata().manifest.body.clone();
+    body.generation += 1;
+    let metadata = before
+        .candidate()
+        .metadata(
+            &fixture.chain,
+            &fixture.transport,
+            body,
+            ArchiveJournal::default(),
+        )
+        .unwrap();
+    store
+        .commit(before.fingerprint(), &before.candidate(), metadata)
+        .unwrap();
+    assert!(
+        matches!(store.snapshot().object(checkpoint), Err(Error::Io)),
+        "commit must not silently restore the global allocator"
+    );
+    drop(store);
+    let allowed = ArchiveStore::open(&path, None, None)
+        .unwrap()
+        .with_temporary_storage(crate::TemporaryStorage::in_directory(
+            directory.path().to_owned(),
+        ));
+    assert!(allowed.snapshot().object(checkpoint).is_ok());
+}
 struct Fixture {
     author: AuthorKey,
     transport: TransportKey,

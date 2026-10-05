@@ -341,8 +341,13 @@ impl PlatformCipherWriter {
     /// Read only the local draft role against the current verified trust chain.
     pub fn load_draft(&self) -> Result<Option<EncryptedObject>, RuntimeError> {
         let snapshot = self.snapshot()?;
-        taypeer_storage::read_local_draft(&self.path, self.working_copy()?, snapshot.chain())
-            .map_err(crate::cipher_ipc::storage)
+        taypeer_storage::read_local_draft_in(
+            &self.path,
+            self.working_copy()?,
+            snapshot.chain(),
+            self.context.ciphertext_staging(),
+        )
+        .map_err(crate::cipher_ipc::storage)
     }
     /// Explicitly discard the working copy's collection with a durable result.
     pub fn discard_draft(&self) -> Result<(), RuntimeError> {
