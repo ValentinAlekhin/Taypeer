@@ -105,7 +105,7 @@ function buildAndroidV1() {
     rule(p,inset,87,inner);
     const bottom=keyboard?h-24-(landscape?112:280):h-24;
     if(keyboard)ime(p,bottom);
-    if(form){const f=box(p,'Android / form actions',inset,bottom-64,inner,64,'panel');rule(f,0,0,inner);const cw=Math.floor((inner-40)/2);action(f,form.cancel||'Отмена',16,8,cw,'ghost');action(f,form.label,24+cw,8,cw,form.kind||'primary');}
+    if(form){const f=box(p,form.autosave?'Android / autosave status':'Android / form actions',inset,bottom-64,inner,64,'panel');rule(f,0,0,inner);if(form.autosave){copy(f,form.status||'Сохранено',16,20,inner-32,{size:14,color:'muted',h:24});}else{const cw=Math.floor((inner-40)/2);action(f,form.cancel||'Отмена',16,8,cw,'ghost');action(f,form.label,24+cw,8,cw,form.kind||'primary');}}
     const top=88+(tab?56:0), end=bottom-(form?64:0);
     const viewport=box(p,'Android / scroll viewport',inset,top,inner,end-top,'bg');viewport.clipsContent=true;
     const body=box(viewport,'Android / scroll content',0,0,inner,2000,'');
@@ -130,13 +130,13 @@ function buildAndroidV1() {
     return c.p;
   }
   function form(name,title,render,{label='Сохранить',kind='primary',...options}={}) {
-    const c=phone(name,title,{page:FORMS,right:null,form:{label,kind},...options});render(c);return finish(c);
+    const automatic=['group','attribute','attachment','database-info'].includes(name);const c=phone(name,title,{page:FORMS,right:null,form:automatic?{autosave:true}:{label,kind},...options});render(c);return finish(c);
   }
   function confirm(name,title,summary,label,kind='primary') {return form(name,title,c=>paragraph(c,summary,'fg',16),{label,kind});}
   function search(c,query='Поиск записей…') {const f=inputFrame(c.body,'Поиск',16,c.y,c.w-32,48);const n=touch(f,'Искать записи',0,0,f.width,48);glyph(n,'search',14,14);copy(n,query,48,12,f.width-64,{color:query.includes('…')?'muted':'fg',h:24});c.y+=60;}
 
   function entry(name,{edit=false,tab='Обзор',newEntry=false,...options}={}) {
-    const c=phone(name,newEntry?'Новая запись':'GitHub',{right:edit?null:'pencil',rightLabel:'Редактировать запись',form:edit?{label:newEntry?'Создать':'Сохранить'}:null,tab,tabOffset:['Свойства','История'].includes(tab)?216:tab==='Вид'?100:0,...options});
+    const c=phone(name,newEntry?'Новая запись':'GitHub',{right:edit?null:'pencil',rightLabel:'Редактировать запись',form:edit?{autosave:true,status:newEntry?'Локальный черновик':'Сохранено'}:null,tab,tabOffset:['Свойства','История'].includes(tab)?216:tab==='Вид'?100:0,...options});
     if(tab==='Обзор') {
       const row={entry:true,edit};
       field(c,'Название',newEntry?'Новая запись':'GitHub',row);
@@ -173,17 +173,17 @@ function buildAndroidV1() {
   function entriesScreen(name='entries',options={}) {
     const c=phone(name,options.long?'Инфраструктура и сервисы':'Работа',{menu:true,...options});search(c);
     c.viewport.resize(c.w,c.p.height-108-c.viewport.y);
-    if(options.conflict)notice(c,'3 конфликта','Выберите итог для спорных правок.',{button:'Разобрать…'});
+    if(options.alternatives)paragraph(c,'Объединено · альтернативы доступны в истории.');
     for(const [s,v] of entries)item(c,s,v.replace('valentin','demo').replace('studio.dev','studio.example'));
     const p=finish(c);const fab=touch(p,'Создать запись…',p.width-80,p.height-96,56,56,'default');glyph(fab,'plus',18,18);return p;
   }
   const welcome=phone('welcome','Taypeer',{right:'settings',rightLabel:'Настройки'});
   welcome.y=40;heading(welcome,'Ваши пароли.\nНа ваших устройствах.');paragraph(welcome,'Создайте базу или откройте имеющуюся.');
-  fullAction(welcome,'Создать базу…');fullAction(welcome,'Открыть .taypeer…');fullAction(welcome,'Получить с устройства…');fullAction(welcome,'Импортировать KDBX…');separator(welcome);heading(welcome,'Последние базы');
+  fullAction(welcome,'Создать базу…');fullAction(welcome,'Открыть .taypeer…');fullAction(welcome,'Получить с устройства…');separator(welcome);heading(welcome,'Последние базы');
   item(welcome,'Рабочая','Внутренняя копия · заблокирована','database');item(welcome,'Личная','Внутренняя копия · вчера','database');finish(welcome);
   const unlock=phone('unlock','Рабочая',{right:'settings',rightLabel:'Настройки'});unlock.y=64;glyph(unlock.body,'lock-keyhole',16,24);heading(unlock,'База заблокирована');paragraph(unlock,'Внутренняя рабочая копия');field(unlock,'Мастер-пароль','••••••••••••',{secret:true});fullAction(unlock,'Разблокировать','primary');fullAction(unlock,'Биометрия…');paragraph(unlock,'Подготовка ключа: 1,2 с на Pixel 9');notice(unlock,'Изменения получены','Применение после разблокировки.',{tone:'muted'});fullAction(unlock,'Выбрать другую базу…');finish(unlock);
-  entriesScreen();entriesScreen('entries-conflicts',{conflict:true});
-  const empty=phone('empty','Рабочая',{menu:true});search(empty);empty.y+=64;heading(empty,'Пока нет групп');paragraph(empty,'Создайте первую группу для записей.');fullAction(empty,'Создать группу…');finish(empty);
+  entriesScreen();entriesScreen('entries-alternatives',{alternatives:true});
+  const empty=phone('empty','Рабочая',{menu:true});search(empty);empty.y+=64;heading(empty,'Пока нет групп');paragraph(empty,'Записи можно создать без группы.');fullAction(empty,'Создать запись…');fullAction(empty,'Создать группу…');finish(empty);
   const emptyGroup=phone('empty-group','Архив',{menu:true});search(emptyGroup);emptyGroup.y+=64;heading(emptyGroup,'В группе пока нет записей');fullAction(emptyGroup,'Создать запись…');finish(emptyGroup);
   function drawer(name,scroll=0,options={}) {
     const c=phone(name,'Работа',{menu:true,...options});c.viewport.remove();
@@ -196,8 +196,8 @@ function buildAndroidV1() {
       iconAction(row,depth?'chevron-right':'chevron-down','Раскрыть '+name,depth*16,0);
       const label=touch(row,'Открыть группу '+name,48+depth*16,0,row.width-48-depth*16,48);glyph(label,'folder',8,14);copy(label,name,36,12,label.width-44,{h:24});c.y+=48;
     });
-    fullAction(c,'Создать группу…');separator(c);
-    for(const [s,key] of [['Устройства и обмен','monitor'],['Корзина','trash-2'],['Конфликты · 3','triangle-alert'],['Отложенные правки · 2','history'],['Импорт и экспорт','file'],['Настройки','settings'],['Заблокировать','lock-keyhole']])item(c,s,'',key,{end:null});
+    fullAction(c,'Создать группу…');item(c,'Без группы','','file',{end:null});separator(c);
+    for(const [s,key] of [['Устройства и обмен','monitor'],['Корзина','trash-2'],['Черновики · 3','history'],['Отложенные правки · 2','history'],['Настройки','settings'],['Заблокировать','lock-keyhole']])item(c,s,'',key,{end:null});
     return finish(c,{scroll});
   }
   drawer('drawer');drawer('drawer-scrolled',300);
@@ -212,20 +212,22 @@ function buildAndroidV1() {
   entry('advanced-edit',{edit:true,tab:'Дополнительно'});entry('appearance-edit',{edit:true,tab:'Вид'});
   const version=phone('history-version','Версия · 15 сен, 09:32',{tab:'Обзор',right:'ellipsis'});paragraph(version,'GitHub · сохранённая версия\nPixel 9 · только просмотр');field(version,'Название','GitHub',{edit:false,entry:true});field(version,'Логин','demo@studio.example',{edit:false,entry:true});field(version,'Пароль','••••••••••••',{edit:false,entry:true,actions:[['eye','Показать исторический пароль'],['copy','Копировать исторический пароль']]});fullAction(version,'Сравнить с текущей…');fullAction(version,'Восстановить…');finish(version);
   const compare=phone('history-compare','Сравнение версий',{right:null});paragraph(compare,'GitHub · изменения по полям');heading(compare,'Пароль');paragraph(compare,'Выбранная · 15 сентября, 09:32');field(compare,'Сохранённый пароль','••••••••••••',{edit:false,secret:true,actions:[['eye','Показать прежний пароль'],['copy','Копировать прежний пароль']]});paragraph(compare,'Текущая · 15 сентября, 09:41');field(compare,'Текущий пароль','••••••••••••••',{edit:false,secret:true,actions:[['eye','Показать текущий пароль'],['copy','Копировать текущий пароль']]});separator(compare);heading(compare,'Заметки');paragraph(compare,'Выбранная\nОсновной аккаунт\n\nТекущая\nОсновной рабочий аккаунт','fg',16);fullAction(compare,'Восстановить выбранную…');finish(compare);
-  const trash=phone('trash','Корзина');item(trash,'Старый сервер','Запись · удалена вчера','file',{selected:true});item(trash,'Архив проектов','Группа · 4 записи','folder');trash.y+=24;fullAction(trash,'Восстановить…');fullAction(trash,'Удалить окончательно…','danger');fullAction(trash,'Очистить корзину…','danger');paragraph(trash,'Окончательная очистка не удаляет копии на других устройствах.');finish(trash);
+  const trash=phone('trash','Корзина');item(trash,'Старый сервер','Запись · удалена вчера','file',{selected:true});item(trash,'Архив проектов','Группа · 4 записи','folder');trash.y+=24;fullAction(trash,'Восстановить…');fullAction(trash,'Удалить окончательно…','danger');fullAction(trash,'Очистить корзину…','danger');paragraph(trash,'Запись перемещена в корзину.');fullAction(trash,'Отменить удаление');paragraph(trash,'Окончательная очистка не удаляет копии на других устройствах.');finish(trash);
   const devices=phone('devices','Устройства и обмен');paragraph(devices,'Рабочая · это устройство управляет БД');item(devices,'Pixel 9','Это устройство · управляющее','smartphone',{end:'ellipsis'});item(devices,'MacBook Pro','В сети · доверенное','monitor',{end:'ellipsis'});item(devices,'Mac mini','Не в сети · 2 часа','monitor',{end:'ellipsis'});devices.y+=16;fullAction(devices,'Пригласить устройство…');heading(devices,'Обмен');paragraph(devices,'Изменения применены · 09:41\nПрямое соединение');fullAction(devices,'Синхронизировать');finish(devices);
   const receive=phone('receive','Получить базу',{right:null,form:{label:'Подключиться'}});field(receive,'Код приглашения',DEMO_INVITATION.code.match(/.{1,28}/g).join('\n'),{lines:4});fullAction(receive,'Сканировать QR…');paragraph(receive,'Управляющее устройство подтвердит подключение. База сохранится во внутреннем хранилище.');finish(receive);
   const download=phone('receiving','Получение базы',{right:null});heading(download,'Загрузка зашифрованной БД');paragraph(download,'MacBook Pro → Pixel 9');box(download.body,'Android / transfer track',16,download.y,358,4,'border');box(download.body,'Android / transfer progress',16,download.y,220,4,'muted');download.y+=28;paragraph(download,'1,5 из 2,4 МиБ · 62%','fg',16);fullAction(download,'Отменить');notice(download,'Применение после входа','Данные станут доступны после завершения загрузки и ввода мастер-пароля.',{tone:'muted'});finish(download);
-  const conflicts=phone('conflicts','Конфликты · 3');paragraph(conflicts,'Требуется ваш выбор. Варианты сохранены.');item(conflicts,'GitHub · пароль','2 варианта значения','triangle-alert');item(conflicts,'Старый сервер','Удаление и параллельная правка','trash-2');item(conflicts,'Инфраструктура','Разные группы назначения','folder');finish(conflicts);
-  const resolver=phone('conflict','GitHub · пароль',{right:null,form:{label:'Применить',kind:'disabled'}});paragraph(resolver,'Выберите вариант. Общая копия пароля недоступна до решения.');
-  for(const name of ['MacBook Pro · 09:32','Pixel 9 · 09:35']) {choice(resolver,name,false,{radio:true});field(resolver,'Вариант · '+name,'••••••••••••',{edit:false,entry:true,actions:[['eye','Показать вариант'],['copy','Копировать вариант']]});}
-  choice(resolver,'Своё значение',false,{radio:true});paragraph(resolver,'Оба исходных варианта останутся в истории.');finish(resolver);
+  const alternatives=phone('alternatives','GitHub · альтернативы',{right:null});
+  paragraph(alternatives,'История пароля · выбран автоматически');
+  field(alternatives,'Pixel 9 · выбранное значение','••••••••••••',{edit:false,entry:true,actions:[['eye','Показать вариант'],['copy','Копировать вариант']]});
+  field(alternatives,'MacBook Pro · альтернатива','••••••••••••••',{edit:false,entry:true,actions:[['eye','Показать вариант'],['copy','Копировать вариант']]});
+  paragraph(alternatives,'Исходные значения доступны до явной очистки истории.');fullAction(alternatives,'Редактировать запись…');finish(alternatives);
+  const drafts=phone('drafts','Локальные черновики');paragraph(drafts,'Зашифрованы на этом устройстве · не синхронизируются');
+  item(drafts,'GitHub','Незавершённая дата · продолжится при открытии');item(drafts,'Новая запись','Название и заметки');item(drafts,'Инфраструктура','Описание группы','folder');finish(drafts);
   const pending=phone('pending','Отложенные правки');item(pending,'Старый сервер','Объект окончательно очищен','history');item(pending,'Правки Mac mini','Нужен разбор старой схемы','history');paragraph(pending,'Остальные допустимые правки применяются. Источники сохраняются до отдельного решения.');finish(pending);
   const source=phone('pending-source','Отложенный источник',{right:null});heading(source,'Старый сервер');paragraph(source,'Mac mini · 12 сентября\nОбъект уже очищен. Автоматически он не восстановлен.');field(source,'Логин','demo',{edit:false});field(source,'Пароль','••••••••••••',{edit:false,actions:[['eye','Показать источник'],['copy','Копировать источник']]});fullAction(source,'Извлечь в новую запись…');fullAction(source,'Удалить источник…','danger');paragraph(source,'Извлечение сохраняет происхождение правок и не возвращает сетевой допуск.');finish(source);
   function settings(name='settings',options={}) {const c=phone(name,'Настройки',{right:null,...options});fullAction(c,'Устройство ▾');field(c,'Имя устройства','Pixel 9');field(c,'Язык','Русский',{select:true,edit:false});field(c,'Тема','Системная',{select:true,edit:false});field(c,'Автоблокировка','Через 5 минут',{select:true,edit:false});field(c,'Очистка буфера','Через 30 секунд',{select:true,edit:false});if(!options.locked)choice(c,'Биометрия · Рабочая',true);else paragraph(c,'Разблокируйте базу для настройки биометрии.');field(c,'Relay','Общие серверы',{select:true,edit:false});fullAction(c,'Собственный relay…');return finish(c);}
   settings();settings('settings-locked',{locked:true});
-  const dbSettings=phone('settings-database','Настройки',{right:null});fullAction(dbSettings,'База данных ▾');heading(dbSettings,'Рабочая');paragraph(dbSettings,'Внутренняя копия · Pixel 9 управляет БД');fullAction(dbSettings,'Название и описание…');fullAction(dbSettings,'Сменить мастер-пароль…');fullAction(dbSettings,'Параметры защиты…');fullAction(dbSettings,'Лимиты вложений…');fullAction(dbSettings,'Устройства и обмен…');fullAction(dbSettings,'Обновить формат…');fullAction(dbSettings,'Восстановить управление…');finish(dbSettings);
-  const files=phone('files','Импорт и экспорт',{right:null});paragraph(files,'Рабочая · внутренняя копия');fullAction(files,'Импортировать KDBX…');paragraph(files,'Создать отдельную БД Taypeer.');fullAction(files,'Экспортировать KDBX…');paragraph(files,'KDBX 4.1 с отдельным паролем.');fullAction(files,'Сохранить копию .taypeer…');paragraph(files,'Выберите место системным диалогом. Исходный файл импорта не обновляется.');finish(files);
+  const dbSettings=phone('settings-database','Настройки',{right:null});fullAction(dbSettings,'База данных ▾');heading(dbSettings,'Рабочая');paragraph(dbSettings,'Внутренняя копия · Pixel 9 управляет БД');fullAction(dbSettings,'Название и описание…');fullAction(dbSettings,'Сменить мастер-пароль…');fullAction(dbSettings,'Параметры защиты…');fullAction(dbSettings,'Лимиты вложений…');fullAction(dbSettings,'Устройства и обмен…');paragraph(dbSettings,'Формат обновляется автоматически управляющим устройством.');fullAction(dbSettings,'Восстановить управление…');finish(dbSettings);
 
   // Long forms are routes; short decisions and parameter choices are sheets.
   form('create','Создать базу',c=>{field(c,'Название','Рабочая');field(c,'Мастер-пароль','••••••••••••',{secret:true});field(c,'Повтор пароля','••••••••••••',{secret:true});paragraph(c,'Качество: надёжный');fullAction(c,'Параметры защиты…');paragraph(c,'Рабочая копия будет во внутреннем хранилище. Этот телефон станет управляющим устройством.');},{label:'Создать'});
@@ -253,18 +255,9 @@ function buildAndroidV1() {
   const vector=figma.createVector();q.appendChild(vector);vector.vectorPaths=[{windingRule:'NONZERO',data:paths.join(' ')}];vector.fills=paint('#000000');vector.strokes=[];vector.x=4*unit;vector.y=4*unit;invitation.y+=260;
   field(invitation,'Код приглашения',DEMO_INVITATION.code.match(/.{1,28}/g).join('\n'),{edit:false,lines:4});fullAction(invitation,'Копировать код');paragraph(invitation,'Подключение требует подтверждения управляющим устройством.');finish(invitation);
   form('confirm-device','Подтвердить устройство',c=>{heading(c,'MacBook Pro');paragraph(c,'Запрашивает доступ к базе «Рабочая».');field(c,'Код проверки','742 618',{edit:false});paragraph(c,'Сверьте код на обоих устройствах.');},{label:'Разрешить',form:{label:'Разрешить',cancel:'Отклонить'}});
-  form('conflict-custom','Своё значение',c=>{paragraph(c,'GitHub · конфликт пароля\nОригинальные варианты сохранятся в истории.');field(c,'Новый итог','••••••••••••',{secret:true});},{label:'Применить'});
-  form('conflict-deletion','Удаление и правка',c=>{heading(c,'Старый сервер');paragraph(c,'Объект находится в корзине. Pixel 9 удалил его, MacBook Pro изменил пароль.');field(c,'Сохранённый пароль','••••••••••••',{edit:false,actions:[['eye','Показать вариант'],['copy','Копировать вариант']]});choice(c,'Восстановить с правками',false,{radio:true});choice(c,'Подтвердить удаление',false,{radio:true});},{label:'Применить',kind:'disabled'});
-  form('conflict-placement','Конфликт размещения',c=>{heading(c,'Инфраструктура');choice(c,'Работа / Сервисы',false,{radio:true});choice(c,'Личное / Сервисы',false,{radio:true});fullAction(c,'Выбрать другую группу…');paragraph(c,'Недопустимое размещение в собственном поддереве исключено.');},{label:'Применить',kind:'disabled'});
   form('extract-pending','Извлечь правки',c=>{paragraph(c,'Источник: Mac mini · Старый сервер');field(c,'Название новой записи','Старый сервер — восстановлен');field(c,'Группа','Выберите группу…',{edit:false,select:true});paragraph(c,'Новая запись сохранит происхождение правок. Остальной источник останется доступным.');},{label:'Извлечь',kind:'disabled'});
   form('database-info','Название базы',c=>{field(c,'Название','Рабочая');field(c,'Описание','Рабочие сервисы и инфраструктура',{lines:3});});
   form('relay','Собственный relay',c=>{field(c,'Адрес','https://relay.example',{lines:2});paragraph(c,'Relay пересылает зашифрованный трафик. Если прямой связи нет, отключение relay оставляет устройства без обмена.');},{label:'Применить'});
-  form('import','Импортировать KDBX',c=>{fullAction(c,'Выбрать KDBX…');paragraph(c,'Рабочая.kdbx · KDBX 4.1');field(c,'Пароль источника','••••••••••••',{secret:true});fullAction(c,'Выбрать ключевой файл…');paragraph(c,'Допустим пароль, ключевой файл или оба. KDBX 3.1 / 4.0 / 4.1.');},{label:'Продолжить'});
-  form('import-review','Новая база Taypeer',c=>{paragraph(c,'Будет перенесено: 4 группы, 9 записей, 2 вложения и 12 версий.');field(c,'Название','Импортированная');field(c,'Мастер-пароль Taypeer','••••••••••••',{secret:true});field(c,'Повтор пароля','••••••••••••',{secret:true});fullAction(c,'Подробный отчёт…');paragraph(c,'Создаётся отдельная внутренняя БД. Выбранный KDBX не перезаписывается.');},{label:'Импортировать'});
-  form('export','Экспортировать KDBX',c=>{paragraph(c,'Рабочая → KDBX 4.1');field(c,'Пароль KDBX','••••••••••••',{secret:true});field(c,'Повтор пароля','••••••••••••',{secret:true});paragraph(c,'Место сохранения выбирается системным диалогом после отчёта.');},{label:'Продолжить'});
-  form('transfer-report','Отчёт экспорта',c=>{heading(c,'KDBX 4.1');paragraph(c,'Группы, поля, защищённые атрибуты, вложения, теги, история и корзина переносятся.','fg',16);notice(c,'Данные без эквивалента','CRDT-связи, доверенные устройства, источник значков и идентичность Lucide не переносятся.');paragraph(c,'Конфликтов нет.');},{label:'Создать KDBX'});
-  form('import-report','Отчёт импорта',c=>{heading(c,'Рабочая.kdbx');paragraph(c,'Переносятся 4 группы, 9 записей, 2 вложения и 12 сохранённых версий. Защищённые атрибуты остаются защищёнными.','fg',16);notice(c,'Неподдерживаемые возможности','Демонстрационный источник: настройки Auto-Type и свойства плагина будут пропущены.');paragraph(c,'Аппаратные ключи и ключи плагинов не поддерживаются. Такой источник нельзя открыть для импорта.');},{label:'Продолжить'});
-  form('migrate','Обновить формат',c=>{paragraph(c,'Рабочая · управляющее устройство');paragraph(c,'Старые приложения могут потерять возможность записи. История, конфликты и неприменённые правки сохранятся.','fg',16);paragraph(c,'Остальные устройства получат переход при следующем обмене. Автоматическая резервная копия не создаётся.');fullAction(c,'Сохранить копию .taypeer…');},{label:'Обновить'});
 
   function sheet(name,title,items,{note='',selected,destructive=[]}={}) {
     const c=phone(name,'Работа',{page:STATES,menu:true});search(c);item(c,'GitHub','demo@studio.example');finish(c);
@@ -276,22 +269,19 @@ function buildAndroidV1() {
     if(note)copy(n,note,24,68+items.length*52,342,{size:14,color:'muted',h:noteHeight-4});return c.p;
   }
   sheet('database-switcher','Базы данных',['Рабочая · открыта','Личная · заблокирована','Открыть .taypeer…','Создать базу…','Получить с устройства…','Закрыть текущую базу'],{selected:'Рабочая · открыта'});
-  sheet('entry-menu','GitHub',['Изменить…','Клонировать…','Переместить…','Удалить в корзину…'],{destructive:['Удалить в корзину…']});
-  sheet('group-menu','Работа',['Создать подгруппу…','Изменить группу…','Клонировать группу…','Переместить группу…','Загрузить значки…','Удалить группу…'],{destructive:['Удалить группу…']});
+  sheet('entry-menu','GitHub',['Изменить…','Клонировать…','Переместить…','Удалить в корзину'],{destructive:['Удалить в корзину']});
+  sheet('group-menu','Работа',['Создать подгруппу…','Изменить группу…','Клонировать группу…','Переместить группу…','Загрузить значки…','Удалить в корзину'],{destructive:['Удалить в корзину']});
   sheet('sort','Сортировка',['Название · А–Я','Название · Я–А','Логин · А–Я','Изменение · новые первыми'],{selected:'Название · А–Я'});
   sheet('search-scope','Область поиска',['Текущая БД','Все разблокированные БД'],{selected:'Текущая БД',note:'Заблокированные базы и защищённые значения исключены.'});
   sheet('attachment-menu','recovery-codes.txt',['Сохранить наружу…','Переименовать…','Заменить файлом…','Удалить вложение…'],{destructive:['Удалить вложение…']});
   sheet('attribute-menu','Recovery code',['Изменить атрибут…','Удалить атрибут'],{destructive:['Удалить атрибут']});
   sheet('theme','Тема',['Системная','Светлая','Тёмная'],{selected:'Системная'});
   sheet('expiry','Срок действия',['Бессрочно','Через 30 дней','Через 90 дней','Выбрать дату…'],{selected:'Бессрочно'});
-  sheet('unsaved','Сохранить изменения?',['Сохранить','Не сохранять','Остаться'],{destructive:['Не сохранять'],note:'Переход продолжится после успешного сохранения.'});
-  sheet('delete','Удалить GitHub?',['Удалить в корзину','Отмена'],{destructive:['Удалить в корзину'],note:'Запись можно восстановить из корзины.'});
   sheet('restore-history','Восстановить версию?',['Восстановить','Отмена'],{note:'Выбранная версия станет новой текущей. История сохранится.'});
   sheet('purge','Очистить корзину?',['Очистить окончательно','Отмена'],{destructive:['Очистить окончательно'],note:'Операция не стирает старые файлы и копии на других устройствах.'});
   sheet('clear-history','Очистить историю GitHub?',['Очистить историю','Отмена'],{destructive:['Очистить историю'],note:'Текущая запись и неприменённые источники сохранятся.'});
   sheet('delete-source','Удалить источник?',['Удалить источник','Отмена'],{destructive:['Удалить источник'],note:'Отложенные правки Mac mini больше не будут доступны для извлечения.'});
   sheet('duplicate-import','База уже импортирована',['Открыть внутреннюю копию','Отмена'],{note:'Выбранный файл относится к «Рабочая». Рабочая копия уже есть на устройстве.'});
-  sheet('draft','Найден локальный черновик',['Продолжить правки','Удалить черновик','Позже'],{destructive:['Удалить черновик'],note:'Черновик зашифрован на этом устройстве и ещё не синхронизирован.'});
   sheet('device-menu','MacBook Pro',['Синхронизировать','Передать управление…','Отозвать устройство…'],{destructive:['Отозвать устройство…']});
   sheet('icon-picker','Значок',['Стандартный значок','Lucide Icons…','Загруженный favicon','Загрузить по URL…','Выбрать файл…']);
   form('lucide-picker','Значки Lucide',c=>{search(c,'Найти значок…');for(const [i,key] of ['key-round','folder','file','database','monitor','smartphone','lock-keyhole','shield-check','history','share-2','camera','globe'].filter(k=>mobileIcons[k]).entries()){const n=touch(c.body,'Выбрать значок '+key,16+i%5*68,c.y+Math.floor(i/5)*68,56,56,i===0?'selected':'ghost');glyph(n,key,18,18);}c.y+=220;},{label:'Выбрать'});
@@ -306,7 +296,7 @@ function buildAndroidV1() {
     ['Защита изменилась',c=>{paragraph(c,'Получено новое состояние защиты. Введите актуальный мастер-пароль.','fg',16);field(c,'Мастер-пароль','',{secret:true});fullAction(c,'Разблокировать','primary');}],
     ['Не удалось сохранить',c=>{notice(c,'Недостаточно места','Черновик остаётся открытым. Подтверждённая запись не изменилась.');fullAction(c,'Повторить','primary');fullAction(c,'Остаться в редакторе');}],
     ['Ошибка черновика при блокировке',c=>{heading(c,'База заблокирована');paragraph(c,'Не удалось сохранить черновик. Его восстановление не гарантируется.','danger',16);fullAction(c,'Разблокировать…');}],
-    ['Сохранение / ожидание',c=>{heading(c,'Сохраняем изменения…');paragraph(c,'Подтверждение временно недоступно.');fullAction(c,'Сохранить','disabled');}],
+    ['Автосохранение / следующий ввод',c=>{heading(c,'Сохраняем изменения…');paragraph(c,'Ввод продолжается. Новые правки сохранятся следующими.');paragraph(c,'После 500 мс без ввода · переход запускает запись сразу.');}],
     ['Создание и локальная копия',c=>{heading(c,'База создана');paragraph(c,'Рабочая · внутренняя копия\nИсходный файл импорта не обновляется.');fullAction(c,'Открыть');fullAction(c,'Сохранить копию .taypeer…');}]
   ]);
   stateSheet('exchange','Обмен: от приглашения до применения',[
@@ -314,11 +304,11 @@ function buildAndroidV1() {
     ['Истекло / отказ / использовано',c=>{heading(c,'Приглашение истекло');paragraph(c,'Попросите новый код. При отказе или уже использованном коде подключение также не выполняется.');fullAction(c,'Ввести новый код…');}],
     ['Ожидание и сеть',c=>{heading(c,'Пир не в сети');paragraph(c,'Повторим при доступном соединении. Локальная работа доступна.');fullAction(c,'Повторить');paragraph(c,'Нет прямой связи · relay отключён');fullAction(c,'Настройки relay…');}],
     ['Приём на заблокированном устройстве',c=>{heading(c,'Изменения получены');paragraph(c,'Зашифрованные данные надёжно сохранены. Требуется вход для применения.');fullAction(c,'Разблокировать…');}],
-    ['После входа',c=>{heading(c,'Изменения применены');paragraph(c,'Обновлённые записи доступны.');notice(c,'Есть 3 конфликта','Выберите итог для спорных полей.',{button:'Разобрать…'});}],
+    ['После входа',c=>{heading(c,'Изменения применены');paragraph(c,'Обновлённые записи доступны.');paragraph(c,'Объединено · альтернативы доступны в истории.');}],
     ['Ошибка / обрыв',c=>{heading(c,'Получение не завершено');paragraph(c,'Ошибка записи. Получение не подтверждено; загрузка продолжится после повтора.','danger',16);fullAction(c,'Продолжить');paragraph(c,'Прерванная передача управления продолжается как та же операция.');}]
   ]);
   stateSheet('entry','Состояния полей, вложений и конфликтов',[
-    ['Атрибуты: ошибка и защита',c=>{field(c,'Название','Recovery code');paragraph(c,'Такое имя уже есть','danger');choice(c,'Защищённый атрибут',true);paragraph(c,'При конфликте защиты варианты остаются скрытыми.');}],
+    ['Атрибуты: ошибка и защита',c=>{field(c,'Название','Recovery code');paragraph(c,'Одинаковые имена допустимы · ID a1 / b2');choice(c,'Защищённый атрибут',true);paragraph(c,'При конфликте защиты варианты остаются скрытыми.');}],
     ['Вложение: лимит',c=>{item(c,'archive.zip','12 МиБ · лимит 10 МиБ','file');paragraph(c,'Файл не добавлен','danger',16);fullAction(c,'Выбрать другой файл…');fullAction(c,'Лимиты БД…');}],
     ['Вложение ещё не получено',c=>{item(c,'recovery-codes.txt','Содержимое ожидает получения','file');fullAction(c,'Получить');paragraph(c,'Сохранение наружу недоступно до получения полного содержимого.');}],
     ['Генератор: пустой алфавит',c=>{heading(c,'Нет доступных символов');paragraph(c,'Включите набор или измените исключения.');fullAction(c,'Сгенерировать','disabled');fullAction(c,'Использовать','disabled');}],
@@ -330,15 +320,15 @@ function buildAndroidV1() {
     ['Файл без сетевого допуска',c=>{heading(c,'Локальное чтение доступно');paragraph(c,'Файл и пароль не подключают устройство к обмену.');fullAction(c,'Получить приглашение…');fullAction(c,'Восстановить управление…');}],
     ['Чтение без записи',c=>{heading(c,'Только чтение');paragraph(c,'Запись этой схемы не поддерживается.');fullAction(c,'Редактировать','disabled');paragraph(c,'При неподдерживаемом чтении требуется обновление приложения.');}],
     ['Неподдерживаемый / повреждённый файл',c=>{heading(c,'Не удалось открыть файл');paragraph(c,'Версия не поддерживается. Исходный файл не изменён.');fullAction(c,'Выбрать другой файл…');paragraph(c,'Повреждение показывается отдельной причиной; перезаписи нет.');}],
-    ['Экспорт блокируют конфликты',c=>{heading(c,'Сначала разрешите конфликты');paragraph(c,'KDBX не может сохранить нерешённые варианты.');fullAction(c,'Разобрать…');fullAction(c,'Создать KDBX','disabled');}],
+    ['История альтернатив',c=>{heading(c,'Выбрано автоматически');paragraph(c,'Системные часы и порядок доставки не определяют результат. Исходные значения доступны в истории.');fullAction(c,'История…');}],
     ['Отложенные источники / расхождение',c=>{heading(c,'Требуется управляющее устройство');paragraph(c,'Правки старой схемы сохранены и ждут разбора.');fullAction(c,'Отложенные правки…');paragraph(c,'При расхождении управления обмен прекращается; локальное чтение доступно.');fullAction(c,'Восстановить управление…');}]
   ]);
   stateSheet('system','Android · системные поверхности и возврат',[
-    ['Системный выбор файла · схема',c=>{heading(c,'Открыть файл');item(c,'Рабочая.taypeer','Загрузки · 2,4 МиБ','file');item(c,'Рабочая.kdbx','Документы · 3,1 МиБ','file');fullAction(c,'Выбрать');paragraph(c,'Отмена возвращает в вызвавшую форму.');}],
+    ['Системный выбор файла · схема',c=>{heading(c,'Открыть файл');item(c,'Рабочая.taypeer','Загрузки · 2,4 МиБ','file');fullAction(c,'Выбрать');paragraph(c,'Отмена возвращает в вызвавшую форму.');}],
     ['Камера и разрешение · схема',c=>{const n=box(c.body,'System / camera illustration',16,c.y,356,160,'panel',4,true);box(n,'Scan frame',110,18,124,124,'',4,true);c.y+=176;paragraph(c,'Наведите камеру на QR');fullAction(c,'Ввести код…');paragraph(c,'При отказе в разрешении камера закрыта, ввод кода доступен.');}],
     ['Биометрия · схема',c=>{glyph(c.body,'fingerprint',174,24);c.y=70;heading(c,'Подтвердите личность');paragraph(c,'Биометрия для базы «Рабочая».');fullAction(c,'Использовать мастер-пароль');fullAction(c,'Отмена');}],
     ['Активный обмен · уведомление',c=>{heading(c,'Taypeer · обмен');paragraph(c,'Получение зашифрованных изменений…');fullAction(c,'Остановить');paragraph(c,'Без названий записей, секретов и кодов приглашений.');}],
-    ['Фон / недавние приложения',c=>{glyph(c.body,'lock-keyhole',174,32);c.y=80;heading(c,'Taypeer');paragraph(c,'База заблокирована.');fullAction(c,'Вернуться в приложение');paragraph(c,'После возврата — вход, затем предложение локального черновика.');}],
+    ['Фон / недавние приложения',c=>{glyph(c.body,'lock-keyhole',174,32);c.y=80;heading(c,'Taypeer');paragraph(c,'База заблокирована.');fullAction(c,'Вернуться в приложение');paragraph(c,'После возврата — вход; ввод продолжается при открытии объекта.');}],
     ['Явная внешняя копия',c=>{heading(c,'Сохранить копию');field(c,'Имя файла','Рабочая.taypeer',{edit:false});fullAction(c,'Выбрать место…');paragraph(c,'Успех только после завершения записи. Отмена не меняет рабочую копию.');}]
   ]);
   // More control specimens on the shared mobile library sheet.
@@ -349,9 +339,9 @@ function buildAndroidV1() {
   // Control sizes are laid out again, not scaled screenshots.
   entriesScreen('small-360-640',{page:QA,w:360,h:640});entriesScreen('large-430-932',{page:QA,w:430,h:932,long:true});
   entriesScreen('landscape-844-390',{page:QA,w:844,h:390});drawer('small-drawer',180,{page:QA,w:360,h:640});
-  const keyboard=phone('keyboard','GitHub',{page:QA,right:null,keyboard:true,form:{label:'Сохранить'},tab:'Обзор'});field(keyboard,'Логин','demo@studio.example',{entry:true});field(keyboard,'Пароль','••••••••••••',{entry:true,actions:[['eye','Показать пароль'],['dice-5','Генератор пароля']]});field(keyboard,'URL','https://github.com',{entry:true,focus:true,actions:[['download','Загрузить favicon…']]});finish(keyboard);
+  const keyboard=phone('keyboard','GitHub',{page:QA,right:null,keyboard:true,form:{autosave:true},tab:'Обзор'});field(keyboard,'Логин','demo@studio.example',{entry:true});field(keyboard,'Пароль','••••••••••••',{entry:true,actions:[['eye','Показать пароль'],['dice-5','Генератор пароля']]});field(keyboard,'URL','https://github.com',{entry:true,focus:true,actions:[['download','Загрузить favicon…']]});finish(keyboard);
   const smallKeyboard=phone('small-keyboard','Создать группу',{page:QA,w:360,h:640,right:null,keyboard:true,form:{label:'Создать'}});field(smallKeyboard,'Название','Инфраструктура',{focus:true});finish(smallKeyboard);
-  const horizontalKeyboard=phone('landscape-keyboard','GitHub',{page:QA,w:844,h:390,right:null,keyboard:true,form:{label:'Сохранить'}});field(horizontalKeyboard,'URL','https://github.com',{entry:true,focus:true});finish(horizontalKeyboard);
+  const horizontalKeyboard=phone('landscape-keyboard','GitHub',{page:QA,w:844,h:390,right:null,keyboard:true,form:{autosave:true}});field(horizontalKeyboard,'URL','https://github.com',{entry:true,focus:true});finish(horizontalKeyboard);
   function largeHeader(c) {
     const bar=c.p.children.find(n=>n.name==='Android / app bar');
     const title=bar.children.find(n=>n.type==='TEXT');title.fontSize=32;title.resize(title.width,48);title.y=4;
@@ -365,7 +355,7 @@ function buildAndroidV1() {
     const c=phone(name,'GitHub',{page:QA,right:null,keyboard});largeHeader(c);
     const bottom=keyboard?540:820,actions=box(c.p,'Android / form actions',0,bottom-160,390,160,'panel');
     c.viewport.resize(390,actions.y-c.viewport.y);
-    for(const [i,s] of ['Сохранить','Отмена'].entries()){const n=touch(actions,s,16,8+i*76,358,68,i===0?'primary':'ghost');copy(n,s,16,10,326,{size:32,color:i===0?'onPrimary':'fg',h:48});}
+    for(const [i,s] of ['Сохранено','Ввод продолжается'].entries()){copy(actions,s,16,8+i*76,358,{size:28,color:'muted',h:48});}
     copy(c.body,'Заметки',16,16,358,{size:28,color:'muted',h:42});
     const input=inputFrame(c.body,'Заметки 200%',16,66,358,164,'row','focus');
     const target=touch(input,'Ввести заметки',0,0,358,164);copy(target,'Рабочий аккаунт\nдля тестового\nсервиса.',0,8,350,{size:32,h:144});c.y=246;return finish(c);
@@ -377,13 +367,13 @@ function buildAndroidV1() {
   const db=touch(bc,'Выбрать базу',8,8,326,124);copy(db,'Рабочая',16,8,294,{size:32,h:48});copy(db,'Внутренняя\nкопия',16,60,294,{size:28,color:'muted',h:84});db.resize(326,152);
   let gy=176;
   for(const [name,chosen] of [['Работа',true],['Сервисы',false],['Инфраструктура',false]]){const n=box(bc,'Android / group row',8,gy,326,104,chosen?'selected':'');iconAction(n,'chevron-down','Раскрыть '+name,0,28);const l=touch(n,'Открыть группу '+name,48,0,278,104);copy(l,name==='Инфраструктура'?'Инфраструк-\nтура':name,8,8,262,{size:32,h:96});gy+=104;}
-  for(const s of ['Создать группу…','Устройства и обмен','Корзина','Конфликты','Настройки','Заблокировать']){const n=touch(bc,s,8,gy,326,112);copy(n,s,16,8,294,{size:32,h:96});gy+=112;}
+  for(const s of ['Создать группу…','Устройства и обмен','Корзина','Черновики','Настройки','Заблокировать']){const n=touch(bc,s,8,gy,326,112);copy(n,s,16,8,294,{size:32,h:96});gy+=112;}
   bigDrawer.y=gy;finish(bigDrawer);
   const long=phone('long-values','Инфраструктура и сервисы',{page:QA,right:null});field(long,'Путь группы','Рабочая / Инфраструктура /\nПродакшен / Внешние сервисы',{edit:false,lines:3});field(long,'URL','https://service.example/teams/\ninfrastructure/production/\ncredentials?workspace=studio',{edit:false,lines:4});fullAction(long,'Показать целиком…');finish(long);
   const light=LIGHT_PALETTE;
   const collection=figma.createVariableCollection('Taypeer · Android / light');const lv=Object.fromEntries(Object.entries(light).map(([k,v])=>[k,figma.createVariable(k,'COLOR',collection.id,{...rgb(v),a:1})]));
   function recolor(n) {for(const prop of ['fills','strokes']){if(!Array.isArray(n[prop]))continue;const roles=n[prop].map(v=>v.type==='SOLID'?Object.entries(P).find(([,h])=>['r','g','b'].every(k=>Math.abs(rgb(h)[k]-v.color[k])<0.001))?.[0]:null);n[prop]=n[prop].map((v,i)=>roles[i]?{...v,color:rgb(light[roles[i]])}:v);roles.forEach((r,i)=>{if(r)figma.bindVariable(n.id,`${prop}/${i}/color`,lv[r].id);});}if(n.children)n.children.forEach(recolor);}
-  for(const source of ['entries','drawer','edit','unlock','settings','conflict']){const original=made.find(n=>n.name==='Android / '+source);const n=original.clone();pages[QA].appendChild(n);n.name='Android QA / light-'+source;recolor(n);boards.push({name:n.name,id:n.id,page:QA});}
+  for(const source of ['entries','drawer','edit','unlock','settings','alternatives']){const original=made.find(n=>n.name==='Android / '+source);const n=original.clone();pages[QA].appendChild(n);n.name='Android QA / light-'+source;recolor(n);boards.push({name:n.name,id:n.id,page:QA});}
 
   const flow=board(FLOW,'Android flow / v1',1320,1860);copy(flow,'Android · карта сценариев v1',24,24,1272,{size:28,weight:500,h:48});copy(flow,'Телефоны · русский · тёмная тема + контрольные светлые экраны',24,84,1272,{color:'muted'});
   const routes=[
@@ -395,14 +385,14 @@ function buildAndroidV1() {
     ['История и корзина','history → history-version → compare\n→ restore-history → новая версия\ntrash → destination / purge'],
     ['Подключение','receive → камера / код → confirm-device\n→ receiving → unlock → применение\ninvite · 5 минут · один получатель'],
     ['Управление','devices → device-menu → revoke\ntransfer-control → accept-control\nrecover-control → новый набор'],
-    ['Конфликты','entries-conflicts → conflicts\n→ conflict / deletion / placement\nЯвный выбор → надёжная запись'],
+    ['Автоматическое объединение','Конкурентные правки → выбранное значение\nИстория → alternatives\nУдаление → корзина · варианты сохранены'],
     ['Отложенные правки','pending → pending-source\n→ extract-pending → destination\nили delete-source → подтверждение'],
-    ['Файлы и настройки','settings ↔ settings-database → формы\nfiles → import → review / export → report\n.taypeer → системное сохранение'],
-    ['Совместимость','Чтение / только чтение / обновить\nУправляющее → migrate → запись\nСтарая схема → pending → разбор']
+    ['Черновики и настройки','settings ↔ settings-database → формы\nНезавершённый ввод → drafts\nОткрыть объект → продолжить ввод'],
+    ['Совместимость','Чтение / только чтение / обновить\nУправляющее → автоматическая миграция\nСтарая схема → pending → разбор']
   ];
   routes.forEach(([title,steps],i)=>{const n=box(flow,'Android flow / '+title,24+i%3*432,144+Math.floor(i/3)*304,408,280,'panel',6,true);copy(n,title,16,16,376,{size:20,weight:500});copy(n,steps,16,72,376,{size:16,h:168});});
   copy(flow,'Правила переходов',24,1400,1272,{size:22,weight:500});
-  copy(flow,'Назад: клавиатура → верхний слой → предыдущий маршрут. Изменённая форма: Сохранить / Не сохранять / Остаться.\nСохранение продолжает переход только после валидации и надёжной записи. Черновик общий для трёх редактируемых вкладок.\nФон блокирует БД сразу; зашифрованный черновик предлагается после входа. Уведомление обмена не раскрывает содержимое.\nМеню открывается кнопкой и свайпом вправо внутри списка, вне системного края. В записи и редакторе свайп меню выключен.\nКраевой Back, Home, клавиатура, TalkBack и фон проверяются на реальном Android отдельно от этих статических схем.',24,1456,1272,{size:16,h:216});
+  copy(flow,'Назад: клавиатура → верхний слой → предыдущий маршрут. Изменённая форма сохраняется автоматически.\nВвод сохраняется после 500 мс; переход запускает запись сразу. Черновик общий для трёх редактируемых вкладок.\nФон блокирует БД сразу; локальный ввод продолжается при открытии объекта. Уведомление обмена не раскрывает содержимое.\nМеню открывается кнопкой и свайпом вправо внутри списка, вне системного края. В записи и редакторе свайп меню выключен.\nКраевой Back, Home, клавиатура, TalkBack и фон проверяются на реальном Android отдельно от этих статических схем.',24,1456,1272,{size:16,h:216});
   copy(flow,'Контрольные размеры: 390 × 844 · 360 × 640 · 430 × 932 · 844 × 390.\n48 dp без пересечения действий. При 200% строки растут, формы прокручиваются, команды переносятся на две строки.\nМатрица: wireframes/COVERAGE.md · приёмка устройства: wireframes/ANDROID-QA.md',24,1710,1272,{size:16,color:'muted',h:120});
   // Arrange only Android pages; preserve every desktop artboard and its position.
   for(const name of [MAIN,FORMS,STATES,QA,FLOW]){const nodes=pages[name].children;const cols=name===STATES?3:name===FLOW?1:4,cw=Math.max(...nodes.map(n=>n.width))+64;let y=0;for(let i=0;i<nodes.length;i+=cols){const row=nodes.slice(i,i+cols);row.forEach((n,j)=>{n.x=j*cw;n.y=y;});y+=Math.max(...row.map(n=>n.height))+80;}counts[name]=nodes.length;}

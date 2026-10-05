@@ -45,9 +45,9 @@ if(board('macOS / settings').findAll(n=>n.type==='TEXT'&&n.characters==='Сох�
 // Safety-relevant visual contracts for the v1 desktop scenarios.
 const required = ['macOS / trash','macOS / pending','macOS / history-compare','macOS / receive',
  'macOS / settings-database','macOS / settings-locked','macOS / new-entry',
- 'Dialog / import-review','Dialog / transfer-report','Dialog / restore-backup','Dialog / migrate',
+ 'macOS / drafts','macOS / alternatives',
  'Dialog / transfer-control','Dialog / accept-control','Dialog / recover-control',
- 'States / session','States / exchange','States / conflicts','States / compatibility',
+ 'States / session','States / exchange','States / alternatives','States / compatibility',
  'QA / minimum-1100-720','QA / light-main','QA / light-create','Flow / macOS-v1'];
 for(const name of required)if(!board(name))errors.push('v1: missing '+name);
 const hasText=(b,value)=>b.findAll(n=>n.type==='TEXT'&&n.characters.includes(value)).length>0;
@@ -55,10 +55,14 @@ for(const name of ['Dialog / revoke','Dialog / change-password']) {
  const b=board(name);
  if(!hasText(b,'Новый пароль')||!hasText(b,'Повтор пароля'))errors.push(name+': new password and confirmation required');
 }
-const resolver=board('macOS / conflict');
-if(resolver.findAll(n=>n.name.startsWith('Radio / ')).some(n=>n.findAll(c=>c.type==='ELLIPSE'&&c.width===8).length))errors.push('conflicts: implicit initial choice');
-if(!resolver.findAll(n=>n.name==='Button / disabled / Resolve conflict').length)errors.push('conflicts: initial commit must be disabled');
-if(resolver.findAll(n=>n.name==='Icon button / Копировать вариант').length!==2)errors.push('conflicts: both original values need separate copy actions');
+const alternatives=board('macOS / alternatives');
+if(alternatives.findAll(n=>n.name==='Icon button / Копировать вариант').length!==2)errors.push('history alternatives: independent copy missing');
+if(alternatives.findAll(n=>n.name.startsWith('Radio / ')).length)errors.push('history alternatives: mandatory selection remains');
+const forbiddenBoards=['Dialog / unsaved','Dialog / restore-backup','Dialog / import-review','Dialog / export-kdbx','Dialog / transfer-report','Dialog / migrate','Dialog / delete-objects','macOS / backups','macOS / transfer','macOS / conflict','Android / unsaved','Android / draft','Android / delete','Android / files','Android / conflict','Android / conflicts','Android form / import','Android form / export','Android form / migrate'];
+for(const name of forbiddenBoards)if(board(name))errors.push('automation: obsolete route '+name);
+if(figma.root.findAll(n=>n.type==='TEXT'&&/KDBX|Сохранить \/ Не сохранять \/ Остаться|Сохранить изменения\?|Резервные копии/.test(n.characters)).length)errors.push('automation: obsolete product command');
+if(!hasText(board('macOS / drafts'),'Новая запись')||!hasText(board('macOS / main'),'Без группы'))errors.push('automation: drafts or ungrouped filter missing');
+if(board('macOS / edit').findAll(n=>n.name==='Icon button / Сохранить запись').length)errors.push('automation: manual entry save remains');
 if(!board('Dialog / invite').findAll(n=>n.name==='QR / synthetic invitation').length)errors.push('invitation: QR missing');
 const qr=board('Dialog / invite').findAll(n=>n.name==='QR / synthetic invitation')[0];
 const modules=qr?.children.find(n=>n.type==='VECTOR');
@@ -75,7 +79,7 @@ const minimum=board('QA / minimum-1100-720');
 if(minimum.width!==1100||minimum.height!==720)errors.push('minimum window: wrong dimensions');
 // Android phone contracts: intrinsic touch sizes and actual visible rectangles.
 const android=boards.filter(n=>n.name.startsWith('Android'));
-const androidRequired=['entries','drawer','drawer-scrolled','empty','search-current','search-all','search-empty','entry','edit','new-entry','advanced','advanced-edit','appearance','appearance-edit','properties','history','history-version','history-compare','trash','devices','receive','receiving','conflicts','conflict','pending','pending-source','settings','settings-database','files','welcome','unlock'];
+const androidRequired=['entries','drawer','drawer-scrolled','empty','search-current','search-all','search-empty','entry','edit','new-entry','advanced','advanced-edit','appearance','appearance-edit','properties','history','history-version','history-compare','trash','devices','receive','receiving','alternatives','drafts','pending','pending-source','settings','settings-database','welcome','unlock'];
 for(const name of androidRequired)if(!board('Android / '+name))errors.push('android: missing '+name);
 function ancestor(n,root){while(n){if(n.id===root.id)return true;n=n.parent;}return false;}
 function visibleRect(n,b) {
@@ -110,10 +114,10 @@ if(JSON.stringify(measurements['Android / entry / values'])!==JSON.stringify(mea
 for(const name of ['Android form / create','Android form / change-password','Android form / revoke','Android form / recover-control']) {
  const b=board(name);if(!b||!hasText(b,'Повтор пароля')||!hasText(b,name.endsWith('/ create')?'Мастер-пароль':'Новый пароль'))errors.push(name+': password confirmation missing');
 }
-const mobileConflict=board('Android / conflict');
-if(mobileConflict.findAll(n=>n.name==='Selected radio').length)errors.push('android conflict: implicit winner');
-if(mobileConflict.findAll(n=>n.name==='Touch / ghost / Копировать вариант').length!==2)errors.push('android conflict: independent copy missing');
-if(!mobileConflict.findAll(n=>n.name==='Touch / disabled / Применить').length)errors.push('android conflict: commit initially enabled');
+const mobileAlternatives=board('Android / alternatives');
+if(mobileAlternatives.findAll(n=>n.name==='Touch / ghost / Копировать вариант').length!==2)errors.push('android alternatives: independent copy missing');
+if(board('Android / edit').findAll(n=>n.name==='Android / form actions').length)errors.push('android automation: manual editor footer remains');
+if(!hasText(board('Android / edit'),'Сохранено')||!hasText(board('Android / drafts'),'Новая запись')||!hasText(board('Android / drawer'),'Без группы'))errors.push('android automation: status, drafts or ungrouped missing');
 for(const name of ['Android / unlock','Android / receive','Android / receiving']) {
  const b=board(name);if(b.findAll(n=>n.name==='Value / Логин'||n.name==='Value / Пароль'||n.name==='Android / group row').length)errors.push(name+': decrypted contents on locked route');
 }

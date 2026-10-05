@@ -47,6 +47,7 @@ function buildDesktopV1() {
   function footer(p, action, {kind = 'primary', cancel = 'Отмена', width = 160} = {}) {
     const y = p.height - 64;
     rule(p, 0, y - 16, p.width);
+    if(['Dialog / group','Dialog / attribute','Dialog / attachment-rename'].includes(p.name))return caption(p,'Сохранено',24,y,p.width-48);
     button(p, cancel, p.width - width - 140, y, 104);
     return button(p, action, p.width - width - 24, y, width, kind);
   }
@@ -118,7 +119,7 @@ function buildDesktopV1() {
     caption(p, 'Целевое время\nподготовки ключа', 24, 328, 144, 'muted', 44);
     const f = inputFrame(p, 'KDF target / 0.5–5 seconds', 184, 328, 512); text(f, '1 секунда', 10, 6, 470, 13);
     caption(p, 'Бюджет калибровки: 0,5–5 с. На другом устройстве\nподготовка ключа может занять больше времени.', 184, 372, 512, 'muted', 48);
-    fileField(p, 'Файл БД', '~/Documents/Рабочая.taypeer', 24, 444, 672);
+    caption(p, 'Рабочая копия создаётся во внутреннем хранилище.', 184, 444, 512);
     caption(p, 'Без мастер-пароля и работающей биометрии\nвосстановить доступ к данным невозможно.', 184, 500, 512, 'muted', 48);
     footer(p, 'Создать'); return p;
   });
@@ -157,7 +158,7 @@ function buildDesktopV1() {
   caption(dbSettings, 'MacBook Pro · это управляющее устройство', 249, 184, 800);
   field(dbSettings, 'Название', 'Рабочая', 249, 230, 800);
   multiline(dbSettings, 'Описание', 'Личные проекты и рабочие сервисы', 249, 278, 800, 64);
-  button(dbSettings, 'Применить', 881, 358, 168, 'primary');
+  caption(dbSettings, 'Сохранено', 881, 358, 168);
   rule(dbSettings, 249, 410, 1015);
   heading(dbSettings, 'Защита и общие лимиты', 249, 434, 850);
   button(dbSettings, 'Изменить мастер-пароль…', 249, 478, 256);
@@ -166,7 +167,7 @@ function buildDesktopV1() {
   field(dbSettings, 'Все вложения', '100 МиБ', 249, 584, 800);
   caption(dbSettings, 'Максимум: 100 МиБ на файл и 1 ГиБ на БД.', 409, 626, 640, 'muted', 24);
   button(dbSettings, 'Применить лимиты…', 825, 670, 224, 'primary');
-  button(dbSettings, 'Обновить формат…', 249, 728, 224);
+  caption(dbSettings, 'Формат обновляется автоматически управляющим устройством.', 249, 728, 1000);
   const publicSettings = shell('macOS / settings-locked');
   // No database contents are available behind pre-unlock settings.
   const headerTexts = words(publicSettings).filter(n => n.characters === 'Рабочая.taypeer');
@@ -226,27 +227,27 @@ function buildDesktopV1() {
     field(moveGroup,'Положение','Перед «Инфраструктура»',24,186,632,{select:true});
     caption(moveGroup,'Можно выбрать верхний уровень. Перемещение внутрь\nсвоего поддерева недоступно.',24,254,632,'muted',56);
     footer(moveGroup,'Переместить');
-    confirm('delete-objects', 'Переместить группу в корзину?', 'Работа · 3 группы и 6 записей', 'В корзину', {danger:true, detail:'Поддерево останется доступно в корзине.\nЕго можно восстановить до окончательной очистки.'});
 
     const trash = utility('trash', 'Корзина');
     button(trash, 'Очистить корзину…', 1056, 51, 232, 'danger');
     table(trash, 'trash', 249, 118, 1039, [['Название',310],['Исходная группа',310],['Удалено',230],['Состояние',189]], [
       ['Старые проекты','Рабочая','Сегодня, 10:15','Группа · 4 записи'],
-      ['GitHub','Работа / Сервисы','Вчера, 18:32','Конфликт'],
+      ['GitHub','Работа / Сервисы','Вчера, 18:32','Есть альтернативы'],
       ['Wi-Fi','Личное','12 сентября','Запись']
     ]);
     heading(trash, 'Старые проекты', 249, 352, 960);
     caption(trash, 'Группа и её содержимое будут восстановлены вместе.', 249, 394, 960);
     button(trash, 'Восстановить…', 249, 452, 208, 'primary');
     button(trash, 'Удалить навсегда…', 473, 452, 216, 'danger');
-    caption(trash, 'Корзина хранится до ручной очистки.', 249, 720, 960);
+    caption(trash, 'Группа перемещена в корзину.', 249, 650, 960);
+    button(trash, 'Отменить удаление', 249, 700, 224);
     confirm('purge-trash', 'Очистить корзину?', 'Будут удалены 1 группа и 6 записей.', 'Очистить корзину', {danger:true, detail:'Данные перестанут быть доступны в рабочей БД.\nВ старых файлах, резервных копиях и на других устройствах\nмогут сохраниться прежние данные.', h:370});
     const destination = modal('restore-destination', 'Восстановить запись', 450);
     caption(destination, 'GitHub · исходная группа «Сервисы» отсутствует.', 24, 76, 632, 'fg');
-    field(destination, 'Группа', 'Выберите группу', 24, 144, 632, {select:true});
+    field(destination, 'Группа', 'Без группы', 24, 144, 632, {select:true});
     button(destination, 'Создать группу…', 184, 202, 224);
-    notice(destination, 'destination required', 'Для восстановления выберите существующую\nгруппу или создайте новую.', 24, 260, 632);
-    footer(destination, 'Восстановить', {kind:'disabled'});
+    caption(destination, 'Можно восстановить без группы. Запись будет доступна через фильтр.', 24, 260, 632);
+    footer(destination, 'Восстановить');
 
     const comparison = utility('history-compare', 'История · GitHub');
     button(comparison, 'К записи', 1156, 51, 132);
@@ -267,7 +268,7 @@ function buildDesktopV1() {
     button(comparison, 'Просмотреть версию…', 249, 620, 256);
     button(comparison, 'Восстановить версию…', 1008, 700, 280, 'primary');
     confirm('restore-revision', 'Восстановить версию GitHub?', '6 сентября, 18:32 · MacBook Pro', 'Восстановить', {detail:'Выбранные данные станут новой текущей версией.\nПрежние сохранённые версии останутся в истории.'});
-    confirm('clear-history', 'Очистить историю GitHub?', 'Будут очищены 3 сохранённые версии.', 'Очистить историю', {danger:true, detail:'Текущая запись сохранится. Неразрешённые варианты\nконфликтов остаются до их разбора. Старые резервные\nкопии этой операцией не изменяются.', h:370});
+    confirm('clear-history', 'Очистить историю GitHub?', 'Будут очищены 3 сохранённые версии.', 'Очистить историю', {danger:true, detail:'Текущая запись сохранится. Альтернативные значения\nвыбранных версий перестанут быть доступны.\nКопии на других устройствах могут сохраниться.', h:370});
     const revision=art('macOS / main').children.find(n=>n.name==='Entry detail').clone();
     page('05 · Вкладки записи').appendChild(revision);revision.name='Tabs / saved-revision';revision.x=0;revision.y=0;revision.resize(614,650);
     boards.push({id:revision.id,name:revision.name,page:'05 · Вкладки записи'});
@@ -373,7 +374,7 @@ function buildDesktopV1() {
       field(p, 'Новый пароль', '••••••••••••••••', 24, 140, 696, {secret:true});
       caption(p, 'Качество: высокое', 184, 180, 512, 'success', 24);
       field(p, 'Повтор пароля', '••••••••••••••••', 24, 220, 696, {secret:true});
-      caption(p, 'Будет сохранена отдельная исходная копия. Другим\nустройствам понадобятся новый пароль и настройка Touch ID\nили биометрии заново после получения изменений.', 24, 280, 696, 'muted', 72);
+      caption(p, 'Другим устройствам понадобятся новый пароль\nи настройка Touch ID или биометрии заново\nпосле получения изменений.', 24, 280, 696, 'muted', 72);
       if (revoke) caption(p, 'Ранее полученные данные останутся на Pixel 9.', 24, 368, 696, 'warning', 28);
       footer(p, action, {kind:revoke ? 'danger' : 'primary', width:216}); return p;
     }
@@ -393,28 +394,24 @@ function buildDesktopV1() {
     confirm('accept-control', 'Принять управление БД?', 'Рабочая.taypeer · запрос от MacBook Pro', 'Принять управление', {detail:'Этот Mac станет единственным управляющим устройством.\nПодтверждение завершит начатую передачу.', h:340});
     const recover = modal('recover-control', 'Восстановить управление', 584, 744);
     caption(recover, 'Рабочая.taypeer · исходный файл сохранится', 24, 78, 696, 'fg');
-    fileField(recover, 'Новый файл', '~/Documents/Рабочая-new.taypeer', 24, 130, 696);
+    caption(recover, 'Новая копия будет во внутреннем хранилище.', 24, 130, 696);
     field(recover, 'Новый пароль', '••••••••••••••••', 24, 190, 696, {secret:true});
     field(recover, 'Повтор пароля', '••••••••••••••••', 24, 238, 696, {secret:true});
     notice(recover, 'new trust set', 'Этот Mac станет управляющим нового доверенного набора.\nОстальные устройства потребуется подключить заново.', 24, 310, 696, {h:80});
     caption(recover, 'Прежние допуски не переносятся. Старые копии сохранят\nпрежние данные и пароль.', 24, 412, 696, 'muted', 52);
     footer(recover, 'Восстановить', {width:216});
 
-    replace('macOS / conflict', () => {
-      const p = utility('conflict', 'Конфликты · 3');
-      table(p, 'conflict list', 249, 122, 328, [['Объект / конфликт',328]], [['GitHub · пароль'],['Wi-Fi · удаление'],['Работа · размещение']]);
-      rule(p, 601, 90, 1, 702);
-      heading(p, 'GitHub / Пароль', 626, 124, 636);
-      radio(p, 'MacBook Pro · сегодня, 09:32', 626, 180, 636, false);
-      secret(p, '••••••••••••••••', 654, 224, 610);
-      radio(p, 'Pixel 9 · сегодня, 09:35', 626, 288, 636, false);
-      secret(p, '••••••••••••', 654, 332, 610);
-      radio(p, 'Своё значение', 626, 396, 636, false);
-      field(p, 'Новый пароль', '', 626, 448, 638, {secret:true});
-      caption(p, 'Выберите вариант или введите свой.\nИсходные варианты останутся в истории.', 626, 526, 638, 'muted', 52);
-      button(p, 'Применить', 1096, 700, 168, 'disabled').name='Button / disabled / Resolve conflict';
-      status(p, 'Применено · 3 конфликта', 'warning'); return p;
-    });
+    const alternatives = utility('alternatives', 'GitHub · история альтернатив');
+    table(alternatives, 'history alternatives', 249, 122, 328, [['Поле / история',328]], [['Пароль · 2 варианта'],['Удаление · корзина'],['Группа · 2 варианта']]);
+    rule(alternatives, 601, 90, 1, 702);
+    heading(alternatives, 'Пароль · выбранное значение', 626, 124, 636);
+    caption(alternatives, 'Pixel 9 · сегодня, 09:35 · выбран автоматически', 626, 180, 636);
+    secret(alternatives, '••••••••••••', 654, 224, 610);
+    caption(alternatives, 'MacBook Pro · сегодня, 09:32 · альтернатива', 626, 288, 636);
+    secret(alternatives, '••••••••••••••••', 654, 332, 610);
+    caption(alternatives, 'Оба исходных значения доступны до явной очистки истории.', 626, 420, 638);
+    button(alternatives, 'Редактировать запись', 626, 492, 248);
+    status(alternatives, 'Объединено · сохранено');
     const pending = utility('pending', 'Отложенные правки · 4');
     table(pending, 'pending edits', 249, 116, 1039, [['Источник',250],['Объект',270],['Причина',519]], [
       ['Pixel 9 · 10:24','GitHub','Автор больше не доверенный'],
@@ -464,79 +461,23 @@ function buildDesktopV1() {
     caption(exclusions,'Длина пароля: 1–256 символов. Выбранные наборы\nобразуют общий алфавит после исключений.',24,204,632,'muted',56);
     footer(exclusions,'Готово');
 
-    replace('macOS / transfer', () => {
-      const p = utility('transfer','Импорт и экспорт');
-      heading(p,'Импорт KDBX',249,130,1039);
-      caption(p,'Будет создана отдельная БД Taypeer. Исходный файл сохранится.',249,170,1039);
-      fileField(p,'Файл KDBX','~/Downloads/Личная.kdbx',249,224,864);
-      field(p,'Способ открытия','Пароль и ключевой файл',249,272,864,{select:true});
-      field(p,'Пароль KDBX','••••••••••••',249,320,864,{secret:true});
-      fileField(p,'Ключевой файл','~/Documents/Личная.keyx',249,368,864);
-      button(p,'Продолжить…',913,428,200,'primary');
-      rule(p,249,490,1039);
-      heading(p,'Экспорт KDBX 4.1',249,520,1039);
-      caption(p,'Рабочая.taypeer · 9 записей · история и корзина',249,560,1039);
-      button(p,'Экспортировать…',249,622,224);
-      return p;
-    });
-    const importReview = modal('import-review','Импортировать в новую БД',700,792);
-    field(importReview,'Название','Личная',24,76,744);
-    fileField(importReview,'Новый файл','~/Documents/Личная.taypeer',24,124,744);
-    field(importReview,'Мастер-пароль','••••••••••••••••',24,172,744,{secret:true});
-    field(importReview,'Повтор пароля','••••••••••••••••',24,220,744,{secret:true});
-    caption(importReview,'Качество: высокое',184,262,584,'success',24);
-    heading(importReview,'Отчёт до импорта',24,314,744);
-    table(importReview,'import report',24,350,744,[['Данные',480],['Перенос',264]],[
-      ['Группы и записи','4 группы · 26 записей'],['Атрибуты, вложения, история','Поддерживаются'],['Иконки и оформление','2 несовпадения']
-    ],{selected:-1,rowHeight:42});
-    caption(importReview,'Отдельные настройки и плагины KeePass не переносятся.',24,534,744,'warning',30);
-    button(importReview,'Подробный отчёт…',24,574,240);
-    footer(importReview,'Импортировать',{width:200});
-    const exportForm = modal('export-kdbx','Экспортировать KDBX 4.1',440,744);
-    caption(exportForm,'Рабочая.taypeer · экспорт в отдельный файл',24,78,696,'fg');
-    fileField(exportForm,'Файл KDBX','~/Documents/Рабочая.kdbx',24,130,696);
-    field(exportForm,'Пароль KDBX','••••••••••••••••',24,190,696,{secret:true});
-    field(exportForm,'Повтор пароля','••••••••••••••••',24,238,696,{secret:true});
-    caption(exportForm,'Этот пароль защищает экспортируемый файл.',184,290,536);
-    footer(exportForm,'Посмотреть отчёт…',{width:224});
-    const report = modal('transfer-report','Отчёт переноса',618,792);
-    table(report,'loss report',24,80,744,[['Данные',392],['Результат',352]],[
-      ['Группы и поля записи','Переносятся'],['Атрибуты и их защита','Переносятся'],['Вложения, история, корзина','Переносятся'],
-      ['Lucide и источник иконки','Идентичность не переносится'],['Журнал объединения','Не переносится'],['Доверенные устройства и ключи','Не экспортируются']
-    ],{selected:-1,rowHeight:44});
-    notice(report,'loss acknowledgement','Полученный файл содержит переносимые данные.\nПолный обратимый перенос метаданных не гарантируется.',24,418,744,{h:76});
-    footer(report,'Создать KDBX',{width:216});
-    replace('macOS / backups', () => {
-      const p = utility('backups','Резервные копии');
-      button(p,'Сохранить копию…',1064,51,224);
-      table(p,'backups',249,120,1039,[['Состояние',340],['Причина',420],['Размер',279]],[
-        ['Сегодня, 09:40','Автоматическая','2,4 МиБ'],['Вчера, 18:32','Перед сменой пароля','2,4 МиБ'],['5 сентября, 12:10','Автоматическая','2,3 МиБ']
-      ]);
-      button(p,'Восстановить выбранную…',249,348,296,'primary');
-      button(p,'Выбрать другой снимок…',561,348,288);
-      caption(p,'Хранятся 10 предыдущих исправных автоматических снимков.\nОтдельные копии перед важными операциями сохраняются дополнительно.',249,418,1039,'muted',56);
-      notice(p,'old backups','У старых снимков остаются прежние данные и действовавший\nдля них пароль. Копия на этом Mac не заменяет копию вне устройства.',249,512,1039,{h:84});
-      return p;
-    });
-    const restore = modal('restore-backup','Восстановить данные снимка',622,792);
-    fileField(restore,'Снимок','~/Backups/Рабочая-09-12.taypeer',24,78,744);
-    field(restore,'Пароль снимка','••••••••••••',24,134,744,{secret:true});
-    heading(restore,'Выбранное состояние',24,202,744);
-    table(restore,'snapshot preview',24,242,744,[['Источник',392],['Текущая БД',352]],[
-      ['12 сентября, 18:32','Рабочая.taypeer'],['4 группы · 8 записей','4 группы · 9 записей'],['Сохранённые данные снимка','Новые изменения в текущей БД']
-    ],{selected:-1,rowHeight:44});
-    caption(restore,'Сначала будет сохранена копия текущего состояния.\nАктуальные пароль, формат и управление сохранятся.',24,440,744,'muted',60);
-    footer(restore,'Восстановить',{width:208});
-    const migration = modal('migrate','Обновить формат БД',464,744);
-    caption(migration,'Рабочая.taypeer · управляющее устройство MacBook Pro',24,78,696,'fg');
-    notice(migration,'migration backup','Перед обновлением будет сохранена отдельная исходная копия.\nВосстановить её данные можно в актуальную БД.',24,134,696,{h:80});
-    caption(migration,'Старым приложениям может потребоваться обновление.\nИх запоздалые правки сохранятся для переноса или разбора.\nВозврата рабочей БД к старому формату нет.',24,244,696,'muted',80);
-    footer(migration,'Обновить формат',{width:216});
+    const drafts = utility('drafts', 'Локальные черновики');
+    table(drafts, 'local drafts', 249, 122, 1039, [['Объект',380],['Ввод',380],['Состояние',279]], [
+      ['GitHub','Незавершённая дата','Сохранён на этом Mac'],
+      ['Новая запись','Название и заметки','Сохранён на этом Mac'],
+      ['Инфраструктура','Описание группы','Сохранён на этом Mac']
+    ]);
+    caption(drafts, 'Черновики зашифрованы и не передаются другим устройствам.', 249, 350, 1039);
+    button(drafts, 'Открыть редактор', 249, 420, 208);
+    button(drafts, 'Удалить черновик', 473, 420, 224, 'danger');
+    caption(drafts, 'При открытии объекта его ввод продолжается автоматически.', 249, 492, 1039);
+    status(drafts, '3 локальных черновика');
   }
+
   function buildComponentSheets() {
     const nav = sheet('Menus / navigation','Навигация и команды БД','Фрагменты раскрытых меню. Переходы и условия доступны в карте сценариев.',1100);
     menu(nav,'Селектор открытых БД',24,112,392,[['Рабочая.taypeer','', 'selected'],'Личная.taypeer · заблокирована','Открыть БД…','Создать БД…','Получить БД…','Заблокировать БД','Закрыть БД']);
-    menu(nav,'Меню текущей БД',448,112,392,['Поделиться…','Устройства','Конфликты · 3','Отложенные правки · 4','Корзина','Резервные копии','Сохранить копию…','Восстановить снимок…','Импорт KDBX…','Экспорт KDBX…','Восстановить управление…']);
+    menu(nav,'Меню текущей БД',448,112,392,['Поделиться…','Устройства','Черновики','Без группы','Отложенные правки · 4','Корзина','Перенести рабочий файл…','Восстановить управление…']);
     menu(nav,'Область поиска',872,112,424,[['Эта база','', 'selected'],'Все разблокированные базы']);
     menu(nav,'Видимость колонок',872,300,424,['✓ Название','✓ Логин','URL','Заметки','Изменение','✓ База / группа']);
     const searchResult = sample(nav,'Переход из общего поиска',24,480,392,158);
@@ -549,7 +490,7 @@ function buildDesktopV1() {
     caption(noResults,'По запросу «invoice» ничего не найдено.',16,18,360);
     button(noResults,'Очистить поиск',16,76,216);
     menu(nav,'Последняя БД / файл недоступен',872,632,424,['Выбрать файл снова…','Отмена']);
-    menu(nav,'Импорт / способ открытия',448,860,392,['Только пароль','Только ключевой файл',['Пароль и ключевой файл','','selected']]);
+    menu(nav,'Фильтр записей',448,860,392,[['Все записи','','selected'],'Без группы','Локальные черновики']);
 
     const actions = sheet('Menus / objects','Действия над объектами','Все команды доступны без наведения; деструктивные операции требуют точного подтверждения.',1120);
     menu(actions,'Группа',24,112,392,['Создать группу…','Изменить группу…','Клонировать группу…','Переместить группу…',['Удалить группу…','','danger'],'Загрузить значки…']);
@@ -580,10 +521,10 @@ function buildDesktopV1() {
     field(rotation,'Новый пароль','',16,116,592,{secret:true});
     button(rotation,'Разблокировать',368,168,240,'primary');
     const draft = sample(session,'После разблокировки / сохранённый черновик',24,394,616,206);
-    heading(draft,'Продолжить изменения GitHub?',16,20,584);
-    caption(draft,'Правки сохранены только на этом Mac.',16,66,584);
+    heading(draft,'Локальные черновики · 3',16,20,584);
+    caption(draft,'Ввод автоматически продолжается при открытии объекта.',16,66,584);
     button(draft,'Удалить черновик',16,144,208,'danger');
-    button(draft,'Продолжить',392,144,208,'primary');
+    button(draft,'Открыть объект',392,144,208);
     const draftError = sample(session,'Ошибка записи черновика / БД уже заблокирована',672,394,624,206);
     notice(draftError,'draft lost','Не удалось сохранить черновик: недостаточно места.\nБД заблокирована. Восстановление этих правок недоступно.',16,20,592,{tone:'danger',h:88});
     button(draftError,'Понятно',432,144,176);
@@ -595,7 +536,7 @@ function buildDesktopV1() {
     notice(saveError,'write failure','Не удалось сохранить: нет доступа к файлу.\nИзменения остались в форме.',16,20,592,{tone:'danger',h:80});
     button(saveError,'Вернуться',208,138,176); button(saveError,'Повторить',400,138,208,'primary');
     notice(session,'missing file','Файл ~/Documents/Рабочая.taypeer не найден.',24,966,616,{action:'Выбрать снова…'});
-    notice(session,'corrupt file','Файл повреждён. Исходный файл не изменён.',672,966,624,{tone:'danger',action:'Выбрать снимок…'});
+    notice(session,'corrupt file','Файл повреждён. Исходный файл не изменён.',672,966,624,{tone:'danger',action:'Выбрать файл…'});
     notice(session,'biometric setup','Touch ID настраивается только для этой БД на этом Mac.',24,1070,616,{action:'Включить…',h:84});
     notice(session,'lost password','Без мастер-пароля и работающей биометрии\nвосстановить доступ невозможно.',672,1070,624,{h:84});
 
@@ -605,8 +546,8 @@ function buildDesktopV1() {
     caption(waiting,'Разрешите подключение этого Mac\nна управляющем устройстве.',16,58,584,'muted',48);
     button(waiting,'Отменить',424,122,176);
     const downloading=sample(exchange,'Получение БД / место и загрузка',672,112,624,220);
-    text(downloading,'Файл БД',16,26,144,13,'muted');
-    text(downloading,'~/Documents/Рабочая.taypeer',176,26,416,13);
+    text(downloading,'Хранение',16,26,144,13,'muted');
+    text(downloading,'Внутренняя рабочая копия',176,26,416,13);
     progress(downloading,'Получено 1,8 из 2,4 МиБ',16,80,592,0.75);
     button(downloading,'Отменить',416,170,192);
     const expiration=sample(exchange,'Приглашение истекло / управляющий',24,372,616,162);
@@ -626,20 +567,20 @@ function buildDesktopV1() {
     notice(exchange,'camera denied','Камера недоступна. Можно ввести код приглашения.',24,1078,616,{action:'Ввести код',h:76});
     notice(exchange,'handoff waiting','Передача управления начата. Ожидается Pixel 9.',672,1118,624,{action:'Продолжить',h:76});
 
-    const cases=sheet('States / conflicts','Конфликты и отложенные данные','Баннер остаётся в рабочей области. Разбор открывается явным действием.',1260);
-    notice(cases,'workspace conflicts','Есть 3 конфликта. Все варианты сохранены.',24,112,1272,{action:'Разобрать…'});
+    const cases=sheet('States / alternatives','История альтернатив и отложенные данные','Объединение автоматическое; исходные значения доступны в истории.',1260);
+    notice(cases,'workspace conflicts','Объединено. Альтернативные значения доступны в истории.',24,112,1272,{action:'История…'});
     const deleted=sample(cases,'Удаление и параллельная правка',24,234,616,246);
     heading(deleted,'Wi-Fi · объект находится в корзине',16,20,584);
     caption(deleted,'Pixel 9 удалил запись. Mac mini изменил пароль.',16,66,584);
     secret(deleted,'••••••••••••',16,110,584);
-    button(deleted,'Подтвердить удаление',16,188,280,'danger');
+    caption(deleted,'Удаление выбрано автоматически.',16,188,280);
     button(deleted,'Восстановить…',336,188,264,'primary');
     const location=sample(cases,'Конкурирующее размещение',672,234,624,246);
-    heading(location,'Сервисы · выберите группу назначения',16,20,592);
-    radio(location,'Работа / Инфраструктура · MacBook Pro',16,64,592);
-    radio(location,'Личное · Pixel 9',16,110,592);
-    field(location,'Другая группа','Выбрать…',16,156,592,{select:true});
-    button(location,'Применить',408,204,200,'disabled');
+    heading(location,'Сервисы · выбранное размещение',16,20,592);
+    caption(location,'Работа / Инфраструктура · MacBook Pro · выбран',16,64,592);
+    caption(location,'Личное · Pixel 9 · альтернатива',16,110,592);
+    caption(location,'Цикл автоматически разрывается в корне.',16,156,592);
+    button(location,'История группы…',344,204,264);
     const duplicateAttr=sample(cases,'Совпадающие ключи / защита атрибута',24,550,616,256);
     heading(duplicateAttr,'Два атрибута «Recovery code»',16,18,584);
     secret(duplicateAttr,'Защищён · ••••••••••••',16,66,584);
@@ -693,7 +634,7 @@ function buildDesktopV1() {
     caption(expiry,'Выбрано: 15 декабря 2026',176,188,424);
     const attributeError=sample(entry,'Ошибка ключа атрибута',672,112,624,250);
     field(attributeError,'Ключ','Recovery code',16,24,592,{error:true});
-    caption(attributeError,'Атрибут с таким именем уже существует.',176,76,416,'danger',44);
+    caption(attributeError,'Одинаковые имена допустимы · ID a1 / b2.',176,76,416,'muted',44);
     field(attributeError,'Значение','••••••••••••',16,136,592,{secret:true});
     check(attributeError,'Защищённое значение',176,190,416,true);
     const blob=sample(entry,'Добавление сверх лимита',24,446,616,210);
@@ -730,19 +671,19 @@ function buildDesktopV1() {
     button(noAdmission,'Подключить…',16,112,240); button(noAdmission,'Восстановить управление…',272,112,336);
     notice(compatibility,'unsupported read','Для открытия этой БД обновите Taypeer.\nИсходный файл не изменён.',24,410,616,{action:'Назад',h:88});
     notice(compatibility,'unsupported sync','Для обмена с Mac mini требуется совместимая версия Taypeer.',672,410,624,{action:'Устройства',h:88});
-    notice(compatibility,'export conflicts','Экспорт недоступен: есть 3 неразрешённых конфликта.',24,566,616,{action:'Разобрать…',h:84});
-    notice(compatibility,'unsupported kdbx','Этот KDBX требует неподдерживаемый аппаратный\nключ или компонент плагина.',672,566,624,{action:'Другой файл…',h:84});
-    const importModes=sample(compatibility,'Импорт KDBX / только ключевой файл',24,734,616,202);
-    field(importModes,'Способ открытия','Только ключевой файл',16,24,584,{select:true});
-    fileField(importModes,'Ключевой файл','Личная.keyx',16,78,584);
-    button(importModes,'Продолжить…',344,146,256,'primary');
-    const operation=sample(compatibility,'Импорт / экспорт / снимок / миграция',672,734,624,202);
+    caption(compatibility,'Несколько локальных черновиков сохраняются независимо.',24,566,616);
+    caption(compatibility,'Внешний .taypeer копируется во внутреннее хранилище.',672,566,624);
+    const history=sample(compatibility,'История группы и базы данных',24,734,616,202);
+    caption(history,'Инфраструктура · название и описание',16,24,584);
+    caption(history,'Рабочая · название и описание БД',16,78,584);
+    button(history,'История…',344,146,256);
+    const operation=sample(compatibility,'Надёжное сохранение / миграция',672,734,624,202);
     progress(operation,'Сохранение результата…',16,22,592,0.65);
     button(operation,'Сохранение…',352,146,256,'disabled');
     notice(compatibility,'migration failure','Не удалось записать обновлённую БД.\nИсходная исправная копия сохранена.',24,1020,616,{tone:'danger',action:'Повторить',h:100});
-    notice(compatibility,'transfer success','Файл ~/Documents/Рабочая.kdbx надёжно сохранён.',672,1020,624,{tone:'success',action:'Готово',h:100});
+    caption(compatibility,'Рабочая копия надёжно сохранена во внутреннем хранилище.',672,1020,624);
     const empty=art('macOS / empty').children.find(n=>n.name==='Table / entries');
-    caption(empty,'Создайте группу для первой записи.',16,148,empty.width-32);
+    caption(empty,'Создайте запись без группы или добавьте группу.',16,148,empty.width-32);
     const fresh=art('macOS / new-entry').findAll(n=>n.name==='Entry row / GitHub')[0];
     if(fresh)fill(fresh,'bg');
   }
@@ -778,7 +719,7 @@ function buildDesktopV1() {
         if(i===0)box(p,'Selected group',8,y,side-16,36,'selected',4);
         icon(p,'folder',16+depth*16,y+10);text(p,label,40+depth*16,y+7,side-64-depth*16,font,'fg',400,28);
       });
-      [['trash-2','Корзина'],['monitor','Устройства'],['history','Копии']].forEach(([key,label],i)=>{
+      [['trash-2','Корзина'],['monitor','Устройства'],['history','Черновики']].forEach(([key,label],i)=>{
         icon(p,key,16,h-176+i*40);text(p,label,44,h-180+i*40,side-56,font,'muted',400,30);
       });
       const tableX=side+1;
@@ -793,7 +734,7 @@ function buildDesktopV1() {
         let x=tableX;const values=w===1100?[title,'Рабочая / Работа']:[title,user,'Работа'];
         values.forEach((value,j)=>{text(p,value,x+12,y+10,columns[j][1]-24,j?font-2:font,j?'muted':'fg',400,28);x+=columns[j][1];});rule(p,tableX,y+43,list);
       });
-      rule(p,dx-1,45,1,h-74);heading(p,'GitHub',dx+24,55,dw-144);ib(p,'x',w-96,51);ib(p,'check',w-56,51);rule(p,dx,89,dw);
+      rule(p,dx-1,45,1,h-74);heading(p,'GitHub',dx+24,55,dw-144);caption(p,'Сохранено',w-136,57,112);rule(p,dx,89,dw);
       const tabLabels=['Обзор','Дополнительно','Вид','Свойства','История'];
       const widths=font>=18?[76,176,58,134,122]:[68,132,54,108,92];let tx=dx;
       tabLabels.forEach((label,i)=>{text(p,label,tx+6,99,widths[i]-8,font-1,i===0?'fg':'muted',400,28);tx+=widths[i];});
@@ -819,17 +760,17 @@ function buildDesktopV1() {
     caption(p,'Точки входа, решения и результаты. Карта относится к макетам; готовность кода определяется roadmap.',24,78,1272);
     const flows=[
       ['01 · Начало работы','Приветствие → создать / открыть\n→ разблокировать → пустая БД\n→ первая группа → новая запись','welcome · create · unlock\nempty · group · new-entry'],
-      ['02 · Повседневная работа','Группа → запись → вкладки\n→ правки → подтверждение\n→ новая сохранённая версия','main · edit · Вкладки записи\nMenus / objects'],
+      ['02 · Повседневная работа','Группа → запись → вкладки\n→ правки → автосохранение\n→ новая сохранённая версия','main · edit · Вкладки записи\nMenus / objects'],
       ['03 · Навигация и поиск','Селектор БД → область поиска\n→ результат в другой БД\n→ к исходным результатам','search · Menus / navigation\nsettings-locked'],
-      ['04 · История и корзина','История → сравнение → восстановить\nУдаление → корзина → восстановить\nНет группы → выбор назначения','history-compare · trash\nrestore-destination'],
-      ['05 · Вложения и оформление','Правки → атрибут / вложение\n→ иконка / цвет → сохранить\nЛимит → очистка / настройки','attribute · icon-picker · color-picker\nStates / entry'],
+      ['04 · История и корзина','История → сравнение → восстановить\nУдаление → корзина → восстановить\nБез группы → фильтр записей','history-compare · trash\nrestore-destination'],
+      ['05 · Вложения и оформление','Правки → атрибут / вложение\n→ иконка / цвет → автосохранение\nЛимит → очистка / настройки','attribute · icon-picker · color-picker\nStates / entry'],
       ['06 · Генерация','Поле пароля → генератор\n→ пароль / фраза → настройки\n→ использовать в черновике','generator · passphrase\ngenerator-exclusions'],
-      ['07 · Получение БД','Поделиться → код / QR\n→ получатель → разрешить\n→ файл → загрузка → вход','invite · receive · scan-qr\nStates / exchange · unlock'],
+      ['07 · Получение БД','Поделиться → код / QR\n→ получатель → разрешить\n→ внутренняя копия → вход','invite · receive · scan-qr\nStates / exchange · unlock'],
       ['08 · Управление доступом','Устройства → передать / отозвать\nНовый пароль → новая защита\nПотеря управляющего → новый набор','transfer-control · accept-control\nrevoke · recover-control'],
-      ['09 · Получение и применение','Ожидание → соединение → получение\n→ надёжное сохранение → вход\n→ применение / отложенные правки','devices · States / exchange\npending · conflict'],
-      ['10 · Разбор изменений','Уведомление → конфликт → выбор\nОтложенный источник → просмотр\n→ извлечь / явно удалить','conflict · pending\nStates / conflicts'],
-      ['11 · Перенос и снимки','KDBX → параметры → отчёт → файл\nСнимок → просмотр → подтверждение\n→ новые данные в текущей БД','transfer · import-review · transfer-report\nbackups · restore-backup'],
-      ['12 · Совместимость и защита','Открытие → чтение / обновить\nУправляющий → копия → миграция\nРасхождение → восстановить управление','States / compatibility · migrate\nsettings-database · recover-control']
+      ['09 · Получение и применение','Ожидание → соединение → получение\n→ надёжное сохранение → вход\n→ применение / отложенные правки','devices · States / exchange\npending · alternatives'],
+      ['10 · Автоматическое объединение','Конкурентные правки → выбранное значение\nИстория → исходные альтернативы\nНедостоверный источник → изоляция','alternatives · pending\nStates / alternatives'],
+      ['11 · Черновики и хранение','Незавершённый ввод → локальный черновик\nОткрыть объект → продолжить автоматически\nВнешний файл → внутренняя копия','drafts · create · receive\nStates / session'],
+      ['12 · Совместимость и защита','Открытие → чтение / обновить\nУправляющий → автоматическая миграция\nРасхождение → восстановить управление','States / compatibility\nsettings-database · recover-control']
     ];
     flows.forEach(([title,steps,refs],i)=>{
       const x=24+i%3*432,y=144+Math.floor(i/3)*326;
@@ -840,7 +781,7 @@ function buildDesktopV1() {
       caption(n,refs,16,214,376,'muted',56);
     });
     heading(p,'Общие правила перехода',24,1482,1272);
-    caption(p,'Изменённая форма → Сохранить / Не сохранять / Остаться. Ошибка сохранения оставляет форму открытой.\nБлокировка выполняется сразу; после входа предлагается сохранённый локальный черновик.\nНативные окна macOS: выбор файла, каталога, камера и Touch ID. Отмена возвращает в вызвавший экран.',24,1532,1272,'muted',96);
+    caption(p,'Ввод → 500 мс без ввода → надёжное автосохранение. Переход запускает запись сразу.\nНесколько зашифрованных черновиков; ввод продолжается при открытии объекта. Блокировка выполняется сразу.\nЕсли не сохранены ни БД, ни черновик, редактор остаётся открытым. Создание и получение используют внутреннее хранилище.',24,1532,1272,'muted',96);
     caption(p,'Полная матрица требований и состояний: wireframes/COVERAGE.md',24,1676,1272,'muted',36);
     replace('Taypeer / обзор',()=>{
       const n=board('00 · Начать здесь','Taypeer / обзор',1320,950);
