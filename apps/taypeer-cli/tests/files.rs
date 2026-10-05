@@ -10,10 +10,10 @@ use std::{
 
 fn run(path: Option<&Path>, args: &[&str], password: &[u8]) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_taypeer-cli"));
-    let database_path = path.unwrap_or_else(|| Path::new(args[2]));
+    let database_path = path.expect("file commands address an existing working copy");
     command
         .arg("--profile")
-        .arg(database_path.parent().unwrap().join("profile"));
+        .arg(database_path.parent().unwrap().parent().unwrap());
     command.args(["--json", "--password-stdin"]);
     if let Some(path) = path {
         command.arg("--file").arg(path);
@@ -29,6 +29,27 @@ fn run(path: Option<&Path>, args: &[&str], password: &[u8]) -> Output {
     child.wait_with_output().unwrap()
 }
 
+fn create(directory: &Path, password: &[u8]) -> Value {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_taypeer-cli"))
+        .arg("--profile")
+        .arg(directory.join("profile"))
+        .args([
+            "--json",
+            "--password-stdin",
+            "db",
+            "create",
+            "--name",
+            "PUBLIC test",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(password).unwrap();
+    ok(child.wait_with_output().unwrap())
+}
+
 fn ok(output: Output) -> Value {
     assert!(
         output.status.success(),
@@ -42,19 +63,9 @@ fn ok(output: Output) -> Value {
 #[ignore = "native-keychain: explicitly opt in; may display macOS access dialogs"]
 fn real_processes_preserve_files_history_and_addressed_updates() {
     let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("public.taypeer");
     let password = b" PUBLIC master \n";
-    let db = ok(run(
-        None,
-        &[
-            "db",
-            "create",
-            path.to_str().unwrap(),
-            "--name",
-            "PUBLIC test",
-        ],
-        password,
-    ));
+    let db = create(directory.path(), password);
+    let path = std::path::PathBuf::from(db["file"].as_str().unwrap());
     assert!(db["database"].is_string());
     let group = ok(run(
         Some(&path),
@@ -177,48 +188,29 @@ fn real_processes_preserve_files_history_and_addressed_updates() {
 
 #[test]
 #[ignore = "native-keychain: explicitly opt in; may display macOS access dialogs"]
-fn interrupted_draft_survives_worker_exit_and_requires_explicit_restore() {
+fn interrupted_draft_survives_worker_exit_and_continues_automatically() {
     let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("public.taypeer");
     let password = b"PUBLIC master";
-    ok(run(
-        None,
-        &["db", "create", path.to_str().unwrap(), "--name", "PUBLIC"],
-        password,
-    ));
-    let group = ok(run(
-        Some(&path),
-        &["group", "create", "--name", "PUBLIC"],
-        password,
-    ));
+    let db = create(directory.path(), password);
+    let path = std::path::PathBuf::from(db["file"].as_str().unwrap());
     let created = ok(run(
         Some(&path),
-        &[
-            "entry",
-            "create",
-            "--group",
-            group["id"].as_str().unwrap(),
-            "--title",
-            "PUBLIC title",
-        ],
+        &["entry", "create", "--title", "PUBLIC title"],
         password,
     ));
     let id = created.as_str().unwrap();
-    let bad = run(
+    let first = ok(run(
         Some(&path),
-        &["entry", "update", id, "--title", ""],
+        &["draft", "edit", id, "--title", ""],
         password,
+    ));
+    let draft = first["identity"]["draft"].as_str().unwrap();
+    let continued = ok(run(Some(&path), &["draft", "edit", id], password));
+    assert_eq!(continued["identity"]["draft"], draft);
+    assert_eq!(continued["fields"]["title"], "");
+    ok(run(Some(&path), &["draft", "delete", draft], password));
+    assert_eq!(
+        ok(run(Some(&path), &["entry", "show", id], password))["title"],
+        "PUBLIC title"
     );
-    assert!(!bad.status.success());
-    let draft = ok(run(Some(&path), &["draft", "status"], password));
-    assert_eq!(draft["active"], false);
-    assert_eq!(draft["pending"]["entry_id"], id);
-    assert!(
-        !run(Some(&path), &["draft", "save"], password)
-            .status
-            .success()
-    );
-    ok(run(Some(&path), &["draft", "discard"], password));
-    let shown = ok(run(Some(&path), &["entry", "show", id], password));
-    assert_eq!(shown["title"], "PUBLIC title");
 }

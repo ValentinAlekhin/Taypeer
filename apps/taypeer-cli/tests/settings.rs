@@ -50,3 +50,34 @@ fn auto_lock_settings_persist_without_native_credentials() {
         );
     }
 }
+
+#[test]
+fn startup_catalog_requires_no_identity_and_never_replaces_invalid_data() {
+    let directory = tempfile::tempdir().unwrap();
+    let profile = directory.path().join("PUBLIC catalog");
+    let list = || {
+        Command::new(env!("CARGO_BIN_EXE_taypeer-cli"))
+            .arg("--profile")
+            .arg(&profile)
+            .args(["--json", "db", "list"])
+            .stdin(Stdio::null())
+            .output()
+            .unwrap()
+    };
+    let output = list();
+    assert!(output.status.success());
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap(),
+        serde_json::json!([])
+    );
+    assert!(!profile.exists());
+    std::fs::create_dir(&profile).unwrap();
+    let catalog = profile.join("working-copies.json");
+    std::fs::write(&catalog, b"PUBLIC invalid catalog").unwrap();
+    let output = list();
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert_eq!(std::fs::read(catalog).unwrap(), b"PUBLIC invalid catalog");
+    assert!(!profile.join("profile.json").exists());
+    assert!(!profile.join("public-credentials").exists());
+}

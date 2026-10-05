@@ -2,7 +2,7 @@
 
 use crate::{host::operation, input::Input, lifecycle_args::*, output::CliError};
 use std::path::Path;
-use taypeer_core::{EntryId, GenerationId, GroupId, OperationId};
+use taypeer_core::{EntryId, GenerationId, GroupId};
 use taypeer_runtime::Command;
 use taypeer_services::{
     InspectionTarget, LifecycleAction, ObjectAddress, ObjectId, RecoveryMode, RecoveryRequest,
@@ -125,24 +125,5 @@ fn reveal(path: &Path, input: &Input) -> Result<Command, CliError> {
         target: request.target,
         field: request.field,
         origins: request.origins,
-    })
-}
-
-#[derive(serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct GenerationInput {
-    address: ObjectAddress,
-    heads: Vec<String>,
-}
-pub(crate) fn generation(
-    path: &Path,
-    input: &Input,
-    operation: OperationId,
-) -> Result<Command, CliError> {
-    let request: GenerationInput = input.document(path)?;
-    Ok(Command::ResolveGeneration {
-        address: request.address,
-        heads: request.heads,
-        operation,
     })
 }

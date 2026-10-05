@@ -3,6 +3,8 @@
 mod args;
 mod binary_args;
 mod binary_host;
+mod draft_args;
+mod history_args;
 mod host;
 mod input;
 mod lifecycle_args;
@@ -50,9 +52,11 @@ fn run(cli: Cli) -> Result<(), CliError> {
             language: cli.lang,
         },
         cli.profile,
+        #[cfg(feature = "ui-test-support")]
+        cli.public_fixture_profile,
     )?;
     if let Some(path) = cli.file {
-        host.open(&path, None)?;
+        host.open(&path)?;
     }
     if matches!(cli.command, Action::Session) {
         let result = session::run(&mut host, cli.json, cli.lang);

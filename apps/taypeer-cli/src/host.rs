@@ -1,8 +1,5 @@
 use crate::{
-    args::{
-        Action, ConflictCommand, DatabaseCommand, DraftCommand, EntryCommand, GenerateCommand,
-        GroupCommand, HistoryCommand,
-    },
+    args::{Action, EntryCommand, GenerateCommand, GroupCommand},
     input::Input,
     output::CliError,
 };
@@ -11,9 +8,12 @@ use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
 };
-use taypeer_core::{AttributeId, EntryId, GroupId, OperationId, RevisionId};
+use taypeer_core::{AttributeId, EntryId, GroupId, OperationId};
 use taypeer_runtime::{Command, RuntimeHost, Worker};
-use taypeer_services::{GroupMove, LifecycleAction, ObjectId};
+use taypeer_services::{GroupMove, ObjectId};
+mod databases;
+mod drafts;
+mod history;
 mod p2p;
 
 struct Database {
@@ -30,6 +30,8 @@ pub(crate) struct Host {
     pub input: Input,
     runtime: Option<RuntimeHost>,
     profile: PathBuf,
+    #[cfg(feature = "ui-test-support")]
+    public_fixture_profile: bool,
 }
 
 impl Host {
@@ -43,7 +45,11 @@ impl Host {
             "format": format
         }))
     }
-    pub fn new(mut input: Input, profile: Option<PathBuf>) -> Result<Self, CliError> {
+    pub fn new(
+        mut input: Input,
+        profile: Option<PathBuf>,
+        #[cfg(feature = "ui-test-support")] public_fixture_profile: bool,
+    ) -> Result<Self, CliError> {
         let profile = match profile {
             Some(path) => path,
             None => RuntimeHost::default_profile_path()?,
@@ -60,34 +66,53 @@ impl Host {
             input,
             runtime: None,
             profile,
+            #[cfg(feature = "ui-test-support")]
+            public_fixture_profile,
         })
     }
 
-    pub fn open(&mut self, path: &Path, name: Option<String>) -> Result<Value, CliError> {
-        let password = self.input.password(name.is_some())?;
+    pub fn open(&mut self, path: &Path) -> Result<Value, CliError> {
+        let path = path.canonicalize().map_err(|_| CliError::Input)?;
+        let password = self.input.password(false)?;
         self.ensure_runtime()?;
-        let mut worker = self.runtime.as_ref().ok_or(CliError::Io)?.open(
-            &self.executable,
-            path,
-            password.to_string(),
-            name,
-        )?;
+        let runtime = self.runtime.as_ref().ok_or(CliError::Io)?;
+        let copy = runtime
+            .working_copies()?
+            .into_iter()
+            .find(|copy| copy.path == path);
+        let worker = if copy.is_some() {
+            runtime.open(&self.executable, &path, password.to_string(), None)?
+        } else {
+            runtime.open_external(&self.executable, &path, password.to_string())?
+        };
+        self.remember_open(worker)
+    }
+
+    fn remember_open(&mut self, mut worker: Worker) -> Result<Value, CliError> {
         let id = worker.database_id().as_str().to_owned();
         if self.databases.contains_key(&id) {
             worker.close()?;
             return Err(CliError::AlreadyOpen);
         }
-        let path = path.canonicalize().map_err(|_| CliError::Input)?;
+        let path = self
+            .runtime
+            .as_ref()
+            .ok_or(CliError::Io)?
+            .working_copies()?
+            .into_iter()
+            .find(|copy| copy.database.as_str() == id)
+            .ok_or(CliError::UnknownDatabase)?
+            .path;
         self.databases.insert(
             id.clone(),
             Database {
-                path,
+                path: path.clone(),
                 worker: Some(worker),
                 closure: None,
             },
         );
         self.selected = Some(id.clone());
-        Ok(json!({"database": id, "locked": false}))
+        Ok(json!({"database": id, "file": path, "locked": false}))
     }
 
     fn selected(&mut self) -> Result<&mut Database, CliError> {
@@ -108,6 +133,14 @@ impl Host {
     }
     fn ensure_runtime(&mut self) -> Result<(), CliError> {
         if self.runtime.is_none() {
+            #[cfg(feature = "ui-test-support")]
+            if self.public_fixture_profile {
+                self.runtime = Some(RuntimeHost::with_test_sessions(
+                    &self.profile,
+                    self.sessions.clone(),
+                )?);
+                return Ok(());
+            }
             self.runtime = Some(RuntimeHost::with_sessions(
                 &self.profile,
                 self.sessions.clone(),
@@ -172,13 +205,6 @@ impl Host {
                     },
                     operation: operation(op)?,
                 },
-                GroupCommand::Resolve {
-                    input,
-                    operation: op,
-                } => Command::MoveGroup {
-                    request: self.input.document(&input)?,
-                    operation: operation(op)?,
-                },
                 GroupCommand::Clone {
                     id,
                     parent,
@@ -190,10 +216,9 @@ impl Host {
                     name,
                     operation: operation(op)?,
                 },
-                GroupCommand::Trash { id } => Command::PrepareLifecycle {
-                    action: LifecycleAction::Trash,
+                GroupCommand::Trash { id, operation: op } => Command::TrashObject {
                     target: ObjectId::Group(GroupId::new(id)),
-                    destination: None,
+                    operation: operation(op)?,
                 },
                 GroupCommand::List => Command::Groups,
                 GroupCommand::Create {
@@ -219,18 +244,16 @@ impl Host {
                 EntryCommand::Move {
                     id,
                     group,
-                    review,
                     operation: op,
                 } => Command::MoveEntry {
                     entry: EntryId::new(id),
-                    group: GroupId::new(group),
-                    review: review.map(|path| self.input.document(&path)).transpose()?,
+                    group: group.map(GroupId::new),
+                    review: None,
                     operation: operation(op)?,
                 },
-                EntryCommand::Trash { id } => Command::PrepareLifecycle {
-                    action: LifecycleAction::Trash,
+                EntryCommand::Trash { id, operation: op } => Command::TrashObject {
                     target: ObjectId::Entry(EntryId::new(id)),
-                    destination: None,
+                    operation: operation(op)?,
                 },
                 EntryCommand::List { group, query } => Command::Entries {
                     group: group.map(GroupId::new),
@@ -243,7 +266,7 @@ impl Host {
                     operation,
                 } => Command::CreateEntry {
                     operation: self::operation(operation)?,
-                    group: GroupId::new(group),
+                    group: group.map(GroupId::new),
                     patch: self.input.fields(fields)?,
                 },
                 EntryCommand::Update {
@@ -262,7 +285,7 @@ impl Host {
                     operation: op,
                 } => Command::CloneEntry {
                     entry: EntryId::new(id),
-                    group: GroupId::new(group),
+                    group: group.map(GroupId::new),
                     title,
                     operation: operation(op)?,
                 },
@@ -274,71 +297,8 @@ impl Host {
                     None => Command::RevealPassword(EntryId::new(id)),
                 },
             },
-            Action::Draft(command) => match command {
-                DraftCommand::Create { group } => Command::BeginCreate(GroupId::new(group)),
-                DraftCommand::Edit { id } => Command::BeginEdit(EntryId::new(id)),
-                DraftCommand::Update { fields } => Command::PatchDraft(self.input.fields(fields)?),
-                DraftCommand::Status => Command::DraftStatus,
-                DraftCommand::Save { operation } => Command::SaveDraft {
-                    operation: self::operation(operation)?,
-                },
-                DraftCommand::Restore => Command::RestoreDraft,
-                DraftCommand::Discard => Command::DiscardDraft,
-            },
-            Action::History(command) => match command {
-                HistoryCommand::List { entry } => Command::History(EntryId::new(entry)),
-                HistoryCommand::Show { entry, revision } => Command::Revision {
-                    entry: EntryId::new(entry),
-                    revision: RevisionId::new(revision),
-                },
-                HistoryCommand::Restore {
-                    entry,
-                    revision,
-                    group,
-                    operation: op,
-                } => Command::RestoreRevision {
-                    entry: EntryId::new(entry),
-                    revision: RevisionId::new(revision),
-                    group: GroupId::new(group),
-                    operation: operation(op)?,
-                },
-                HistoryCommand::Purge {
-                    entry,
-                    revision,
-                    yes: _,
-                    operation: op,
-                } => Command::PurgeHistory {
-                    entry: EntryId::new(entry),
-                    revisions: revision.into_iter().map(RevisionId::new).collect(),
-                    operation: operation(op)?,
-                },
-            },
-            Action::Conflict(command) => match command {
-                ConflictCommand::Generation {
-                    input,
-                    operation: op,
-                } => crate::lifecycle_host::generation(&input, &self.input, operation(op)?)?,
-                ConflictCommand::Show { entry } => Command::Conflicts(EntryId::new(entry)),
-                ConflictCommand::Reveal { input } => {
-                    let request: ConflictRevealInput = self.input.document(&input)?;
-                    Command::RevealConflict {
-                        entry: request.entry,
-                        field: request.field,
-                        origins: request.origins,
-                    }
-                }
-                ConflictCommand::Resolve {
-                    input,
-                    operation: op,
-                } => {
-                    let request: ResolutionInput = self.input.document(&input)?;
-                    Command::ResolveConflicts {
-                        context: request.context,
-                        fields: request.fields,
-                        operation: operation(op)?,
-                    }
-                }
-            },
+            Action::Draft(command) => return self.draft(command),
+            Action::History(command) => return self.history(command),
             Action::Generate(command) => return generate(command),
             Action::Search { query } => return self.search(&query),
             Action::Session | Action::Worker => return Err(CliError::SessionOnly),
@@ -390,56 +350,6 @@ impl Host {
         Ok(results)
     }
 
-    fn database(&mut self, command: DatabaseCommand) -> Result<Value, CliError> {
-        match command {
-            DatabaseCommand::Compatibility => {
-                let locked = self.selected()?.worker.is_none();
-                let id = taypeer_core::DatabaseId::new(self.selected.as_ref().ok_or(CliError::NoDatabase)?.clone());
-                let report = self.runtime.as_ref().ok_or(CliError::Io)?.compatibility(&id)?;
-                Ok(json!({"database": id, "locked": locked, "admitted": report.admitted, "format": report.format}))
-            }
-            DatabaseCommand::Create { path, name } => self.open(&path, Some(name)),
-            DatabaseCommand::Open { path } => self.open(&path, None),
-            DatabaseCommand::List => Ok(Value::Array(self.databases.iter().map(|(id, db)| {
-                json!({"database": id, "file": db.path, "locked": db.worker.as_ref().is_none_or(|worker| !worker.is_open()), "selected": self.selected.as_ref() == Some(id), "session": db.worker.as_ref().map(Worker::session_status), "last_lock": db.closure})
-            }).collect())),
-            DatabaseCommand::Use { id } => {
-                if !self.databases.contains_key(&id) { return Err(CliError::UnknownDatabase); }
-                self.selected = Some(id);
-                Ok(Value::Null)
-            }
-            DatabaseCommand::Lock => {
-                let database = self.selected()?;
-                if let Some(mut worker) = database.worker.take() {
-                    database.closure = Some(worker.close_report()?);
-                }
-                Ok(json!(database.closure))
-            }
-            DatabaseCommand::Unlock => {
-                if self.selected()?.worker.is_some() { return Err(CliError::AlreadyOpen); }
-                let path = self.selected()?.path.clone();
-                let password = self.input.password(false)?;
-                let mut worker = self.runtime.as_ref().ok_or(CliError::Io)?.open(&self.executable, &path, password.to_string(), None)?;
-                if self.selected.as_deref() != Some(worker.database_id().as_str()) {
-                    worker.close()?;
-                    return Err(CliError::UnknownDatabase);
-                }
-                let database = self.selected()?;
-                database.worker = Some(worker);
-                database.closure = None;
-                Ok(Value::Null)
-            }
-            DatabaseCommand::Close => {
-                let id = self.selected.take().ok_or(CliError::NoDatabase)?;
-                let mut database = self.databases.remove(&id).ok_or(CliError::UnknownDatabase)?;
-                self.selected = self.databases.keys().next().cloned();
-                if let Some(worker) = &mut database.worker { worker.close()?; }
-                self.runtime.as_ref().ok_or(CliError::Io)?.close(&taypeer_core::DatabaseId::new(id))?;
-                Ok(Value::Null)
-            }
-        }
-    }
-
     pub fn lock_all(&mut self) -> Result<(), CliError> {
         for database in self.databases.values() {
             if let Some(worker) = &database.worker {
@@ -457,8 +367,7 @@ impl Host {
                         if let Some(error) = outcome.error {
                             return Err(error.into());
                         }
-                        if outcome.draft == taypeer_runtime::session::DraftDisposition::Unconfirmed
-                        {
+                        if outcome.draft != taypeer_runtime::session::DraftDisposition::Preserved {
                             return Err(taypeer_runtime::RuntimeError::OperationInterrupted(
                                 outcome.reason,
                             )
@@ -503,13 +412,6 @@ impl Host {
     }
 }
 
-#[derive(serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ResolutionInput {
-    context: taypeer_services::ConflictContext,
-    fields: Vec<taypeer_services::Resolution>,
-}
-
 pub(crate) fn operation(id: Option<String>) -> Result<OperationId, CliError> {
     match id {
         Some(id) if !id.is_empty() => Ok(OperationId::new(id)),
@@ -544,12 +446,4 @@ fn generate(command: GenerateCommand) -> Result<Value, CliError> {
     Ok(
         json!({"value": result.expose(), "characters": result.expose().chars().count(), "entropy_bits": result.entropy_bits()}),
     )
-}
-
-#[derive(serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ConflictRevealInput {
-    entry: EntryId,
-    field: taypeer_core::EntryField,
-    origins: Vec<String>,
 }

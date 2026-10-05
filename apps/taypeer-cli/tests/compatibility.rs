@@ -42,7 +42,7 @@ fn compatibility_inspection_uses_no_profile_or_password_and_preserves_the_file()
             String::from_utf8_lossy(&output.stderr)
         );
         let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-        assert_eq!(value["format"]["schema"]["schema_version"], 5);
+        assert_eq!(value["format"]["schema"]["schema_version"], 6);
         for access in ["read", "write", "receive"] {
             assert_eq!(value["format"][access]["status"], "supported");
         }

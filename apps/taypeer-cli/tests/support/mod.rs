@@ -1,4 +1,4 @@
-//! Independent dev5 fixture encoding for CLI lifecycle tests. Every payload is PUBLIC.
+//! Independent dev6 fixture encoding for CLI lifecycle tests. Every payload is PUBLIC.
 //! This encoder is test-only; product code never signs arbitrary imported documents.
 use std::path::{Path, PathBuf};
 use taypeer_core::{DatabasePolicy, EntryId, GroupId};
@@ -77,5 +77,11 @@ pub fn persist(path: &Path, document: &Document, password: &[u8]) {
         baseline: baseline.descriptor().digest,
         objects: vec![checkpoint, baseline],
     };
-    seed.create(path, &transport, None).unwrap();
+    drop(seed.create(path, &transport, None).unwrap());
+    let snapshot = taypeer_storage::ArchiveSnapshot::open(path, None).unwrap();
+    lease.profile().register(path, &snapshot).unwrap();
+    drop(snapshot);
+    drop(lease);
+    let host = taypeer_runtime::RuntimeHost::new(&profile(path)).unwrap();
+    host.register_working_copy(path).unwrap();
 }

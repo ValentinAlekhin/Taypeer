@@ -99,9 +99,11 @@ fn move_clone_trash_restore_and_purge_survive_new_processes() {
             "PUBLIC group move",
         ],
     );
-    let prepared = ok(&path, &["group", "trash", clone]);
-    assert_eq!(prepared["affected"].as_array().unwrap().len(), 2);
-    confirm(&path, &input, &prepared, "PUBLIC trash");
+    let trash = ["group", "trash", clone, "--operation", "PUBLIC trash"];
+    let first = ok(&path, &trash);
+    let bytes = fs::read(&path).unwrap();
+    assert_eq!(ok(&path, &trash), first);
+    assert_eq!(fs::read(&path).unwrap(), bytes);
     assert_eq!(ok(&path, &["trash", "list"]).as_array().unwrap().len(), 2);
     let prepared = ok(
         &path,
@@ -117,8 +119,10 @@ fn move_clone_trash_restore_and_purge_survive_new_processes() {
     );
     confirm(&path, &input, &prepared, "PUBLIC restore");
     assert!(ok(&path, &["trash", "list"]).as_array().unwrap().is_empty());
-    let prepared = ok(&path, &["group", "trash", clone]);
-    confirm(&path, &input, &prepared, "PUBLIC trash again");
+    ok(
+        &path,
+        &["group", "trash", clone, "--operation", "PUBLIC trash again"],
+    );
     let prepared = ok(&path, &["trash", "prepare", "purge", "group", clone]);
     confirm(&path, &input, &prepared, "PUBLIC purge");
     let tree = ok(&path, &["group", "tree"]);

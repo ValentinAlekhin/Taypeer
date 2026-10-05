@@ -48,7 +48,7 @@ pub(crate) enum SyncCommand {
         #[arg(long)]
         entry: String,
         #[arg(long)]
-        group: String,
+        group: Option<String>,
         #[arg(long)]
         operation: String,
     },
@@ -67,7 +67,6 @@ pub(crate) enum InviteCommand {
     Cancel { request: Digest },
     #[command(about = crate::output::help("invite_join"))]
     Join {
-        path: PathBuf,
         #[arg(long)]
         input: Option<PathBuf>,
     },

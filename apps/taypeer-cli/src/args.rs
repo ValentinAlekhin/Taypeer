@@ -1,4 +1,5 @@
 use crate::lifecycle_args::{PendingCommand, PositionArgs, TrashCommand};
+pub(crate) use crate::{draft_args::DraftCommand, history_args::HistoryCommand};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
@@ -18,6 +19,9 @@ pub(crate) enum Language {
 pub(crate) struct Cli {
     #[arg(long, global = true, help = crate::output::help("help_profile"))]
     pub profile: Option<PathBuf>,
+    #[cfg(feature = "ui-test-support")]
+    #[arg(long, global = true, hide = true, requires = "profile")]
+    pub public_fixture_profile: bool,
     /// Output machine-readable JSON.
     #[arg(long, global = true)]
     pub json: bool,
@@ -63,15 +67,11 @@ pub(crate) enum Action {
     /// Create, inspect and edit entries.
     #[command(subcommand)]
     Entry(EntryCommand),
-    /// Work with an unconfirmed local draft.
-    #[command(subcommand)]
+    #[command(about = crate::output::help("help_drafts"), subcommand)]
     Draft(DraftCommand),
     /// Inspect, restore or purge saved revisions.
     #[command(subcommand)]
     History(HistoryCommand),
-    /// Review and explicitly resolve conflicting values.
-    #[command(subcommand)]
-    Conflict(ConflictCommand),
     #[command(about = crate::output::help("help_lifecycle"))]
     #[command(subcommand)]
     Trash(TrashCommand),
@@ -102,15 +102,16 @@ pub(crate) enum SettingsCommand {
 pub(crate) enum DatabaseCommand {
     #[command(about = crate::output::help("help_compatibility"))]
     Compatibility,
-    /// Create a new encrypted file without replacing an existing file.
+    #[command(about = crate::output::help("help_db_create"))]
     Create {
-        path: PathBuf,
         #[arg(long)]
         name: String,
+        #[arg(long)]
+        operation: Option<String>,
     },
     /// Authenticate and open a database.
     Open { path: PathBuf },
-    /// List the session's databases.
+    #[command(about = crate::output::help("help_db_list"))]
     List,
     /// Select an already opened database by ID.
     Use { id: String },
@@ -120,6 +121,10 @@ pub(crate) enum DatabaseCommand {
     Unlock,
     /// Close the selected database and release its file lock.
     Close,
+    #[command(about = crate::output::help("help_db_info"))]
+    Info,
+    #[command(about = crate::output::help("help_db_relocate"))]
+    Relocate { path: PathBuf },
 }
 
 #[derive(Subcommand)]
@@ -136,13 +141,6 @@ pub(crate) enum GroupCommand {
         #[arg(long)]
         operation: Option<String>,
     },
-    #[command(about = crate::output::help("help_group_resolve"))]
-    Resolve {
-        #[arg(long)]
-        input: PathBuf,
-        #[arg(long)]
-        operation: Option<String>,
-    },
     #[command(about = crate::output::help("help_group_clone"))]
     Clone {
         id: String,
@@ -154,7 +152,11 @@ pub(crate) enum GroupCommand {
         operation: Option<String>,
     },
     #[command(about = crate::output::help("help_group_trash"))]
-    Trash { id: String },
+    Trash {
+        id: String,
+        #[arg(long)]
+        operation: Option<String>,
+    },
     /// List groups.
     List,
     /// Create a group.
@@ -182,14 +184,16 @@ pub(crate) enum EntryCommand {
     Move {
         id: String,
         #[arg(long)]
-        group: String,
-        #[arg(long)]
-        review: Option<PathBuf>,
+        group: Option<String>,
         #[arg(long)]
         operation: Option<String>,
     },
     #[command(about = crate::output::help("help_entry_trash"))]
-    Trash { id: String },
+    Trash {
+        id: String,
+        #[arg(long)]
+        operation: Option<String>,
+    },
     /// List entries or search the selected database.
     List {
         #[arg(long)]
@@ -204,7 +208,7 @@ pub(crate) enum EntryCommand {
         #[arg(long)]
         operation: Option<String>,
         #[arg(long)]
-        group: String,
+        group: Option<String>,
         #[command(flatten)]
         fields: Fields,
     },
@@ -220,7 +224,7 @@ pub(crate) enum EntryCommand {
     Clone {
         id: String,
         #[arg(long)]
-        group: String,
+        group: Option<String>,
         #[arg(long)]
         title: Option<String>,
         #[arg(long)]
@@ -232,30 +236,6 @@ pub(crate) enum EntryCommand {
         #[arg(long)]
         attribute: Option<String>,
     },
-}
-
-#[derive(Subcommand)]
-pub(crate) enum DraftCommand {
-    /// Begin a new entry without saving it.
-    Create { group: String },
-    /// Begin editing an entry without exposing its existing secrets.
-    Edit { id: String },
-    /// Apply addressed fields to the current draft.
-    Update {
-        #[command(flatten)]
-        fields: Fields,
-    },
-    /// Show draft status without its contents.
-    Status,
-    /// Confirm the active draft.
-    Save {
-        #[arg(long)]
-        operation: Option<String>,
-    },
-    /// Explicitly restore an interrupted draft.
-    Restore,
-    /// Discard the active or interrupted draft.
-    Discard,
 }
 
 #[derive(Args, Default)]
@@ -284,58 +264,6 @@ pub(crate) struct Fields {
 pub(crate) struct SessionLine {
     #[command(subcommand)]
     pub action: Action,
-}
-
-#[derive(Subcommand)]
-pub(crate) enum HistoryCommand {
-    /// List saved revisions with secrets hidden.
-    List { entry: String },
-    /// Show a masked saved revision.
-    Show { entry: String, revision: String },
-    /// Restore a saved revision as a new current version.
-    Restore {
-        entry: String,
-        revision: String,
-        #[arg(long)]
-        group: String,
-        #[arg(long)]
-        operation: Option<String>,
-    },
-    /// Permanently remove selected revisions from available history.
-    Purge {
-        entry: String,
-        #[arg(long, required = true)]
-        revision: Vec<String>,
-        #[arg(long, required = true)]
-        yes: bool,
-        #[arg(long)]
-        operation: Option<String>,
-    },
-}
-
-#[derive(Subcommand)]
-pub(crate) enum ConflictCommand {
-    #[command(about = crate::output::help("help_generation"))]
-    Generation {
-        #[arg(long)]
-        input: PathBuf,
-        #[arg(long)]
-        operation: Option<String>,
-    },
-    /// Show the review context and masked alternatives.
-    Show { entry: String },
-    /// Explicitly reveal an alternative selected by entry, field and origins in JSON.
-    Reveal {
-        #[arg(long)]
-        input: PathBuf,
-    },
-    /// Submit an explicit context and whole-field resolutions from JSON.
-    Resolve {
-        #[arg(long)]
-        input: PathBuf,
-        #[arg(long)]
-        operation: Option<String>,
-    },
 }
 
 #[derive(Subcommand)]
@@ -410,5 +338,90 @@ mod retry_tests {
             };
             assert_eq!(operation.as_deref(), Some("PUBLIC-retry"));
         }
+    }
+
+    #[test]
+    fn automation_routes_keep_confirmations_and_remove_interactive_conflict_steps() {
+        for args in [
+            vec!["db", "create", "/PUBLIC/legacy.taypeer", "--name", "PUBLIC"],
+            vec!["invite", "join", "/PUBLIC/legacy.taypeer"],
+            vec!["draft", "restore"],
+            vec!["conflict", "resolve", "--input", "PUBLIC.json"],
+            vec!["group", "resolve", "--input", "PUBLIC.json"],
+            vec!["entry", "move", "PUBLIC-entry", "--review", "PUBLIC.json"],
+            vec![
+                "history",
+                "purge",
+                "PUBLIC-entry",
+                "--revision",
+                "PUBLIC-revision",
+            ],
+            vec![
+                "history",
+                "group",
+                "purge",
+                "PUBLIC-group",
+                "--revision",
+                "PUBLIC-revision",
+            ],
+            vec![
+                "history",
+                "database",
+                "purge",
+                "--revision",
+                "PUBLIC-revision",
+            ],
+        ] {
+            assert!(Cli::try_parse_from(std::iter::once("taypeer-cli").chain(args)).is_err());
+        }
+        for args in [
+            vec!["entry", "create", "--title", "PUBLIC"],
+            vec!["entry", "move", "PUBLIC-entry"],
+            vec!["entry", "clone", "PUBLIC-entry"],
+            vec!["history", "restore", "PUBLIC-entry", "PUBLIC-revision"],
+            vec!["draft", "create", "--username", "PUBLIC unfinished"],
+            vec![
+                "db",
+                "create",
+                "--name",
+                "PUBLIC",
+                "--operation",
+                "PUBLIC create",
+            ],
+            vec![
+                "draft",
+                "snapshot",
+                "PUBLIC-draft",
+                "--revision",
+                "7",
+                "--operation",
+                "PUBLIC save",
+            ],
+            vec![
+                "entry",
+                "trash",
+                "PUBLIC-entry",
+                "--operation",
+                "PUBLIC trash",
+            ],
+        ] {
+            assert!(Cli::try_parse_from(std::iter::once("taypeer-cli").chain(args)).is_ok());
+        }
+    }
+
+    #[test]
+    fn public_fixture_credentials_are_explicit_and_disabled_in_production() {
+        assert!(
+            Cli::try_parse_from(["taypeer-cli", "--public-fixture-profile", "db", "list"]).is_err()
+        );
+        let parsed = Cli::try_parse_from([
+            "taypeer-cli",
+            "--profile",
+            "/PUBLIC/profile",
+            "--public-fixture-profile",
+            "db",
+            "list",
+        ]);
+        assert_eq!(parsed.is_ok(), cfg!(feature = "ui-test-support"));
     }
 }

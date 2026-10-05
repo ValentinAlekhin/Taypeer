@@ -127,7 +127,7 @@ impl Host {
             } => self.request(Command::ExtractReceived {
                 change,
                 entry: taypeer_core::EntryId::new(entry),
-                group: taypeer_core::GroupId::new(group),
+                group: group.map(taypeer_core::GroupId::new),
                 operation: taypeer_core::OperationId::new(operation),
             }),
         }
@@ -169,20 +169,26 @@ impl Host {
                 request,
                 reject: false,
             }),
-            InviteCommand::Join { path, input } => {
+            InviteCommand::Join { input } => {
                 let code = match input {
                     Some(path) => self.input.document(&path)?,
                     None => serde_json::from_str(&self.input.secret("invitation_code")?)
                         .map_err(|_| CliError::Input)?,
                 };
-                let password = self.input.secret("master_password")?;
+                let password = self.input.password(true)?;
                 self.ensure_network()?;
-                value(self.runtime.as_ref().ok_or(CliError::Io)?.join(
-                    &self.executable,
-                    code,
-                    &path,
-                    password.to_string(),
-                )?)
+                let progress = self
+                    .runtime
+                    .as_ref()
+                    .ok_or(CliError::Io)?
+                    .join_internal_cancellable(
+                        &self.executable,
+                        code,
+                        password.to_string(),
+                        &taypeer_runtime::NetworkCancellation::default(),
+                    )?;
+                self.remember_join(&progress)?;
+                value(progress)
             }
             InviteCommand::Pending => {
                 self.ensure_runtime()?;
@@ -195,30 +201,40 @@ impl Host {
             }
             InviteCommand::Resume { request } => {
                 self.ensure_network()?;
-                let runtime = self.runtime.as_ref().ok_or(CliError::Io)?;
-                let path = runtime
-                    .pending_join_summaries()?
-                    .get(&request)
-                    .ok_or(CliError::Input)?
-                    .path
-                    .clone();
-                let password = self.input.secret("master_password")?;
-                let progress = runtime.resume_join(request, password.to_string())?;
-                if let JoinProgress::Received(database) = &progress {
-                    let id = database.as_str().to_owned();
-                    self.databases.insert(
-                        id.clone(),
-                        Database {
-                            path,
-                            worker: None,
-                            closure: None,
-                        },
-                    );
-                    self.selected = Some(id);
-                }
+                let password = self.input.password(false)?;
+                let progress = self
+                    .runtime
+                    .as_ref()
+                    .ok_or(CliError::Io)?
+                    .resume_internal_join_cancellable(
+                        request,
+                        password.to_string(),
+                        &taypeer_runtime::NetworkCancellation::default(),
+                    )?;
+                self.remember_join(&progress)?;
                 value(progress)
             }
         }
+    }
+    fn remember_join(&mut self, progress: &JoinProgress) -> Result<(), CliError> {
+        if let JoinProgress::Received(database) = progress {
+            let copy = self
+                .runtime
+                .as_ref()
+                .ok_or(CliError::Io)?
+                .working_copies()?
+                .into_iter()
+                .find(|copy| &copy.database == database)
+                .ok_or(CliError::UnknownDatabase)?;
+            let id = database.as_str().to_owned();
+            self.databases.entry(id.clone()).or_insert(Database {
+                path: copy.path,
+                worker: None,
+                closure: None,
+            });
+            self.selected = Some(id);
+        }
+        Ok(())
     }
     pub(super) fn device(&mut self, command: DeviceCommand) -> Result<Value, CliError> {
         match command {
