@@ -612,6 +612,63 @@ fn wait(mut ready: impl FnMut() -> bool) {
 }
 
 #[test]
+fn invitation_only_process_returns_public_proof_without_opening_a_document() {
+    let manager = Fixture::new();
+    let mut opened = manager.open(PASSWORD, true).unwrap();
+    let mut encoded = opened.request(&Command::CreateInvitation).unwrap();
+    let invitation: taypeer_trust::Invitation = serde_json::from_value(encoded[0].take()).unwrap();
+    opened.close().unwrap();
+    let mut receiver = Fixture::new();
+    let request = invitation.id().unwrap();
+    receiver.path = receiver
+        .host
+        .creation_path(&OperationId::new(format!("join:{request}")))
+        .unwrap();
+    receiver.launcher.writer = receiver
+        .host
+        .platform_cipher_writer(&receiver.path)
+        .unwrap();
+    let proof = receiver
+        .host
+        .platform_join_proof(&receiver.launcher, invitation.clone())
+        .unwrap();
+    proof
+        .verify(&invitation, receiver.host.profile().transport_public())
+        .unwrap();
+    assert!(
+        receiver
+            .host
+            .profile()
+            .identity()
+            .unwrap()
+            .is_some_and(|identity| identity == proof.recipient)
+    );
+    assert_eq!(
+        receiver
+            .launcher
+            .faults
+            .author_calls
+            .load(Ordering::Acquire),
+        1
+    );
+    assert_eq!(
+        receiver.launcher.faults.allocations.load(Ordering::Acquire),
+        0
+    );
+    assert!(!receiver.path.exists());
+    assert!(receiver.host.working_copies().unwrap().is_empty());
+    assert!(receiver.host.pending_joins().unwrap().is_empty());
+    let statuses = receiver.host.sessions().statuses();
+    assert_eq!(statuses.len(), 1);
+    assert!(
+        statuses[0]
+            .outcome
+            .as_ref()
+            .is_some_and(|outcome| outcome.termination == Termination::Graceful)
+    );
+}
+
+#[test]
 fn descriptor_process_creates_autosaves_and_reopens_the_confirmed_file() {
     let f = Fixture::new();
     let mut worker = f.open(PASSWORD, true).unwrap();

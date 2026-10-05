@@ -27,6 +27,7 @@ pub struct RuntimeHost {
     pub(crate) network: Mutex<BTreeMap<PublicKey, crate::network::Network>>,
     pub(crate) requested_relay: Mutex<Option<taypeer_sync::RelaySetting>>,
     pub(crate) enrollments: Mutex<BTreeMap<Digest, Arc<crate::process::Client>>>,
+    pub(crate) join_state: Mutex<()>,
     catalog: Mutex<catalog::Catalog>,
 }
 
@@ -203,6 +204,7 @@ impl RuntimeHost {
             network: Mutex::new(BTreeMap::new()),
             requested_relay: Mutex::new(None),
             enrollments: Mutex::new(BTreeMap::new()),
+            join_state: Mutex::new(()),
             catalog: Mutex::new(catalog),
             context: Arc::new(HostContext {
                 profile,

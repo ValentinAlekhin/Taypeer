@@ -32,6 +32,8 @@ pub trait PlatformDocument: CipherPersistence + Sync {
 struct PlatformBoot {
     password: String,
     form: Option<taypeer_services::CreateDatabase>,
+    #[serde(default)]
+    invitation: Option<taypeer_trust::Invitation>,
 }
 impl Drop for PlatformBoot {
     fn drop(&mut self) {
@@ -78,6 +80,36 @@ pub fn run_platform_worker(
         .lock()
         .map_err(|_| RuntimeError::Transport)?
         .read()?;
+    if let Some(invitation) = boot.invitation.take() {
+        // Enrollment signs only public identities. The bearer code, network and
+        // Keystore remain with the host; no database or read key is opened here.
+        let proof = (|| {
+            let author = document.author(None)?.ok_or(RuntimeError::Protocol)?;
+            let identity =
+                taypeer_trust::Identity::new(author.public(), document.transport_public()?)
+                    .map_err(|_| RuntimeError::Protocol)?;
+            let proof = taypeer_trust::JoinProof::sign(&invitation, identity, &author)
+                .map_err(|_| RuntimeError::Protocol)?;
+            serde_json::to_value(proof).map_err(|_| RuntimeError::Protocol)
+        })();
+        boot.password.zeroize();
+        channel
+            .lock()
+            .map_err(|_| RuntimeError::Transport)?
+            .response(proof)?;
+        let command: crate::Command = channel
+            .lock()
+            .map_err(|_| RuntimeError::Transport)?
+            .read()?;
+        if !matches!(command, crate::Command::Lock) {
+            return Err(RuntimeError::Protocol);
+        }
+        channel
+            .lock()
+            .map_err(|_| RuntimeError::Transport)?
+            .response(Ok(serde_json::Value::Null))?;
+        return Ok(());
+    }
     let mut service = DatabaseService::new();
     let opened = (|| {
         if let Some(form) = boot.form.take() {
@@ -159,7 +191,11 @@ impl crate::RuntimeHost {
         form: Option<taypeer_services::CreateDatabase>,
     ) -> Result<Worker, RuntimeError> {
         let client = Client::connect_platform(launcher.launch()?, &self.sessions)?;
-        let mut boot = PlatformBoot { password, form };
+        let mut boot = PlatformBoot {
+            password,
+            form,
+            invitation: None,
+        };
         let opened = client.request(&boot, true);
         boot.password.zeroize();
         let database = opened
@@ -176,6 +212,39 @@ impl crate::RuntimeHost {
             self.runtime.handle(),
             &self.sessions,
         )
+    }
+
+    /// Sign a recipient proof in a fresh isolated process, then confirm its exit.
+    /// This explicit enrollment operation acquires no password or document read key.
+    pub fn platform_join_proof(
+        &self,
+        launcher: &dyn crate::platform::ProcessLauncher,
+        invitation: taypeer_trust::Invitation,
+    ) -> Result<taypeer_trust::JoinProof, RuntimeError> {
+        let database = invitation.database.clone();
+        let client = Client::connect_platform(launcher.launch()?, &self.sessions)?;
+        let boot = PlatformBoot {
+            password: String::new(),
+            form: None,
+            invitation: Some(invitation),
+        };
+        let proof = client
+            .request(&boot, true)
+            .and_then(|value| serde_json::from_value(value).map_err(|_| RuntimeError::Protocol))
+            .inspect_err(|_| {
+                client
+                    .control
+                    .invalidate(crate::session::LockReason::Transport)
+            })?;
+        client.control.opened(database)?;
+        client
+            .control
+            .invalidate(crate::session::LockReason::Manual);
+        let outcome = client.control.wait_closed()?;
+        if outcome.draft != crate::session::DraftDisposition::Preserved {
+            return Err(RuntimeError::ShutdownUnconfirmed);
+        }
+        Ok(proof)
     }
 
     /// Bind a platform transfer adapter to one host-owned working path. Opening

@@ -13,10 +13,10 @@ use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
-use taypeer_core::DatabaseId;
+use taypeer_core::{DatabaseId, OperationId};
 use taypeer_storage::{ArchiveCandidate, ArchiveMetadata, ArchiveStore, EncryptedObject};
 use taypeer_sync::{Command, EndpointAddr, ExchangeReport, Node, RelaySetting, Reply};
-use taypeer_trust::{Digest, Invitation, JoinProof, PublicKey};
+use taypeer_trust::{Digest, Invitation, InvitationSecret, JoinProof, PublicKey};
 pub use view::{DatabaseExchange, DeviceExchange, NetworkCancellation, NetworkSnapshot};
 use zeroize::Zeroizing;
 
@@ -363,24 +363,93 @@ impl RuntimeHost {
                 .invalidate(crate::session::LockReason::Manual);
             enrollment.control.wait_closed()?;
         }
-        let mut joins = self.pending_joins()?;
-        if let Some(existing) = joins.get(&request)
-            && (existing.path != pending.path || existing.proof != pending.proof)
+        self.record_join_intent(request, pending, Some(password.as_bytes()))?;
+        self.present_join(code, proof, request, cancellation)
+    }
+
+    /// Present a proof produced by an isolated platform signer after explicit invitation entry.
+    /// Only persistent platform credentials are supported: this host reads the enrolled public
+    /// identity but never acquires an author seed or opens the received document. The request is
+    /// durable before network presentation; retries resume its original internal destination.
+    /// The manager verifies the invitation signature before accepting, and download verifies
+    /// the independently pinned control chain again before publishing the locked working copy.
+    pub fn join_platform_proof(
+        &self,
+        code: InvitationCode,
+        proof: JoinProof,
+        cancellation: &NetworkCancellation,
+    ) -> Result<JoinProgress, RuntimeError> {
+        cancellation.check()?;
+        if !self.profile().is_persistent() {
+            return Err(RuntimeError::Profile(
+                crate::profile::ProfileError::Credentials,
+            ));
+        }
+        if *code.address.id.as_bytes() != *code.invitation.transport.as_bytes()
+            || code.invitation.version != 1
+            || code.invitation.issued_at.checked_add(300) != Some(code.invitation.expires_at)
+            || InvitationSecret::from_bytes(*code.secret).commitment() != code.invitation.token
         {
             return Err(RuntimeError::Protocol);
         }
-        if self.profile().is_linux_lazy() {
-            self.profile()
-                .save_join_request(request, &pending, password.as_bytes())?;
+        proof
+            .verify(&code.invitation, self.context.transport.public())
+            .map_err(|_| RuntimeError::Protocol)?;
+        if self.profile().identity()?.as_ref() != Some(&proof.recipient) {
+            return Err(RuntimeError::Protocol);
         }
-        joins.insert(request, pending);
-        let context = self.context.for_database(&code.invitation.database)?;
-        let local: BTreeMap<_, _> = joins
+        let request = code.invitation.id().map_err(|_| RuntimeError::Protocol)?;
+        let path = self.creation_path(&OperationId::new(format!("join:{request}")))?;
+        let pending = PendingJoin {
+            invitation: code.invitation.clone(),
+            proof,
+            address: code.address.clone(),
+            path,
+        };
+        if let Some(existing) = self.pending_joins()?.get(&request) {
+            if existing.path != pending.path
+                || existing.proof != pending.proof
+                || existing.invitation != pending.invitation
+            {
+                return Err(RuntimeError::Protocol);
+            }
+            self.ensure_join_network()?;
+            return match self.resume_internal_join_cancellable(request, String::new(), cancellation)
+            {
+                // The local intent may have been saved before the first presentation
+                // reached the manager. Retry only this exact signed proof/code; an
+                // already approved receipt resumes without reusing the bearer.
+                Err(RuntimeError::Service(taypeer_services::ServiceError::Trust(
+                    taypeer_trust::Error::Unauthorized,
+                ))) => self.present_join(code, pending.proof, request, cancellation),
+                result => result,
+            };
+        }
+        if let Some(copy) = self
+            .working_copies()?
             .iter()
-            .filter(|(_, pending)| pending.invitation.database == code.invitation.database)
-            .map(|(id, pending)| (*id, pending.clone()))
-            .collect();
-        context.profile.save_state("joins", &local)?;
+            .find(|copy| copy.database == pending.invitation.database)
+        {
+            if copy.path != pending.path || copy.root != pending.invitation.root {
+                return Err(taypeer_services::ServiceError::OperationConflict.into());
+            }
+            self.context.attach(&copy.path)?;
+            self.register_working_copy(&copy.path)?;
+            return Ok(JoinProgress::Received(copy.database.clone()));
+        }
+        if pending
+            .path
+            .try_exists()
+            .map_err(|_| RuntimeError::Transport)?
+        {
+            return Err(storage(taypeer_storage::Error::AlreadyExists));
+        }
+        let proof = pending.proof.clone();
+        self.record_join_intent(request, pending, None)?;
+        self.present_join(code, proof, request, cancellation)
+    }
+
+    fn ensure_join_network(&self) -> Result<(), RuntimeError> {
         let relay = self
             .requested_relay
             .lock()
@@ -388,6 +457,68 @@ impl RuntimeHost {
             .clone()
             .unwrap_or(RelaySetting::Disabled);
         self.start_network(relay)?;
+        Ok(())
+    }
+
+    fn save_pending_joins(
+        &self,
+        joins: &BTreeMap<Digest, PendingJoin>,
+        database: &DatabaseId,
+    ) -> Result<(), RuntimeError> {
+        let context = self.context.for_database(database)?;
+        if !self.profile().is_linux_lazy() {
+            // A persistent profile owns all databases in one state file. Filtering here
+            // would silently discard other invitations when presenting or finishing one.
+            context.profile.save_state("joins", joins)?;
+        } else {
+            let local: BTreeMap<_, _> = joins
+                .iter()
+                .filter(|(_, pending)| &pending.invitation.database == database)
+                .map(|(id, pending)| (*id, pending.clone()))
+                .collect();
+            context.profile.save_state("joins", &local)?;
+        }
+        Ok(())
+    }
+
+    fn record_join_intent(
+        &self,
+        request: Digest,
+        pending: PendingJoin,
+        password: Option<&[u8]>,
+    ) -> Result<(), RuntimeError> {
+        let _state = self
+            .join_state
+            .lock()
+            .map_err(|_| RuntimeError::Transport)?;
+        let mut joins = self.pending_joins()?;
+        if let Some(existing) = joins.get(&request)
+            && (existing.path != pending.path
+                || existing.proof != pending.proof
+                || existing.invitation != pending.invitation)
+        {
+            return Err(RuntimeError::Protocol);
+        }
+        if self.profile().is_linux_lazy() {
+            self.profile().save_join_request(
+                request,
+                &pending,
+                password.ok_or(RuntimeError::Protocol)?,
+            )?;
+        }
+        let database = pending.invitation.database.clone();
+        joins.insert(request, pending);
+        self.save_pending_joins(&joins, &database)
+    }
+
+    fn present_join(
+        &self,
+        code: InvitationCode,
+        proof: JoinProof,
+        request: Digest,
+        cancellation: &NetworkCancellation,
+    ) -> Result<JoinProgress, RuntimeError> {
+        self.ensure_join_network()?;
         let node = self.node_for(&code.invitation.database)?;
         let command = Command::Join {
             invitation: Box::new(code.invitation),
@@ -456,7 +587,7 @@ impl RuntimeHost {
     ) -> Result<JoinProgress, RuntimeError> {
         let password = Zeroizing::new(password);
         cancellation.check()?;
-        let mut joins = self.pending_joins()?;
+        let joins = self.pending_joins()?;
         let active_enrollment = self
             .enrollments
             .lock()
@@ -488,21 +619,8 @@ impl RuntimeHost {
                 .lock()
                 .map_err(|_| RuntimeError::Transport)?
                 .insert(request, enrollment);
-            joins.insert(request, pending.clone());
-            let context = self.context.for_database(&pending.invitation.database)?;
-            let local: BTreeMap<_, _> = joins
-                .iter()
-                .filter(|(_, other)| other.invitation.database == pending.invitation.database)
-                .map(|(id, pending)| (*id, pending.clone()))
-                .collect();
-            context.profile.save_state("joins", &local)?;
-            let relay = self
-                .requested_relay
-                .lock()
-                .map_err(|_| RuntimeError::Transport)?
-                .clone()
-                .unwrap_or(RelaySetting::Disabled);
-            self.start_network(relay)?;
+            self.record_join_intent(request, pending.clone(), Some(password.as_bytes()))?;
+            self.ensure_join_network()?;
             pending
         } else {
             return Err(RuntimeError::Protocol);
@@ -516,7 +634,13 @@ impl RuntimeHost {
         let metadata = match self.runtime.block_on(cancellation.run(async {
             node.request(pending.address.clone(), command)
                 .await
-                .map_err(sync_error)
+                .map_err(|error| match error {
+                    taypeer_sync::Error::Unauthorized => {
+                        taypeer_services::ServiceError::Trust(taypeer_trust::Error::Unauthorized)
+                            .into()
+                    }
+                    other => sync_error(other),
+                })
         }))? {
             Reply::JoinPending(id) if id == request => return Ok(JoinProgress::Pending(id)),
             Reply::JoinRejected => return Ok(JoinProgress::Rejected),
@@ -559,13 +683,16 @@ impl RuntimeHost {
         // Keep the resumable request until both ciphertext and the common catalog
         // are durable. A lost catalog response retries this same registered path.
         self.register_working_copy(&pending.path)?;
+        // Reload under the intent gate: another invitation may have been durably
+        // presented while this download was running. Never publish the stale map
+        // captured before network I/O, and never hold this gate across that I/O.
+        let _state = self
+            .join_state
+            .lock()
+            .map_err(|_| RuntimeError::Transport)?;
+        let mut joins = self.pending_joins()?;
         joins.remove(&request);
-        let local: BTreeMap<_, _> = joins
-            .iter()
-            .filter(|(_, other)| other.invitation.database == pending.invitation.database)
-            .map(|(id, pending)| (*id, pending.clone()))
-            .collect();
-        context.profile.save_state("joins", &local)?;
+        self.save_pending_joins(&joins, &pending.invitation.database)?;
         if self.profile().is_linux_lazy() {
             self.profile().finish_join_request(request)?;
         }
@@ -708,3 +835,6 @@ impl Drop for RuntimeHost {
         self.stop_network();
     }
 }
+
+#[cfg(test)]
+mod platform_tests;
