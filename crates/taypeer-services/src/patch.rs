@@ -4,33 +4,7 @@ use crate::{DatabaseService, EditableAttribute, ServiceError, SessionToken, Sess
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroize;
 
-/// An explicit update; an omitted property preserves the current form value.
-#[derive(Default, Serialize, Deserialize)]
-#[serde(
-    tag = "action",
-    content = "value",
-    rename_all = "snake_case",
-    deny_unknown_fields
-)]
-pub enum FieldUpdate<T> {
-    /// Keep the current value, including the difference between empty and absent.
-    #[default]
-    Keep,
-    /// Store the exact supplied value.
-    Set(T),
-    /// Remove the optional value or empty a collection.
-    Clear,
-}
-
-impl<T> std::fmt::Debug for FieldUpdate<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            Self::Keep => "Keep",
-            Self::Set(_) => "Set([REDACTED])",
-            Self::Clear => "Clear",
-        })
-    }
-}
+pub use taypeer_core::FieldUpdate;
 
 /// Addressed changes to the active draft; omitted fields are never overwritten.
 #[derive(Default, Debug, Serialize, Deserialize)]

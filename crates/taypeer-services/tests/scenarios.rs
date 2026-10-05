@@ -1,8 +1,8 @@
 //! Public synthetic scenarios for the in-memory application boundary.
 
 use taypeer_services::{
-    DEMO_PASSWORD, DemoService, EditableAttribute, EditableEntry, EntryId, GroupId, ServiceError,
-    SessionToken,
+    DEMO_PASSWORD, DemoService, EditableAttribute, EditableEntry, EntryId, EntryPatch, FieldUpdate,
+    GroupId, ServiceError, SessionToken,
 };
 
 const PASSWORD: &str = "PUBLIC-UNSEARCHABLE-PASSWORD-Жук";
@@ -192,7 +192,7 @@ fn save_edit_cancel_and_history_use_real_document_state() {
 }
 
 #[test]
-fn lock_revokes_responses_and_requires_explicit_draft_restoration() {
+fn lock_revokes_responses_and_target_navigation_automatically_resumes_the_form() {
     let (mut service, session, group) = setup();
     let (entry, _) = save_example(&mut service, &session, &group, "Public original");
     let revealed = service.reveal_password(&session, &entry).unwrap();
@@ -231,11 +231,7 @@ fn lock_revokes_responses_and_requires_explicit_draft_restoration() {
             .unwrap_err(),
         ServiceError::DraftNeedsRestore
     );
-    assert_eq!(
-        service.start_edit_entry(&reopened, &entry).unwrap_err(),
-        ServiceError::DraftNeedsRestore
-    );
-    let restored = service.restore_draft(&reopened).unwrap();
+    let restored = service.start_edit_entry(&reopened, &entry).unwrap();
     assert_eq!(restored.session, reopened);
     assert_eq!(restored.value.fields, fields);
     assert!(restored.value.dirty);
@@ -327,22 +323,61 @@ fn rejected_commands_keep_the_previous_saved_and_draft_state() {
 }
 
 #[test]
-fn one_editor_per_database_and_cross_database_identifiers_are_checked() {
+fn multiple_editors_retain_their_input_and_cross_database_identifiers_are_checked() {
     let (mut service, first, first_group) = setup();
     let (first_entry, _) = save_example(&mut service, &first, &first_group, "Public first");
     let (other_entry, _) = save_example(&mut service, &first, &first_group, "Public other");
-    service.start_edit_entry(&first, &first_entry).unwrap();
+    let original = service
+        .start_edit_entry(&first, &first_entry)
+        .unwrap()
+        .value
+        .identity;
+    service
+        .patch_draft(
+            &first,
+            EntryPatch {
+                notes: FieldUpdate::Set("PUBLIC first retained notes".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    service.start_edit_entry(&first, &other_entry).unwrap();
+    service
+        .patch_draft(
+            &first,
+            EntryPatch {
+                notes: FieldUpdate::Set("PUBLIC second retained notes".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    service
+        .start_create_entry(&first, first_group.clone())
+        .unwrap();
+    service
+        .patch_draft(
+            &first,
+            EntryPatch {
+                title: FieldUpdate::Set("PUBLIC third unsaved form".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let resumed = service
+        .start_edit_entry(&first, &first_entry)
+        .unwrap()
+        .value;
+    assert_eq!(resumed.identity.draft, original.draft);
     assert_eq!(
-        service.start_edit_entry(&first, &other_entry).unwrap_err(),
-        ServiceError::EditorAlreadyOpen
+        resumed.fields.notes.as_deref(),
+        Some("PUBLIC first retained notes")
     );
+    assert_eq!(service.drafts(&first).unwrap().value.len(), 3);
     assert_eq!(
-        service
-            .start_create_entry(&first, first_group.clone())
-            .unwrap_err(),
-        ServiceError::EditorAlreadyOpen
+        service.history(&first, &first_entry).unwrap().value.len(),
+        1
     );
-    assert!(service.start_edit_entry(&first, &first_entry).is_ok());
+    assert_eq!(service.entries(&first, None, "").unwrap().value.len(), 2);
     let second_database = service.create_database("Public second database").unwrap();
     let second = service.unlock(&second_database, DEMO_PASSWORD).unwrap();
     let second_group = service
@@ -356,6 +391,10 @@ fn one_editor_per_database_and_cross_database_identifiers_are_checked() {
         .value
         .id;
     service.start_create_entry(&second, second_group).unwrap();
+    assert_eq!(
+        service.resume_draft(&second, &original.draft).unwrap_err(),
+        ServiceError::NoDraft
+    );
     assert!(service.draft(&first).unwrap().value.is_some());
     assert!(service.draft(&second).unwrap().value.is_some());
     assert_eq!(
@@ -478,7 +517,7 @@ fn search_and_masked_views_exclude_secrets_and_respect_search_scope() {
     assert!(!debug.contains(PROTECTED));
     let results = service.search_unlocked("русский").unwrap();
     assert_eq!(results.len(), 1);
-    assert_eq!(results[0].value.group_name, "Examples");
+    assert_eq!(results[0].value.group_name.as_deref(), Some("Examples"));
     service.lock(&session).unwrap();
     assert!(service.search_unlocked("русский").unwrap().is_empty());
 }
@@ -651,13 +690,11 @@ fn global_search_retains_each_source_and_excludes_independently_locked_databases
     assert!(
         results
             .iter()
-            .any(|row| row.session == first && row.value.group_name == "Examples")
+            .any(|row| row.session == first && row.value.group_name.as_deref() == Some("Examples"))
     );
-    assert!(
-        results
-            .iter()
-            .any(|row| row.session == second && row.value.group_name == "Second group")
-    );
+    assert!(results.iter().any(
+        |row| row.session == second && row.value.group_name.as_deref() == Some("Second group")
+    ));
     service.lock(&first).unwrap();
     let remaining = service.search_unlocked("shared").unwrap();
     assert_eq!(remaining.len(), 1);

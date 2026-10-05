@@ -385,11 +385,19 @@ impl DatabaseService {
         &mut self,
         session: &SessionToken,
     ) -> Result<SessionValue<ApplyReport>, ServiceError> {
+        self.reconcile_uncertain(session)?;
         let state = self.checked_mut(session)?;
         let document = state.document().clone();
         let blobs = state.blobs()?.clone();
         let managed = state.managed.as_mut().ok_or(ServiceError::InvalidContext)?;
-        let (document, blobs, report) = managed.apply(&document, &blobs)?;
+        let result = managed.apply(&document, &blobs);
+        if matches!(
+            result,
+            Err(ServiceError::Storage(StorageError::CommitUncertain))
+        ) {
+            state.write_uncertain = true;
+        }
+        let (document, blobs, report) = result?;
         state.document = Some(document);
         state.blobs = Some(blobs);
         Ok(stamped(session, report))

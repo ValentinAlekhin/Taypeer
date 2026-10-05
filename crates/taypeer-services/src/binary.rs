@@ -64,9 +64,6 @@ impl DatabaseService {
         operation: &OperationId,
     ) -> Result<SessionValue<Vec<FaviconResult>>, ServiceError> {
         let state = self.checked_mut(session)?;
-        if state.draft.is_some() {
-            return Err(ServiceError::EditorAlreadyOpen);
-        }
         let groups = state.document().groups()?;
         if !groups.iter().any(|g| &g.id == group) {
             return Err(ServiceError::NotFound);
@@ -144,13 +141,21 @@ impl DatabaseService {
         let preview = match target {
             BinaryTarget::Draft => {
                 let draft = state
-                    .draft
+                    .drafts
+                    .entry
                     .as_ref()
                     .ok_or(ServiceError::NoDraft)?
                     .document()?;
                 return Ok(stamped(session, form_view(draft.fields(), state.blobs()?)));
             }
-            BinaryTarget::Entry(id) => SourcePreview::Entry(Box::new(state.document().entry(id)?)),
+            BinaryTarget::Entry(id) => {
+                let snapshot = state.document().entry(id)?;
+                let fields = snapshot
+                    .fields
+                    .as_ref()
+                    .ok_or(ServiceError::InvalidDocument)?;
+                return Ok(stamped(session, form_view(fields, state.blobs()?)));
+            }
             BinaryTarget::Group(id) => {
                 state
                     .document()
@@ -164,7 +169,15 @@ impl DatabaseService {
                     .into_iter()
                     .find(|g| g.current && g.address.object == ObjectId::Group(id.clone()))
                     .ok_or(ServiceError::NotFound)?;
-                SourcePreview::Group(group)
+                return Ok(stamped(
+                    session,
+                    BinaryView {
+                        attachments: Vec::new(),
+                        icons: vec![group.icon],
+                        foreground: Vec::new(),
+                        background: Vec::new(),
+                    },
+                ));
             }
             BinaryTarget::Revision { entry, revision } => SourcePreview::Entry(Box::new(
                 state
@@ -215,9 +228,6 @@ impl DatabaseService {
         let mut blobs = state.blobs()?.clone();
         match &request.target {
             BinaryTarget::Group(group) => {
-                if state.draft.is_some() {
-                    return Err(ServiceError::EditorAlreadyOpen);
-                }
                 let BinaryEdit::Icon(input) = &request.edit else {
                     return Err(ServiceError::InvalidInput);
                 };
@@ -227,15 +237,6 @@ impl DatabaseService {
                     .iter()
                     .find(|g| &g.id == group)
                     .ok_or(ServiceError::NotFound)?;
-                if request.review.is_none()
-                    && state.document().tree()?.iter().any(|node| {
-                        node.current
-                            && node.address.object == ObjectId::Group(group.clone())
-                            && node.icons.len() != 1
-                    })
-                {
-                    return Err(ServiceError::Conflict);
-                }
                 let icon = acquire_icon(&mut blobs, input, None)?;
                 let mut candidate = state.document().clone();
                 candidate.set_group_icon(
@@ -249,9 +250,6 @@ impl DatabaseService {
                 state.commit_blobs(candidate, blobs)?;
             }
             BinaryTarget::Entry(entry) => {
-                if state.draft.is_some() {
-                    return Err(ServiceError::EditorAlreadyOpen);
-                }
                 if request.review.is_some() {
                     return Err(ServiceError::InvalidInput);
                 }
@@ -293,10 +291,10 @@ impl DatabaseService {
                     &request.edit,
                     state.policy(),
                 )?;
-                draft.record_binary(operation.clone(), intent);
+                draft.record_binary(operation.clone(), intent)?;
                 state.persist_binary_draft(&draft, &blobs)?;
                 state.blobs = Some(blobs);
-                state.draft = Some(draft);
+                state.drafts.entry = Some(draft);
             }
             _ => return Err(ServiceError::InvalidInput),
         }
@@ -340,21 +338,15 @@ impl DatabaseService {
         let mut temp = tempfile::NamedTempFile::new_in(parent).map_err(StorageError::from)?;
         std::io::copy(&mut state.blobs()?.reader(blob)?, &mut temp).map_err(StorageError::from)?;
         temp.flush().map_err(StorageError::from)?;
-        temp.as_file().sync_all().map_err(StorageError::from)?;
-        if overwrite {
-            temp.persist(destination).map_err(|_| StorageError::Io)?;
-        } else {
-            temp.persist_noclobber(destination).map_err(|e| {
-                if e.error.kind() == std::io::ErrorKind::AlreadyExists {
-                    StorageError::AlreadyExists
-                } else {
-                    StorageError::Io
-                }
-            })?;
-        }
-        File::open(parent)
-            .and_then(|dir| dir.sync_all())
-            .map_err(|_| StorageError::CommitUncertain)?;
+        taypeer_storage::publish_file(
+            temp,
+            destination,
+            if overwrite {
+                taypeer_storage::PublicationMode::Replace
+            } else {
+                taypeer_storage::PublicationMode::Create
+            },
+        )?;
         Ok(stamped(session, ()))
     }
 
@@ -380,11 +372,7 @@ impl DatabaseService {
                 attachment_limit: state.policy().total_attachment_bytes(),
                 over_limit: attachment_bytes > state.policy().total_attachment_bytes(),
                 retained_bytes: blobs.unique_bytes(&all),
-                draft_bytes: state
-                    .draft
-                    .as_ref()
-                    .map(|d| blobs.unique_bytes(&d.binary_references()))
-                    .unwrap_or(0),
+                draft_bytes: blobs.unique_bytes(&state.drafts.binary_references()),
                 file_bytes,
                 missing: refs
                     .retained

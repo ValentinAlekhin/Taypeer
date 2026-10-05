@@ -1,7 +1,9 @@
 //! Synthetic end-to-end scenarios against actual encrypted files and restarted services.
 
 use std::fs;
-use taypeer_services::{DatabaseService, EditableEntry, ServiceError, StorageError};
+use taypeer_services::{
+    DatabaseService, EditableEntry, EntryPatch, FieldUpdate, ServiceError, StorageError,
+};
 
 const PASSWORD: &[u8] = b"  PUBLIC master password  ";
 
@@ -327,14 +329,16 @@ fn lifecycle_confirmation_is_durable_masked_and_retryable_after_storage_failure(
         )
         .unwrap()
         .value;
-    service.start_edit_entry(&session, &entry).unwrap();
-    assert_eq!(
-        service
-            .confirm_lifecycle(&session, &prepared, &OperationId::new("PUBLIC blocked"))
-            .unwrap_err(),
-        ServiceError::EditorAlreadyOpen
-    );
-    service.cancel_draft(&session).unwrap();
+    service.start_create_entry_ungrouped(&session).unwrap();
+    service
+        .patch_draft(
+            &session,
+            EntryPatch {
+                title: FieldUpdate::Set("PUBLIC independent causal form".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
     let before = fs::read(&path).unwrap();
     fs::rename(&path, &displaced).unwrap();
     fs::create_dir(&path).unwrap();
@@ -353,8 +357,19 @@ fn lifecycle_confirmation_is_durable_masked_and_retryable_after_storage_failure(
     service
         .confirm_lifecycle(&session, &prepared, &operation)
         .unwrap();
+    assert_eq!(
+        service.editor_view(&session).unwrap().fields.title,
+        "PUBLIC independent causal form"
+    );
+    assert!(service.editor_view(&session).unwrap().dirty);
     assert!(service.view_entry(&session, &entry).is_err());
-    assert!(service.history(&session, &entry).is_err());
+    let retained_history = service.history(&session, &entry).unwrap().value;
+    assert_eq!(retained_history.len(), 1);
+    assert!(
+        !serde_json::to_string(&retained_history)
+            .unwrap()
+            .contains("PUBLIC_HIDDEN_LIFECYCLE")
+    );
     assert!(service.reveal_password(&session, &entry).is_err());
     let address = prepared
         .affected

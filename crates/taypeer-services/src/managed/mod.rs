@@ -308,7 +308,11 @@ impl ManagedState {
         self.snapshot = snapshot;
         Ok(())
     }
-    pub fn save_draft(&self, draft: &DraftState, blobs: &BlobStore) -> Result<(), ServiceError> {
+    pub fn save_draft(
+        &self,
+        draft: &DraftCollection,
+        blobs: &BlobStore,
+    ) -> Result<(), ServiceError> {
         let open = self.open.as_ref().ok_or(ServiceError::Locked)?;
         let Some(author) = &open.author else {
             return Err(ServiceError::ReadOnly);
@@ -332,13 +336,44 @@ impl ManagedState {
         self.port.save_draft(&object)?;
         Ok(())
     }
-    fn load_draft(&self, blobs: &mut BlobStore) -> Result<Option<DraftState>, ServiceError> {
+
+    pub(super) fn reload_confirmed(&mut self) -> Result<(Document, BlobStore), ServiceError> {
+        self.check_session()?;
+        self.check_edit_permission()?;
+        let snapshot = self.port.snapshot()?;
+        let checkpoint = snapshot.object(snapshot.metadata().manifest.body.checkpoint)?;
+        let open = self.open.as_ref().ok_or(ServiceError::Locked)?;
+        let (metadata, mut document) = codec::read_checkpoint(
+            &checkpoint,
+            &open.metadata.key(checkpoint.envelope().epoch)?,
+            snapshot.chain(),
+        )?;
+        let author = open.author.as_ref().ok_or(ServiceError::ReadOnly)?;
+        if checkpoint.envelope().author != author.device_id() {
+            return Err(ServiceError::InvalidContext);
+        }
+        document.set_writer(*author.device_id().as_bytes());
+        let mut blobs = BlobStore::with_temporary_storage(snapshot.temporary_storage())?;
+        apply::load_blobs(&snapshot, &metadata, &document, &mut blobs)?;
+        let header = checkpoint.password_header()?;
+        let open = self.open.as_mut().ok_or(ServiceError::Locked)?;
+        open.metadata = metadata;
+        open.header = header;
+        open.control = checkpoint.envelope().control;
+        self.baseline = snapshot.metadata().manifest.body.baseline;
+        self.accepted = checkpoint.descriptor().digest;
+        self.snapshot = snapshot;
+        Ok((document, blobs))
+    }
+    fn load_draft(&self, blobs: &mut BlobStore) -> Result<DraftCollection, ServiceError> {
         let Some(object) = self.port.load_draft(self.snapshot.chain())? else {
-            return Ok(None);
+            return Ok(DraftCollection::new(
+                self.snapshot.chain().head().database.clone(),
+            ));
         };
         let open = self.open.as_ref().ok_or(ServiceError::Locked)?;
         let (clear, staged) = object.unlock_bundle(&open.metadata.key(object.envelope().epoch)?)?;
-        let (working_copy, draft): (Digest, DraftState) =
+        let (working_copy, draft): (Digest, DraftCollection) =
             serde_json::from_slice(&clear).map_err(|_| ServiceError::InvalidDocument)?;
         if working_copy != self.port.working_copy()
             || draft
@@ -348,8 +383,9 @@ impl ManagedState {
         {
             return Err(ServiceError::InvalidContext);
         }
+        draft.validate(&self.snapshot.chain().head().database)?;
         blobs.import(&staged)?;
-        Ok(Some(draft))
+        Ok(draft)
     }
 }
 
@@ -608,17 +644,15 @@ impl DatabaseService {
         };
         managed.load_required_blobs(&document, &mut blobs)?;
         // An unsupported writer must not decode/rewrite a possibly newer local draft.
-        let draft = if compatibility.write.is_supported() {
-            match managed.load_draft(&mut blobs)? {
-                Some(draft) if draft.confirmed(&document)? => {
-                    managed.port.discard_draft()?;
-                    None
-                }
-                other => other,
-            }
+        let mut draft = if compatibility.write.is_supported() {
+            managed.load_draft(&mut blobs)?
         } else {
-            None
+            DraftCollection::new(database.clone())
         };
+        draft.reconcile(&document)?;
+        if draft.is_empty() && compatibility.write.is_supported() {
+            managed.port.discard_draft()?;
+        }
         let label = managed
             .port
             .path()
@@ -637,8 +671,9 @@ impl DatabaseService {
                 key: None,
                 generation,
                 unlocked: true,
-                draft,
+                drafts: draft,
                 draft_deferred: !compatibility.write.is_supported(),
+                draft_maintenance_pending: false,
                 write_uncertain: false,
             },
         );
@@ -647,6 +682,19 @@ impl DatabaseService {
             generation,
         })
     }
+    /// Authenticated worker authority last accepted into this unlocked session.
+    /// This reads the retained snapshot and performs no coordinator I/O.
+    pub fn session_authority(&self, session: &SessionToken) -> Result<ControlChain, ServiceError> {
+        Ok(self
+            .checked(session)?
+            .managed
+            .as_ref()
+            .ok_or(ServiceError::InvalidContext)?
+            .snapshot
+            .chain()
+            .clone())
+    }
+
     /// Shared attachment/KDF settings authenticated by the current manager's control.
     pub fn database_policy(
         &self,

@@ -35,15 +35,15 @@ pub struct GroupSummary {
 pub struct EntrySummary {
     /// Stable entry identifier.
     pub id: EntryId,
-    /// Owning group, absent when placement needs resolution.
+    /// Selected owning group, absent for an ungrouped entry.
     pub group_id: Option<GroupId>,
-    /// Entry label; empty if unresolved conflicts prevent a unique view.
+    /// Selected exact entry label.
     pub title: String,
     /// Ordinary username, if present.
     pub username: Option<String>,
     /// Ordinary URL, if present.
     pub url: Option<String>,
-    /// Whether the row requires conflict resolution before editing.
+    /// Whether original concurrent alternatives are retained.
     pub has_conflicts: bool,
     /// Ordinary notes for an explicitly enabled table column.
     #[serde(default)]
@@ -62,7 +62,7 @@ pub struct SearchResult {
     /// Public database label.
     pub database_name: String,
     /// Source group label.
-    pub group_name: String,
+    pub group_name: Option<String>,
     /// Matching entry without secret values.
     pub entry: EntrySummary,
 }
@@ -116,10 +116,12 @@ impl fmt::Debug for EditableAttribute {
 /// The single local form currently associated with a database.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct DraftView {
+    /// Exact local form identity and input revision.
+    pub identity: crate::DraftIdentity,
     /// Existing entry identifier; None denotes a not-yet-saved entry.
     pub entry_id: Option<EntryId>,
     /// Group in which the entry is being edited or created.
-    pub group_id: GroupId,
+    pub group_id: Option<GroupId>,
     /// Form fields, including explicitly edited secrets.
     pub fields: EditableEntry,
     /// Whether the form differs from its starting state.
@@ -135,7 +137,7 @@ pub struct PendingDraftSummary {
     /// Existing entry, or None for a not-yet-saved entry.
     pub entry_id: Option<EntryId>,
     /// Group containing the interrupted form.
-    pub group_id: GroupId,
+    pub group_id: Option<GroupId>,
 }
 
 /// An attribute in a read-only view; protected values remain absent.
@@ -158,9 +160,9 @@ pub struct AttributeView {
 pub struct EntryView {
     /// Stable entry identifier.
     pub id: EntryId,
-    /// Owning group, absent when placement needs resolution.
+    /// Selected owning group, absent for an ungrouped entry.
     pub group_id: Option<GroupId>,
-    /// Entry label; empty for an ambiguous snapshot.
+    /// Selected exact entry label.
     pub title: String,
     /// Optional ordinary username.
     pub username: Option<String>,
@@ -309,10 +311,7 @@ pub(super) fn entry_view(entry: EntrySnapshot) -> EntryView {
             .collect(),
         attachments: fields.attachments.into_values().collect(),
         appearance: fields.appearance,
-        has_password: fields
-            .password
-            .as_ref()
-            .is_some_and(|value| !value.is_empty()),
+        has_password: fields.password.is_some(),
         has_conflicts,
         created_at: entry.created_at,
         modified_at: entry.modified_at,

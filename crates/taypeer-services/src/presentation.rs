@@ -13,7 +13,7 @@ pub struct DatabaseInfo {
     pub name: String,
     /// Exact optional descriptive text.
     pub description: Option<String>,
-    /// Concurrent descriptive alternatives require explicit resolution.
+    /// Retained concurrent descriptive alternatives, without obstructing ordinary use.
     pub metadata_conflict: bool,
     /// Whether the authenticated local author may write.
     pub writable: bool,
@@ -23,10 +23,12 @@ pub struct DatabaseInfo {
 /// A masked editor projection; secrets are requested separately.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct EditorView {
+    /// Exact local form identity and input revision.
+    pub identity: crate::DraftIdentity,
     /// Existing target, absent for creation.
     pub entry: Option<EntryId>,
     /// Owning group.
-    pub group: GroupId,
+    pub group: Option<GroupId>,
     /// Ordinary form values; password and protected attribute values are masked.
     pub fields: EditableEntry,
     /// Distinguishes an absent password from an explicitly empty password.
@@ -75,7 +77,7 @@ pub struct GroupForm {
 pub struct GroupInfo {
     /// Number of active direct entries, independent of the current UI search.
     pub entry_count: usize,
-    /// Concurrent description alternatives require explicit resolution.
+    /// Retained concurrent description alternatives.
     pub description_conflict: bool,
     /// Ordinary group summary.
     pub group: GroupSummary,
@@ -113,14 +115,17 @@ impl DatabaseService {
         operation: &OperationId,
     ) -> Result<(), ServiceError> {
         let fingerprint = commands::fingerprint(&(&name, &description))?;
+        let now = (self.clock)();
         self.checked_mut(session)?.command(
             operation,
             "database_info",
             fingerprint,
-            |doc, receipt| Ok(doc.update_metadata_command(name, description, Some(receipt))?),
+            |doc, receipt| {
+                Ok(doc.update_metadata_at_command(name, description, now, Some(receipt))?)
+            },
         )
     }
-    /// Read descriptions without choosing conflicting alternatives.
+    /// Read selected descriptions while retaining original alternatives in history.
     pub fn group_info(&self, session: &SessionToken) -> Result<Vec<GroupInfo>, ServiceError> {
         let doc = self.checked(session)?.document();
         let mut counts = std::collections::BTreeMap::<GroupId, usize>::new();
@@ -157,34 +162,46 @@ impl DatabaseService {
         operation: &OperationId,
     ) -> Result<GroupId, ServiceError> {
         let now = (self.clock)();
-        let intent = serde_json::to_value(&form).map_err(|_| ServiceError::InvalidInput)?;
+        let intent = commands::fingerprint(&form)?;
         let state = self.checked_mut(session)?;
-        if state.draft.is_some() {
-            return Err(ServiceError::EditorAlreadyOpen);
+        if let Some(id) = form.icon.blob()
+            && state.blobs()?.length(id).is_none()
+        {
+            return Err(ServiceError::NotFound);
         }
-        state.change(|doc| {
-            if let Some(id) = doc.binary_receipt(operation, &intent)? {
-                return match id.as_slice() {
-                    [ObjectId::Group(id)] => Ok(id.clone()),
-                    _ => Err(ServiceError::InvalidContext),
+        let group: taypeer_core::Group =
+            state.command(operation, "group_form", intent, |doc, receipt| {
+                let group = match form.id {
+                    Some(id) => doc.update_group_metadata_command(
+                        &id,
+                        &taypeer_core::GroupMetadataPatch {
+                            name: FieldUpdate::Set(form.name),
+                            description: form
+                                .description
+                                .map_or(FieldUpdate::Clear, FieldUpdate::Set),
+                            icon: FieldUpdate::Set(form.icon),
+                        },
+                        &doc.heads(),
+                        now,
+                        Some(receipt),
+                    )?,
+                    None => doc.create_group_metadata_command(
+                        form.name,
+                        form.description,
+                        form.icon,
+                        form.parent,
+                        now,
+                        Some(receipt),
+                    )?,
                 };
-            }
-            let id = match form.id {
-                Some(id) => {
-                    doc.rename_group(&id, form.name, now)?;
-                    id
-                }
-                None => doc.create_group(form.name, form.parent, now)?.id,
-            };
-            doc.set_group_description(&id, form.description, now)?;
-            doc.set_group_icon(&id, form.icon, None, operation, &intent, now)?;
-            Ok(id)
-        })
+                Ok(group)
+            })?;
+        Ok(group.id)
     }
     /// Project the active form with secret values erased before it crosses IPC.
     pub fn editor_view(&self, session: &SessionToken) -> Result<EditorView, ServiceError> {
         let state = self.checked(session)?;
-        let draft = state.draft.as_ref().ok_or(ServiceError::NoDraft)?;
+        let draft = state.drafts.entry.as_ref().ok_or(ServiceError::NoDraft)?;
         let document = draft.document()?;
         let mut view = draft.view();
         let has_password = view.fields.password.is_some();
@@ -196,6 +213,7 @@ impl DatabaseService {
             }
         }
         Ok(EditorView {
+            identity: view.identity,
             entry: view.entry_id,
             group: view.group_id,
             fields: view.fields,
@@ -216,7 +234,8 @@ impl DatabaseService {
     ) -> Result<SecretValue, ServiceError> {
         let state = self.checked(session)?;
         let fields = state
-            .draft
+            .drafts
+            .entry
             .as_ref()
             .ok_or(ServiceError::NoDraft)?
             .document()?

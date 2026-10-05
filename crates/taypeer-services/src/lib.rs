@@ -3,7 +3,6 @@
 //! Lock releases file-backed plaintext and keys; physical erasure of Automerge is not proven.
 
 use std::collections::BTreeMap;
-use std::fmt;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use std::path::Path;
@@ -40,9 +39,15 @@ pub use taypeer_document::{
 
 mod commands;
 mod draft;
+mod editing;
 use draft::{DraftKind, DraftState};
+use editing::DraftCollection;
+pub use editing::{
+    AUTOSAVE_DELAY_MILLIS, DraftIdentity, DraftRevision, DraftSaveOutcome, DraftSummary,
+    DraftTarget, MetadataDraftView,
+};
 
-pub use taypeer_core::{AttributeId, DatabaseId, EntryId, GroupId, RevisionId};
+pub use taypeer_core::{AttributeId, DatabaseId, DraftId, EntryId, GroupId, RevisionId};
 
 /// Public input accepted by the synthetic unlock screen; never use a real password.
 pub const DEMO_PASSWORD: &str = "SYNTHETIC-ONLY-Жук-42";
@@ -74,87 +79,80 @@ pub use views::{
 use views::{attribute_value, entry_summary, entry_view, group_summary, matches_query, password};
 
 /// Structured error categories containing no form values or credentials.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, thiserror::Error,
+)]
 pub enum ServiceError {
     /// Requested database, group, entry, attribute, or revision does not exist.
+    #[error("the requested object does not exist")]
     NotFound,
     /// The operation ID is already bound to another exact request.
+    #[error("the operation ID belongs to another request")]
     OperationConflict,
     /// The selected database is locked.
+    #[error("the database is locked")]
     Locked,
     /// A request marker belongs to an earlier session.
+    #[error("the request belongs to an expired session")]
     ExpiredSession,
     /// The public demonstration password did not match.
+    #[error("the public demonstration password did not match")]
     IncorrectDemoPassword,
     /// A required name is empty or another domain validation rule failed.
+    #[error("the input does not satisfy the domain rules")]
     InvalidInput,
     /// A different entry already owns this database's editor.
+    #[error("another entry already has an open editor")]
     EditorAlreadyOpen,
     /// No draft is available for the requested command.
+    #[error("no entry draft is open")]
     NoDraft,
     /// An interrupted editor must explicitly be restored or discarded first.
+    #[error("the interrupted draft must be restored or discarded")]
     DraftNeedsRestore,
     /// A conflicted document cannot supply a unique editable or revealed value.
+    #[error("the entry has unresolved conflicts")]
     Conflict,
     /// A malformed or unrecognized draft context was rejected.
+    #[error("the draft context is invalid")]
     InvalidContext,
     /// The session counter cannot allocate another generation.
+    #[error("no further session generation is available")]
     SessionExhausted,
     /// The in-memory document failed validation.
+    #[error("the document is invalid")]
     InvalidDocument,
     /// New attachment contents exceed the current database quota.
+    #[error("the attachment limit is exceeded")]
     AttachmentLimit,
     /// A copied or revoked profile has read/export access but no current author permission.
+    #[error("the device has read-only access")]
     ReadOnly,
     /// This build cannot safely read the authenticated schema requirements.
+    #[error("update Taypeer to read this database")]
     ReadCompatibility,
     /// This build may read the document but cannot safely change its schema semantics.
+    #[error("update Taypeer to change this database")]
     WriteCompatibility,
     /// A signature or authenticated device binding is not authorized.
+    #[error("the device is not authorized")]
     Unauthorized,
     /// Native author credential storage is unavailable or denied access.
+    #[error("native credential storage is unavailable")]
     Credentials,
     /// New authority is known but its required encrypted baseline/content is still in transit.
+    #[error("required encrypted data has not arrived")]
     AwaitingData,
     /// The signed authority chain rejected an operation.
+    #[error("signed authority verification failed")]
     Trust(taypeer_trust::Error),
     /// An explicit image download or validation failed.
+    #[error("the image could not be loaded")]
     Icon(icons::IconError),
     /// An encrypted file operation failed without exposing paths or secret content.
+    #[error("the encrypted file operation failed")]
     Storage(taypeer_storage::Error),
 }
-
-impl fmt::Display for ServiceError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::OperationConflict => "the operation ID belongs to another request",
-            Self::NotFound => "the requested object does not exist",
-            Self::Locked => "the database is locked",
-            Self::ExpiredSession => "the request belongs to an expired session",
-            Self::IncorrectDemoPassword => "the public demonstration password did not match",
-            Self::InvalidInput => "the input does not satisfy the domain rules",
-            Self::EditorAlreadyOpen => "another entry already has an open editor",
-            Self::NoDraft => "no entry draft is open",
-            Self::DraftNeedsRestore => "the interrupted draft must be restored or discarded",
-            Self::Conflict => "the entry has unresolved conflicts",
-            Self::InvalidContext => "the draft context is invalid",
-            Self::SessionExhausted => "no further session generation is available",
-            Self::InvalidDocument => "the document is invalid",
-            Self::AttachmentLimit => "the attachment limit is exceeded",
-            Self::ReadOnly => "the device has read-only access",
-            Self::ReadCompatibility => "update Taypeer to read this database",
-            Self::WriteCompatibility => "update Taypeer to change this database",
-            Self::Unauthorized => "the device is not authorized",
-            Self::Credentials => "native credential storage is unavailable",
-            Self::AwaitingData => "required encrypted data has not arrived",
-            Self::Trust(_) => "signed authority verification failed",
-            Self::Icon(_) => "the image could not be loaded",
-            Self::Storage(_) => "the encrypted file operation failed",
-        })
-    }
-}
-
-impl std::error::Error for ServiceError {}
 
 impl From<taypeer_document::Error> for ServiceError {
     fn from(error: taypeer_document::Error) -> Self {
@@ -181,9 +179,10 @@ struct DatabaseState {
     generation: u64,
     unlocked: bool,
     // Retained only in process memory when locked; this is not an encrypted draft.
-    draft: Option<DraftState>,
+    drafts: DraftCollection,
     // The on-disk draft was deliberately not decoded by an incompatible writer.
     draft_deferred: bool,
+    draft_maintenance_pending: bool,
     write_uncertain: bool,
 }
 
@@ -291,8 +290,9 @@ impl DatabaseService {
                 key: None,
                 generation: 0,
                 unlocked: false,
-                draft: None,
+                drafts: DraftCollection::new(id.clone()),
                 draft_deferred: false,
+                draft_maintenance_pending: false,
                 write_uncertain: false,
             },
         );
@@ -501,9 +501,8 @@ impl DatabaseService {
                 let group_name = entry
                     .group_id
                     .as_ref()
-                    .and_then(|id| groups.get(id))
-                    .cloned()
-                    .ok_or(ServiceError::InvalidDocument)?;
+                    .map(|id| groups.get(id).cloned().ok_or(ServiceError::InvalidDocument))
+                    .transpose()?;
                 results.push(stamped(
                     &session,
                     SearchResult {
@@ -538,43 +537,57 @@ impl DatabaseService {
         ))
     }
 
-    /// Start a local unsaved entry form; another editor must first be saved or cancelled.
+    /// Start a local unsaved entry form, parking any changed previous editor.
     pub fn start_create_entry(
         &mut self,
         session: &SessionToken,
         group: GroupId,
     ) -> Result<SessionValue<DraftView>, ServiceError> {
+        self.start_create_entry_in(session, Some(group))
+    }
+
+    /// Begin a local form without requiring an existing group.
+    pub fn start_create_entry_ungrouped(
+        &mut self,
+        session: &SessionToken,
+    ) -> Result<SessionValue<DraftView>, ServiceError> {
+        self.start_create_entry_in(session, None)
+    }
+
+    /// Begin a new local form at an optional destination, parking the previous editor.
+    pub fn start_create_entry_in(
+        &mut self,
+        session: &SessionToken,
+        group: Option<GroupId>,
+    ) -> Result<SessionValue<DraftView>, ServiceError> {
         let state = self.checked_mut(session)?;
-        if state.draft.is_some() {
-            return Err(editor_open_error(state));
-        }
-        let document = state.document().begin_create_entry(group)?;
-        let draft = DraftState::new(document, DraftKind::New);
+        let document = state.document().begin_create_entry_in(group)?;
+        let draft = DraftState::new(document, DraftKind::New)?;
         let view = draft.view();
-        state.draft = Some(draft);
+        state.drafts.activate_entry(draft);
         Ok(stamped(session, view))
     }
 
-    /// Open an explicit editor, or return the already open editor for the same entry.
+    /// Open an editor and automatically continue the retained form for the same entry.
     pub fn start_edit_entry(
         &mut self,
         session: &SessionToken,
         id: &EntryId,
     ) -> Result<SessionValue<DraftView>, ServiceError> {
         let state = self.checked_mut(session)?;
-        if let Some(draft) = &state.draft {
-            if draft.needs_restore() {
-                return Err(ServiceError::DraftNeedsRestore);
-            }
-            if draft.entry_id() == Some(id) {
-                return Ok(stamped(session, draft.view()));
-            }
-            return Err(ServiceError::EditorAlreadyOpen);
+        if let Some(draft) = &mut state.drafts.entry
+            && draft.entry_id() == Some(id)
+        {
+            draft.resume();
+            return Ok(stamped(session, draft.view()));
         }
-        let document = state.document().begin_edit_entry(id)?;
-        let draft = DraftState::new(document, DraftKind::Existing);
+        let mut draft = match state.drafts.take_entry_for(id) {
+            Some(draft) => draft,
+            None => DraftState::new(state.document().begin_edit_entry(id)?, DraftKind::Existing)?,
+        };
+        draft.resume();
         let view = draft.view();
-        state.draft = Some(draft);
+        state.drafts.activate_entry(draft);
         Ok(stamped(session, view))
     }
 
@@ -586,7 +599,8 @@ impl DatabaseService {
         Ok(stamped(
             session,
             self.checked(session)?
-                .draft
+                .drafts
+                .entry
                 .as_ref()
                 .filter(|draft| !draft.needs_restore())
                 .map(DraftState::view),
@@ -600,7 +614,8 @@ impl DatabaseService {
     ) -> Result<SessionValue<Option<PendingDraftSummary>>, ServiceError> {
         let pending = self
             .checked(session)?
-            .draft
+            .drafts
+            .entry
             .as_ref()
             .filter(|draft| draft.needs_restore())
             .map(DraftState::pending_summary);
@@ -614,7 +629,8 @@ impl DatabaseService {
     ) -> Result<SessionValue<DraftView>, ServiceError> {
         let draft = self
             .checked_mut(session)?
-            .draft
+            .drafts
+            .entry
             .as_mut()
             .ok_or(ServiceError::NoDraft)?;
         Ok(stamped(session, draft.restore()?))
@@ -629,7 +645,7 @@ impl DatabaseService {
         let state = self.checked_mut(session)?;
         let mut draft = state.draft_for_edit()?;
         let view = draft.update(fields)?;
-        state.draft = Some(draft);
+        state.drafts.entry = Some(draft);
         Ok(stamped(session, view))
     }
 
@@ -643,7 +659,7 @@ impl DatabaseService {
         let state = self.checked_mut(session)?;
         let mut draft = state.draft_for_edit()?;
         let view = draft.set_expiry_input(input)?;
-        state.draft = Some(draft);
+        state.drafts.entry = Some(draft);
         Ok(stamped(session, view))
     }
 
@@ -656,7 +672,7 @@ impl DatabaseService {
         let now = (self.clock)();
         let state = self.checked_mut(session)?;
         if let Some(id) = state.command_result::<EntryId>(operation, "save_draft", None)? {
-            if let Some(draft) = &state.draft
+            if let Some(draft) = &state.drafts.entry
                 && draft
                     .attempt
                     .as_ref()
@@ -669,7 +685,7 @@ impl DatabaseService {
             }
             return Ok(stamped(session, id));
         }
-        let draft = state.draft.as_ref().ok_or(ServiceError::NoDraft)?;
+        let draft = state.drafts.entry.as_ref().ok_or(ServiceError::NoDraft)?;
         if draft.has_binary_operation(operation) {
             return Err(ServiceError::OperationConflict);
         }
@@ -705,7 +721,7 @@ impl DatabaseService {
         let mut bound = draft.clone();
         bound.attempt = Some((operation.clone(), fingerprint));
         state.persist_binary_draft(&bound, state.blobs()?)?;
-        state.draft = Some(bound);
+        state.drafts.entry = Some(bound);
         state.commit(candidate)?;
         state.clear_saved_draft()?;
         Ok(stamped(session, id))
@@ -716,18 +732,15 @@ impl DatabaseService {
         &mut self,
         session: &SessionToken,
     ) -> Result<SessionValue<()>, ServiceError> {
-        let state = self.checked_mut(session)?;
-        if state.draft.is_none() {
-            return Err(ServiceError::NoDraft);
-        }
-        if let Some(file) = &state.file {
-            file.discard_draft()?;
-        }
-        if let Some(managed) = &state.managed {
-            managed.port.discard_draft()?;
-        }
-        state.draft = None;
-        Ok(stamped(session, ()))
+        let id = self
+            .checked(session)?
+            .drafts
+            .entry
+            .as_ref()
+            .ok_or(ServiceError::NoDraft)?
+            .identity()
+            .draft;
+        self.delete_draft(session, &id)
     }
 
     /// List explicit saved revisions with no secret values.
@@ -883,26 +896,8 @@ fn check_session(state: &DatabaseState, session: &SessionToken) -> Result<(), Se
     Ok(())
 }
 
-fn editor_open_error(state: &DatabaseState) -> ServiceError {
-    if state
-        .draft
-        .as_ref()
-        .is_some_and(|draft| draft.needs_restore())
-    {
-        ServiceError::DraftNeedsRestore
-    } else {
-        ServiceError::EditorAlreadyOpen
-    }
-}
-
 fn stash_draft(state: &mut DatabaseState) {
-    if let Some(draft) = &mut state.draft {
-        if draft.is_dirty() {
-            draft.interrupt();
-        } else {
-            state.draft = None;
-        }
-    }
+    state.drafts.stash();
 }
 
 fn stamped<T>(session: &SessionToken, value: T) -> SessionValue<T> {
@@ -926,7 +921,7 @@ mod tests {
     use std::collections::BTreeSet;
 
     #[test]
-    fn conflicted_snapshots_never_leak_an_implicit_winner_into_ui_views() {
+    fn concurrent_snapshots_select_ordinary_values_and_preserve_original_history() {
         let mut service = DemoService::with_sample_database().unwrap();
         let database = service.databases()[0].id.clone();
         let session = service.unlock(&database, DEMO_PASSWORD).unwrap();
@@ -959,18 +954,20 @@ mod tests {
 
         let view = service.view_entry(&session, &entry).unwrap().value;
         assert!(view.has_conflicts);
-        assert!(view.title.is_empty());
-        assert!(!view.has_password);
-        assert!(view.attributes.is_empty());
+        assert!(!view.title.is_empty());
+        assert!(view.has_password);
         assert!(service.entries(&session, None, "").unwrap().value[0].has_conflicts);
-        assert_eq!(
-            service.start_edit_entry(&session, &entry).unwrap_err(),
-            ServiceError::Conflict
+        service.start_edit_entry(&session, &entry).unwrap();
+        assert!(
+            service
+                .editor_view(&session)
+                .unwrap()
+                .fields
+                .password
+                .is_none()
         );
-        assert_eq!(
-            service.reveal_password(&session, &entry).unwrap_err(),
-            ServiceError::Conflict
-        );
+        let selected = service.reveal_password(&session, &entry).unwrap();
+        assert!(["PUBLIC other branch", "PUBLIC local branch"].contains(&selected.value.expose()));
         let history = service.history(&session, &entry).unwrap().value;
         assert_eq!(history.len(), 3);
         let passwords: BTreeSet<_> = history

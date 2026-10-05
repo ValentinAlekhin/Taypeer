@@ -177,9 +177,6 @@ impl DatabaseService {
         session: &SessionToken,
     ) -> Result<SessionValue<CollectionReport>, ServiceError> {
         let state = self.checked_mut(session)?;
-        if state.draft.is_some() {
-            return Err(editor_open_error(state));
-        }
         let document = state.document().clone();
         let result = state
             .managed
@@ -188,7 +185,9 @@ impl DatabaseService {
             .collect(&document)?;
         if !result.held {
             let references = document.blob_references()?;
-            state.blobs = Some(state.blobs()?.retained(&references.retained));
+            let mut keep = references.retained;
+            keep.extend(state.drafts.binary_references());
+            state.blobs = Some(state.blobs()?.retained(&keep));
         }
         Ok(stamped(session, result))
     }

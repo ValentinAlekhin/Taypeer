@@ -68,17 +68,24 @@ impl DatabaseService {
         patch: EntryPatch,
         operation: &OperationId,
     ) -> Result<SessionValue<EntryId>, ServiceError> {
+        self.create_entry_in(session, Some(group), patch, operation)
+    }
+    /// Create an entry at an optional destination without retaining an implicit editor.
+    pub fn create_entry_in(
+        &mut self,
+        session: &SessionToken,
+        group: Option<GroupId>,
+        patch: EntryPatch,
+        operation: &OperationId,
+    ) -> Result<SessionValue<EntryId>, ServiceError> {
         let fingerprint = fingerprint(&(&group, &patch))?;
         let now = (self.clock)();
         let state = self.checked_mut(session)?;
         if let Some(id) = state.command_result(operation, "create_entry", Some(&fingerprint))? {
             return Ok(stamped(session, id));
         }
-        if state.draft.is_some() {
-            return Err(editor_open_error(state));
-        }
         let id = state.command(operation, "create_entry", fingerprint, |doc, receipt| {
-            let mut draft = DraftState::new(doc.begin_create_entry(group)?, DraftKind::New);
+            let mut draft = DraftState::new(doc.begin_create_entry_in(group)?, DraftKind::New)?;
             let mut fields = draft.view().fields;
             patch.apply(&mut fields)?;
             draft.update(fields)?;
@@ -100,11 +107,8 @@ impl DatabaseService {
         if let Some(id) = state.command_result(operation, "update_entry", Some(&fingerprint))? {
             return Ok(stamped(session, id));
         }
-        if state.draft.is_some() {
-            return Err(editor_open_error(state));
-        }
         let id = state.command(operation, "update_entry", fingerprint, |doc, receipt| {
-            let mut draft = DraftState::new(doc.begin_edit_entry(id)?, DraftKind::Existing);
+            let mut draft = DraftState::new(doc.begin_edit_entry(id)?, DraftKind::Existing)?;
             let mut fields = draft.view().fields;
             patch.apply(&mut fields)?;
             draft.update(fields)?;

@@ -59,13 +59,13 @@ pub(super) fn inspect(
     Ok(match target {
         InspectionTarget::Source(id) => document.preview_source(id)?,
         InspectionTarget::Object(address) => match &address.object {
-            ObjectId::Group(_) => SourcePreview::Group(
+            ObjectId::Group(_) => SourcePreview::Group(Box::new(
                 document
                     .tree()?
                     .into_iter()
                     .find(|n| &n.address == address)
                     .ok_or(ServiceError::NotFound)?,
-            ),
+            )),
             ObjectId::Entry(_) => SourcePreview::Entry(Box::new(document.inspect_entry(address)?)),
         },
     })
@@ -109,7 +109,10 @@ impl DatabaseService {
         let document = self.checked(session)?.document();
         let heads = document.review_heads();
         let view = match inspect(document, target)? {
-            SourcePreview::Group(group) => InspectionView::Group { heads, group },
+            SourcePreview::Group(group) => InspectionView::Group {
+                heads,
+                group: *group,
+            },
             SourcePreview::Entry(snapshot) => InspectionView::Entry {
                 heads,
                 address: ObjectAddress {
@@ -180,9 +183,6 @@ impl DatabaseService {
     ) -> Result<SessionValue<Vec<ObjectId>>, ServiceError> {
         let now = (self.clock)();
         let state = self.checked_mut(session)?;
-        if state.draft.is_some() {
-            return Err(editor_open_error(state));
-        }
         let result = state.change(|doc| Ok(change(doc, now)?))?;
         Ok(stamped(session, result))
     }
@@ -218,8 +218,20 @@ impl DatabaseService {
         review: Option<Vec<String>>,
         operation: &OperationId,
     ) -> Result<SessionValue<Vec<ObjectId>>, ServiceError> {
+        self.move_entry_to(session, entry, Some(group), review, operation)
+    }
+
+    /// Move an entry to a group or explicitly to the ungrouped collection.
+    pub fn move_entry_to(
+        &mut self,
+        session: &SessionToken,
+        entry: &EntryId,
+        group: Option<GroupId>,
+        review: Option<Vec<String>>,
+        operation: &OperationId,
+    ) -> Result<SessionValue<Vec<ObjectId>>, ServiceError> {
         self.lifecycle_change(session, |doc, now| {
-            doc.move_entry(entry, group, review, operation, now)
+            doc.move_entry_to(entry, group, review, operation, now)
         })
     }
 

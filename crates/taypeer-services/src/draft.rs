@@ -20,6 +20,8 @@ enum DraftStatus {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub(super) struct DraftState {
+    id: taypeer_core::DraftId,
+    revision: super::DraftRevision,
     #[serde(default)]
     pub(super) attempt: Option<(taypeer_core::OperationId, serde_json::Value)>,
     document: EntryDraft,
@@ -32,8 +34,10 @@ pub(super) struct DraftState {
 }
 
 impl DraftState {
-    pub(super) fn new(document: EntryDraft, kind: DraftKind) -> Self {
-        Self {
+    pub(super) fn new(document: EntryDraft, kind: DraftKind) -> Result<Self, ServiceError> {
+        Ok(Self {
+            id: super::editing::new_draft_id()?,
+            revision: super::DraftRevision::default(),
             attempt: None,
             baseline: document.fields().clone(),
             attribute_order: document.fields().attributes.keys().cloned().collect(),
@@ -42,7 +46,57 @@ impl DraftState {
             status: DraftStatus::Active,
             expiry_input: None,
             binary_receipts: BTreeMap::new(),
+        })
+    }
+
+    pub(super) fn identity(&self) -> super::DraftIdentity {
+        super::DraftIdentity {
+            draft: self.id.clone(),
+            target: match self.kind {
+                DraftKind::New => super::DraftTarget::NewEntry {
+                    entry: self.document.entry_id().clone(),
+                    group: self.document.group_id().cloned(),
+                },
+                DraftKind::Existing => super::DraftTarget::Entry(self.document.entry_id().clone()),
+            },
+            revision: self.revision,
         }
+    }
+
+    pub(super) fn resume(&mut self) {
+        self.status = DraftStatus::Active;
+    }
+
+    fn changed(&mut self) -> Result<(), ServiceError> {
+        self.revision.0 = self
+            .revision
+            .0
+            .checked_add(1)
+            .ok_or(ServiceError::InvalidContext)?;
+        Ok(())
+    }
+
+    pub(super) fn continue_saved(&mut self, document: &Document) -> Result<(), ServiceError> {
+        let confirmed = self.clone();
+        self.continue_from(&confirmed, document)
+    }
+
+    pub(super) fn continue_from(
+        &mut self,
+        confirmed: &Self,
+        document: &Document,
+    ) -> Result<(), ServiceError> {
+        self.document =
+            document.continue_entry_draft(&confirmed.document, self.document.fields().clone())?;
+        self.baseline = confirmed.document.fields().clone();
+        self.kind = DraftKind::Existing;
+        self.attempt = None;
+        self.binary_receipts.clear();
+        Ok(())
+    }
+
+    pub(super) fn can_save(&self) -> bool {
+        self.expiry_input.is_none() && self.document.fields().validate().is_ok()
     }
 
     pub(super) fn has_binary_operation(&self, operation: &taypeer_core::OperationId) -> bool {
@@ -89,8 +143,9 @@ impl DraftState {
         &mut self,
         operation: taypeer_core::OperationId,
         intent: serde_json::Value,
-    ) {
+    ) -> Result<(), ServiceError> {
         self.binary_receipts.insert(operation, intent);
+        self.changed()
     }
     pub(super) fn adds_binary_content(&self) -> bool {
         self.document
@@ -149,7 +204,7 @@ impl DraftState {
     pub(super) fn pending_summary(&self) -> PendingDraftSummary {
         PendingDraftSummary {
             entry_id: self.entry_id().cloned(),
-            group_id: self.document.group_id().clone(),
+            group_id: self.document.group_id().cloned(),
         }
     }
 
@@ -200,6 +255,9 @@ impl DraftState {
             attachments: candidate.fields().attachments.clone(),
             appearance: candidate.fields().appearance.clone(),
         };
+        if candidate.fields() != self.document.fields() {
+            self.changed()?;
+        }
         self.document = candidate;
         self.attribute_order = attribute_order;
         Ok(self.view())
@@ -210,7 +268,10 @@ impl DraftState {
         input: Option<String>,
     ) -> Result<DraftView, ServiceError> {
         self.require_active()?;
-        self.expiry_input = input;
+        if self.expiry_input != input {
+            self.changed()?;
+            self.expiry_input = input;
+        }
         Ok(self.view())
     }
 
@@ -244,8 +305,9 @@ impl DraftState {
                 .unwrap_or(usize::MAX)
         });
         DraftView {
+            identity: self.identity(),
             entry_id: self.entry_id().cloned(),
-            group_id: self.document.group_id().clone(),
+            group_id: self.document.group_id().cloned(),
             dirty: self.is_dirty(),
             fields,
             expiry_input: self.expiry_input.clone(),

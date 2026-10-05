@@ -6,7 +6,7 @@ use taypeer_core::{ClientCapabilities, OperationId};
 const CORPUS_PASSWORD: &[u8] = b"PUBLIC_SESSION_DRAFT_PASSWORD";
 const CASES: [&str; 3] = ["empty", "populated", "conflicts"];
 fn corpus() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/dev5")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/dev6")
 }
 fn draft_path(path: &Path) -> PathBuf {
     path.with_file_name(format!(
@@ -302,6 +302,30 @@ fn frozen_corpus_checksums_do_not_depend_on_the_current_writer() {
             "PUBLIC fixture: {file}"
         );
     }
+}
+
+#[test]
+fn frozen_local_collection_automatically_resumes_exact_input_after_reopen() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("PUBLIC collection.taypeer");
+    std::fs::copy(corpus().join("populated.taypeer"), &path).unwrap();
+    std::fs::copy(corpus().join("populated.draft"), draft_path(&path)).unwrap();
+    let original = std::fs::read(draft_path(&path)).unwrap();
+    let profile = Profile::new(19);
+    let (mut service, token) = open_case(&profile, &path, ClientCapabilities::default());
+    assert_eq!(std::fs::read(draft_path(&path)).unwrap(), original);
+    let drafts = service.drafts(&token).unwrap().value;
+    assert_eq!(drafts.len(), 1);
+    let entry = match &drafts[0].identity.target {
+        crate::DraftTarget::Entry(entry) => entry.clone(),
+        _ => panic!("PUBLIC corpus must contain an existing entry form"),
+    };
+    service.start_edit_entry(&token, &entry).unwrap();
+    let view = service.editor_view(&token).unwrap();
+    assert_eq!(view.identity.draft, drafts[0].identity.draft);
+    assert_eq!(view.fields.title, "PUBLIC deferred corpus draft");
+    assert!(view.fields.password.is_none());
+    assert!(view.dirty);
 }
 
 #[test]

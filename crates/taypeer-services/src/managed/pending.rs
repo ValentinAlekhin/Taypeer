@@ -199,7 +199,7 @@ impl DatabaseService {
         managed.persist(&document, metadata, Vec::new(), None)
     }
 
-    /// Extract an unambiguous selected entry as one new current-author confirmation.
+    /// Extract the selected entry as one new current-author confirmation.
     /// Source history is not admitted; the source remains available for further selections.
     pub fn extract_received(
         &mut self,
@@ -209,20 +209,29 @@ impl DatabaseService {
         group: GroupId,
         operation: &OperationId,
     ) -> Result<SessionValue<EntryId>, ServiceError> {
+        self.extract_received_in(session, change, entry, Some(group), operation)
+    }
+
+    /// Extract a selected foreign entry into an optional local group.
+    pub fn extract_received_in(
+        &mut self,
+        session: &SessionToken,
+        change: &str,
+        entry: &EntryId,
+        group: Option<GroupId>,
+        operation: &OperationId,
+    ) -> Result<SessionValue<EntryId>, ServiceError> {
         let now = (self.clock)();
         let state = self.checked_mut(session)?;
-        if state.draft.is_some() {
-            return Err(editor_open_error(state));
-        }
         let mut document = state.document().clone();
-        if let Some(id) = document.extracted_entry(entry, change, &group, operation)? {
+        if let Some(id) = document.extracted_entry_in(entry, change, group.as_ref(), operation)? {
             return Ok(stamped(session, id));
         }
         let mut blobs = state.blobs()?.clone();
         let managed = state.managed.as_mut().ok_or(ServiceError::InvalidContext)?;
         let (source, metadata, snapshot) = managed.inspect_source(&document, change)?;
         compatibility::require_write(&managed.capabilities.assess(&source.schema_descriptor()?))?;
-        let id = document.extract_entry(&source, (entry, change), group, operation, now)?;
+        let id = document.extract_entry_in(&source, (entry, change), group, operation, now)?;
         // Load exactly the result's required content, never all blobs in the foreign history.
         apply::load_blobs(&snapshot, &metadata, &document, &mut blobs)?;
         let attachments = document

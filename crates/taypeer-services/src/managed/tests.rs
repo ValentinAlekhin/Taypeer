@@ -10,6 +10,7 @@ const NEW_PASSWORD: &[u8] = b"PUBLIC independently rotated fixture password";
 
 mod compatibility;
 mod corpus;
+mod drafts;
 mod temporary;
 
 #[test]

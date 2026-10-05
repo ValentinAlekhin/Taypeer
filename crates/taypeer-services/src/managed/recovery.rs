@@ -218,9 +218,6 @@ impl DatabaseService {
         operation: Digest,
     ) -> Result<ArchiveSeed, ServiceError> {
         let state = self.checked(session)?;
-        if state.draft.is_some() {
-            return Err(editor_open_error(state));
-        }
         let managed = state.managed.as_ref().ok_or(ServiceError::InvalidContext)?;
         managed.check_format_write()?;
         let snapshot = managed.port.snapshot()?;
