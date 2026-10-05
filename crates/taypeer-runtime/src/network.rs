@@ -552,6 +552,8 @@ impl RuntimeHost {
         context
             .profile
             .save_state("routes", &context.coordinator.routes().map_err(sync_error)?)?;
+        // Keep the received join resumable until its durable catalog publication.
+        self.register_working_copy(&pending.path)?;
         joins.remove(&request);
         let local: BTreeMap<_, _> = joins
             .iter()

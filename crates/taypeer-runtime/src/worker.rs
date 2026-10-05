@@ -600,10 +600,11 @@ fn dispatch(
             operation,
         } => value(
             &service
-                .extract_received(session, &change, &entry, group, &operation)?
+                .extract_received_in(session, &change, &entry, group, &operation)?
                 .value,
         )?,
         Command::Authority => value(&service.authority(session)?)?,
+        Command::SessionAuthority => value(&service.session_authority(session)?)?,
         Command::Compatibility => value(&service.compatibility(session)?)?,
         Command::CreateInvitation => {
             let (invitation, secret) = service.create_invitation(session, unix_seconds()?)?;
@@ -713,7 +714,7 @@ fn dispatch(
             operation,
         } => value(
             &service
-                .move_entry(session, &entry, group, review, &operation)?
+                .move_entry_to(session, &entry, group, review, &operation)?
                 .value,
         )?,
         Command::CloneGroup {
@@ -753,6 +754,63 @@ fn dispatch(
             value(&service.save_group_form(session, form, &operation)?)?
         }
         Command::EditorView => value(&service.editor_view(session)?)?,
+        Command::Drafts => value(&service.drafts(session)?.value)?,
+        Command::ResumeDraft(id) => value(&service.resume_draft(session, &id)?.value)?,
+        Command::DeleteDraft(id) => {
+            service.delete_draft(session, &id)?;
+            Value::Null
+        }
+        Command::PersistDrafts => {
+            service.persist_drafts(session)?;
+            Value::Null
+        }
+        Command::SaveDraftSnapshot {
+            draft,
+            revision,
+            operation,
+        } => value(
+            &service
+                .save_draft_snapshot(session, &draft, revision, &operation)?
+                .value,
+        )?,
+        Command::BeginCreateUngrouped => {
+            service.start_create_entry_ungrouped(session)?;
+            Value::Null
+        }
+        Command::BeginEditGroup(group) => value(&service.start_edit_group(session, &group)?.value)?,
+        Command::BeginCreateGroup(parent) => {
+            value(&service.start_create_group(session, parent)?.value)?
+        }
+        Command::BeginEditDatabaseInfo => value(&service.start_edit_database_info(session)?.value)?,
+        Command::GroupHistory(group) => value(&service.group_history(session, &group)?.value)?,
+        Command::DatabaseHistory => value(&service.database_history(session)?.value)?,
+        Command::PurgeGroupHistory {
+            group,
+            revisions,
+            operation,
+        } => {
+            service.purge_group_history(
+                session,
+                &group,
+                revisions.into_iter().collect(),
+                &operation,
+            )?;
+            Value::Null
+        }
+        Command::PurgeDatabaseHistory {
+            revisions,
+            operation,
+        } => {
+            service.purge_database_history(session, revisions.into_iter().collect(), &operation)?;
+            Value::Null
+        }
+        Command::MetadataDraft(id) => value(&service.metadata_draft(session, &id)?.value)?,
+        Command::PatchGroupDraft { draft, patch } => {
+            value(&service.patch_group_draft(session, &draft, patch)?.value)?
+        }
+        Command::PatchDatabaseDraft { draft, patch } => {
+            value(&service.patch_database_draft(session, &draft, patch)?.value)?
+        }
         Command::PatchAttribute { patch, remove } => {
             service.patch_attribute(session, patch, remove)?;
             Value::Null
@@ -808,7 +866,7 @@ fn dispatch(
             operation,
         } => value(
             &service
-                .create_entry(session, group, patch, &operation)?
+                .create_entry_in(session, group, patch, &operation)?
                 .value,
         )?,
         Command::UpdateEntry {
@@ -853,7 +911,7 @@ fn dispatch(
             operation,
         } => value(
             &service
-                .clone_entry(session, &entry, group, title, &operation)?
+                .clone_entry_in(session, &entry, group, title, &operation)?
                 .value,
         )?,
         Command::RestoreRevision {
@@ -863,7 +921,7 @@ fn dispatch(
             operation,
         } => value(
             &service
-                .restore_revision(session, &entry, &revision, group, &operation)?
+                .restore_revision_in(session, &entry, &revision, group, &operation)?
                 .value,
         )?,
         Command::PurgeHistory {

@@ -5,7 +5,7 @@ use std::{
     io::{Read, Write},
     path::PathBuf,
 };
-use taypeer_core::{AttributeId, EntryId, GroupId, OperationId, RevisionId};
+use taypeer_core::{AttributeId, DraftId, EntryId, GroupId, OperationId, RevisionId};
 use taypeer_services::{
     ConflictContext, EntryPatch, GroupMove, InspectionTarget, LifecycleAction, ObjectAddress,
     ObjectId, PreparedLifecycle, RecoveryRequest, Resolution, ServiceError,
@@ -58,6 +58,68 @@ pub enum Command {
     },
     /// Read the masked active editor including restored input.
     EditorView,
+    /// List independent local forms without entered names or secrets.
+    Drafts,
+    /// Activate a retained form; read its masked view separately.
+    ResumeDraft(DraftId),
+    /// Durably discard one local form, leaving its confirmed object intact.
+    DeleteDraft(DraftId),
+    /// Confirm a durable local fallback for navigation after a document write failure.
+    /// This never reports the database as saved or creates a history revision.
+    PersistDrafts,
+    /// Durably save the exact captured revision, preserving the editor and later input.
+    SaveDraftSnapshot {
+        /// Stable local editor identity.
+        draft: DraftId,
+        /// Exact input revision.
+        revision: taypeer_services::DraftRevision,
+        /// Same identity must be reused when retrying this snapshot.
+        operation: OperationId,
+    },
+    /// Begin an unfinished entry outside every group.
+    BeginCreateUngrouped,
+    /// Begin or continue a group's local form.
+    BeginEditGroup(GroupId),
+    /// Begin an unfinished group in the selected parent, or at the root.
+    BeginCreateGroup(Option<GroupId>),
+    /// Begin or continue database descriptive metadata.
+    BeginEditDatabaseInfo,
+    /// Read retained versions of the selected group, including original alternatives.
+    GroupHistory(GroupId),
+    /// Read retained versions of database descriptive metadata.
+    DatabaseHistory,
+    /// Explicitly purge exactly the reviewed group revisions.
+    PurgeGroupHistory {
+        /// Selected group identity.
+        group: GroupId,
+        /// Exact reviewed versions.
+        revisions: Vec<RevisionId>,
+        /// Stable retry identity.
+        operation: OperationId,
+    },
+    /// Explicitly purge exactly the reviewed database metadata revisions.
+    PurgeDatabaseHistory {
+        /// Exact reviewed versions.
+        revisions: Vec<RevisionId>,
+        /// Stable retry identity.
+        operation: OperationId,
+    },
+    /// Read descriptive form input in the current authenticated session.
+    MetadataDraft(DraftId),
+    /// Addressed group input, preserving original causal heads.
+    PatchGroupDraft {
+        /// Exact local form.
+        draft: DraftId,
+        /// Keep/set/clear fields.
+        patch: taypeer_core::GroupMetadataPatch,
+    },
+    /// Addressed database input, preserving original causal heads.
+    PatchDatabaseDraft {
+        /// Exact local form.
+        draft: DraftId,
+        /// Keep/set/clear fields.
+        patch: taypeer_core::DatabaseMetadataPatch,
+    },
     /// Address one attribute without revealing unchanged secret values.
     PatchAttribute {
         /// Addressed fields.
@@ -113,12 +175,15 @@ pub enum Command {
         /// Selected entry at that causal state.
         entry: EntryId,
         /// Current destination group.
-        group: GroupId,
+        group: Option<GroupId>,
         /// Durable exact-intent retry identity.
         operation: OperationId,
     },
     /// Read public signed device/control state, without acquiring another credential.
     Authority,
+    /// Read the authority actually loaded by this worker, without refreshing host storage.
+    /// Used to reconcile startup and missed network events against the exact opened epoch.
+    SessionAuthority,
     /// Explicitly create and reveal one invitation's bearer material.
     CreateInvitation,
     /// Approve the recipient of a durable request.
@@ -242,7 +307,7 @@ pub enum Command {
         /// Entry identity.
         entry: EntryId,
         /// Current destination.
-        group: GroupId,
+        group: Option<GroupId>,
         /// Optional conflict review context.
         review: Option<Vec<String>>,
         /// Durable idempotency key.
@@ -311,7 +376,7 @@ pub enum Command {
         /// Stable identity for retries of this exact request.
         operation: OperationId,
         /// Destination.
-        group: GroupId,
+        group: Option<GroupId>,
         /// Initial fields.
         patch: EntryPatch,
     },
@@ -355,7 +420,7 @@ pub enum Command {
         /// Source entry.
         entry: EntryId,
         /// Destination group.
-        group: GroupId,
+        group: Option<GroupId>,
         /// Optional replacement title.
         title: Option<String>,
         /// Idempotency key.
@@ -368,7 +433,7 @@ pub enum Command {
         /// Source revision.
         revision: RevisionId,
         /// Explicit destination.
-        group: GroupId,
+        group: Option<GroupId>,
         /// Idempotency key.
         operation: OperationId,
     },
@@ -434,6 +499,14 @@ impl Command {
                 form.name.zeroize();
                 form.description.zeroize();
             }
+            Self::PatchGroupDraft { patch, .. } => {
+                erase_text_patch(&mut patch.name);
+                erase_text_patch(&mut patch.description);
+            }
+            Self::PatchDatabaseDraft { patch, .. } => {
+                erase_text_patch(&mut patch.name);
+                erase_text_patch(&mut patch.description);
+            }
             Self::DraftExpiry(value) => value.zeroize(),
             Self::PatchAttribute { patch, .. } => {
                 patch.name.zeroize();
@@ -479,8 +552,15 @@ impl Command {
     }
 }
 
+fn erase_text_patch(patch: &mut taypeer_core::FieldUpdate<String>) {
+    if let taypeer_core::FieldUpdate::Set(value) = patch {
+        value.zeroize();
+    }
+}
+
 /// Content-free failures suitable for a client to localize.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
+#[error("{self:?}")]
 pub enum RuntimeError {
     /// Native profile, secure credential storage or endpoint ownership failed.
     Profile(crate::profile::ProfileError),
@@ -517,12 +597,6 @@ impl From<ServiceError> for RuntimeError {
         Self::Service(value)
     }
 }
-impl std::fmt::Display for RuntimeError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{self:?}")
-    }
-}
-impl std::error::Error for RuntimeError {}
 
 #[derive(Serialize, Deserialize)]
 pub(crate) struct Response {
@@ -559,17 +633,26 @@ pub(crate) fn write_frame(
     message: &impl Serialize,
 ) -> Result<(), RuntimeError> {
     let bytes = Zeroizing::new(serde_json::to_vec(message).map_err(|_| RuntimeError::Protocol)?);
+    write_payload(writer, &bytes)
+}
+
+pub(crate) fn write_payload(writer: &mut impl Write, bytes: &[u8]) -> Result<(), RuntimeError> {
     if bytes.len() > MAX_MESSAGE {
         return Err(RuntimeError::TooLarge);
     }
     writer
         .write_all(&(bytes.len() as u32).to_le_bytes())
-        .and_then(|()| writer.write_all(&bytes))
+        .and_then(|()| writer.write_all(bytes))
         .and_then(|()| writer.flush())
         .map_err(|_| RuntimeError::Transport)
 }
 
 pub(crate) fn read_frame<T: DeserializeOwned>(reader: &mut impl Read) -> Result<T, RuntimeError> {
+    let bytes = read_raw_frame(reader)?;
+    serde_json::from_slice(&bytes[4..]).map_err(|_| RuntimeError::Protocol)
+}
+
+pub(crate) fn read_raw_frame(reader: &mut impl Read) -> Result<Zeroizing<Vec<u8>>, RuntimeError> {
     let mut header = [0; 4];
     reader
         .read_exact(&mut header)
@@ -578,11 +661,12 @@ pub(crate) fn read_frame<T: DeserializeOwned>(reader: &mut impl Read) -> Result<
     if length > MAX_MESSAGE {
         return Err(RuntimeError::TooLarge);
     }
-    let mut bytes = Zeroizing::new(vec![0; length]);
+    let mut bytes = Zeroizing::new(vec![0; length + 4]);
+    bytes[..4].copy_from_slice(&header);
     reader
-        .read_exact(&mut bytes)
+        .read_exact(&mut bytes[4..])
         .map_err(|_| RuntimeError::Transport)?;
-    serde_json::from_slice(&bytes).map_err(|_| RuntimeError::Protocol)
+    Ok(bytes)
 }
 
 #[cfg(test)]

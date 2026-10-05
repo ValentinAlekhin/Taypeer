@@ -1,4 +1,5 @@
-//! PUBLIC-only process fixture: real dispatch, service and dev5 files, no native credentials.
+//! PUBLIC-only process fixture: real dispatch, service and dev6 files, no native credentials.
+mod autosave;
 mod compatibility;
 mod presentation;
 mod retries;

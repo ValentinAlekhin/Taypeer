@@ -5,7 +5,7 @@ use crate::{
     Command, RuntimeError,
     cipher_ipc::{IoReply, IoRequest, WorkerMessage},
     host::Callbacks,
-    protocol::{Response, read_frame, write_frame},
+    protocol::{Response, read_frame, write_frame, write_payload},
     session::{LockReason, POLL, ProcessControl},
 };
 use serde_json::Value;
@@ -168,13 +168,7 @@ impl PipeActor {
         }
     }
     fn send(&mut self, bytes: &[u8]) -> Result<(), RuntimeError> {
-        self.input
-            .write_all(&(bytes.len() as u32).to_le_bytes())
-            .map_err(|_| RuntimeError::Transport)?;
-        self.input
-            .write_all(bytes)
-            .map_err(|_| RuntimeError::Transport)?;
-        self.input.flush().map_err(|_| RuntimeError::Transport)
+        write_payload(&mut self.input, bytes)
     }
     fn response(&mut self, control: &ProcessControl, closing: bool) -> Result<Value, RuntimeError> {
         loop {

@@ -8,7 +8,7 @@ pub mod profile;
 mod protocol;
 pub mod session;
 mod worker;
-pub use host::{RegisteredCompatibility, RuntimeHost};
+pub use host::{RegisteredCompatibility, RelocatedWorkingCopy, RuntimeHost, WorkingCopy};
 pub use network::{
     DatabaseExchange, DeviceExchange, InvitationCode, JoinProgress, NetworkCancellation,
     NetworkSnapshot, PeerProgress, PendingJoin, PendingJoinSummary,

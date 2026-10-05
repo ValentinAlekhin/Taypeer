@@ -3,7 +3,7 @@ use super::*;
 
 #[test]
 fn frozen_read_only_database_and_draft_survive_session_revocation() {
-    let corpus = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/dev5");
+    let corpus = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/dev6");
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("PUBLIC.taypeer");
     let archive = std::fs::read(corpus.join("populated.taypeer")).unwrap();

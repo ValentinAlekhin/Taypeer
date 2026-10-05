@@ -1,7 +1,7 @@
 //! Read independently of service work so parent EOF can end even a stuck plaintext command.
 #[cfg(test)]
 mod tests;
-use crate::{RuntimeError, protocol::MAX_MESSAGE, session::CLOSE_GRACE};
+use crate::{RuntimeError, protocol::read_raw_frame, session::CLOSE_GRACE};
 use std::{
     io::{self, Cursor, Read},
     sync::{
@@ -71,19 +71,7 @@ impl Read for Incoming {
     }
 }
 fn frame(reader: &mut impl Read) -> Result<Zeroizing<Vec<u8>>, RuntimeError> {
-    let mut header = [0; 4];
-    reader
-        .read_exact(&mut header)
-        .map_err(|_| RuntimeError::Transport)?;
-    let length = u32::from_le_bytes(header) as usize;
-    if length > MAX_MESSAGE {
-        return Err(RuntimeError::TooLarge);
-    }
-    let mut bytes = Zeroizing::new(vec![0; length + 4]);
-    bytes[..4].copy_from_slice(&header);
-    reader
-        .read_exact(&mut bytes[4..])
-        .map_err(|_| RuntimeError::Transport)?;
+    let bytes = read_raw_frame(reader)?;
     // Syntax validation does not retain another decoded copy of secret strings.
     serde_json::from_slice::<serde::de::IgnoredAny>(&bytes[4..])
         .map_err(|_| RuntimeError::Protocol)?;

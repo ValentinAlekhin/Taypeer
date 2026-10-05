@@ -15,6 +15,9 @@ use taypeer_sync::Coordinator;
 use taypeer_trust::{ControlChain, Digest, PublicKey, TransportKey};
 use tempfile::NamedTempFile;
 
+mod catalog;
+pub use catalog::{RelocatedWorkingCopy, WorkingCopy};
+
 /// Platform/CLI host. Writers and native transport identity outlive individual unlocked workers.
 pub struct RuntimeHost {
     pub(crate) sessions: crate::session::SessionController,
@@ -24,6 +27,7 @@ pub struct RuntimeHost {
     pub(crate) network: Mutex<BTreeMap<PublicKey, crate::network::Network>>,
     pub(crate) requested_relay: Mutex<Option<taypeer_sync::RelaySetting>>,
     pub(crate) enrollments: Mutex<BTreeMap<Digest, Arc<crate::process::Client>>>,
+    catalog: Mutex<catalog::Catalog>,
 }
 
 /// Public format and transport-admission state; querying it never unlocks a database.
@@ -62,27 +66,10 @@ impl RuntimeHost {
     }
     /// Shared native profile location used by desktop clients and the CLI.
     pub fn default_profile_path() -> Result<PathBuf, RuntimeError> {
-        #[cfg(target_os = "linux")]
-        {
-            let directory = std::env::var_os("XDG_DATA_HOME")
-                .map(PathBuf::from)
-                .filter(|path| path.is_absolute())
-                .or_else(|| {
-                    std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share"))
-                })
-                .ok_or(RuntimeError::Profile(
-                    crate::profile::ProfileError::Credentials,
-                ))?;
-            Ok(directory.join("taypeer/profiles/default"))
-        }
-        #[cfg(not(target_os = "linux"))]
-        std::env::var_os("HOME")
-            .map(|home| {
-                PathBuf::from(home).join("Library/Application Support/Taypeer/profiles/default")
-            })
-            .ok_or(RuntimeError::Profile(
-                crate::profile::ProfileError::Credentials,
-            ))
+        let directories = directories::BaseDirs::new().ok_or(RuntimeError::Profile(
+            crate::profile::ProfileError::Credentials,
+        ))?;
+        Ok(profile_directory(directories.data_local_dir()))
     }
 
     /// Open/create through the same ciphertext writer for an in-process native UI.
@@ -199,6 +186,7 @@ impl RuntimeHost {
         sessions: crate::session::SessionController,
     ) -> Result<Self, RuntimeError> {
         let profile = lease.profile().clone();
+        let catalog = catalog::Catalog::load(profile.directory())?;
         let transport = Arc::new(if profile.is_linux_lazy() {
             TransportKey::generate().map_err(|_| RuntimeError::Transport)?
         } else {
@@ -215,6 +203,7 @@ impl RuntimeHost {
             network: Mutex::new(BTreeMap::new()),
             requested_relay: Mutex::new(None),
             enrollments: Mutex::new(BTreeMap::new()),
+            catalog: Mutex::new(catalog),
             context: Arc::new(HostContext {
                 profile,
                 coordinator,
@@ -359,6 +348,14 @@ impl RuntimeHost {
     /// Nonsecret native profile metadata and explicit credential acquisition adapter.
     pub fn profile(&self) -> &NativeProfile {
         &self.context.profile
+    }
+}
+
+fn profile_directory(data: &Path) -> PathBuf {
+    if cfg!(target_os = "macos") {
+        data.join("Taypeer")
+    } else {
+        data.join("taypeer/profiles/default")
     }
 }
 pub(crate) fn sync_error(error: taypeer_sync::Error) -> RuntimeError {

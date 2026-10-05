@@ -29,7 +29,8 @@ pub trait CredentialStore: Send + Sync {
 }
 
 /// Sanitized profile/credential failures; keychain diagnostics never escape this boundary.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
+#[error("{self:?}")]
 pub enum ProfileError {
     /// Native secure credential storage is unavailable or denied access.
     Credentials,
@@ -42,12 +43,6 @@ pub enum ProfileError {
     /// A local atomic replacement occurred but durability could not be confirmed.
     CommitUncertain,
 }
-impl std::fmt::Display for ProfileError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{self:?}")
-    }
-}
-impl std::error::Error for ProfileError {}
 impl From<std::fs::TryLockError> for ProfileError {
     fn from(error: std::fs::TryLockError) -> Self {
         match error {
@@ -359,6 +354,25 @@ impl NativeProfile {
         self.credentials
             .set(&self.service(), &copy_account(path)?, &bytes)
     }
+
+    /// Bind a relocated file to the same protected anchor and local draft identity.
+    /// This does not enroll an author or replace an unrelated registration.
+    pub(crate) fn relocate_registration(
+        &self,
+        source: &Path,
+        destination: &Path,
+    ) -> Result<Registration, ProfileError> {
+        let registration = self.registration(source)?.ok_or(ProfileError::Invalid)?;
+        if let Some(prior) = self.registration(destination)?
+            && (prior.database != registration.database
+                || prior.root != registration.root
+                || prior.working_copy != registration.working_copy)
+        {
+            return Err(ProfileError::Invalid);
+        }
+        self.save_registration(destination, &registration)?;
+        Ok(registration)
+    }
     fn service(&self) -> String {
         format!("org.taypeer.dev4.{}", self.public.id)
     }
@@ -434,11 +448,12 @@ fn write_public(path: &Path, profile: &PublicProfile) -> Result<(), ProfileError
         .map_err(|_| ProfileError::Io)?;
     let bytes = serde_json::to_vec(profile).map_err(|_| ProfileError::Invalid)?;
     temp.write_all(&bytes).map_err(|_| ProfileError::Io)?;
-    temp.as_file().sync_all().map_err(|_| ProfileError::Io)?;
-    temp.persist_noclobber(path).map_err(|_| ProfileError::Io)?;
-    File::open(path.parent().ok_or(ProfileError::Invalid)?)
-        .and_then(|f| f.sync_all())
-        .map_err(|_| ProfileError::Io)
+    taypeer_storage::publish_file(temp, path, taypeer_storage::PublicationMode::Create).map_err(
+        |error| match error {
+            taypeer_storage::Error::CommitUncertain => ProfileError::CommitUncertain,
+            _ => ProfileError::Io,
+        },
+    )
 }
 #[cfg(target_os = "macos")]
 mod native {

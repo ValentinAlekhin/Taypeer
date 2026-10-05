@@ -101,24 +101,21 @@ fn editor_commands_preserve_masked_fields_and_confirm_all_tabs_once() {
     let draft: EditorView = command(&client, Command::EditorView);
     assert!(draft.has_password && draft.fields.password.is_none());
     assert!(draft.fields.attributes[0].value.is_empty());
-    assert!(
-        client
-            .request(
-                &Command::PatchAttribute {
-                    patch: AttributePatch {
-                        id: None,
-                        name: "PUBLIC protected".into(),
-                        value: FieldUpdate::Set("PUBLIC duplicate rejected".into()),
-                        protected: false,
-                    },
-                    remove: false,
-                },
-                false
-            )
-            .is_err()
+    command::<()>(
+        &client,
+        Command::PatchAttribute {
+            patch: AttributePatch {
+                id: None,
+                name: "PUBLIC protected".into(),
+                value: FieldUpdate::Set("PUBLIC same name, independent value".into()),
+                protected: false,
+            },
+            remove: false,
+        },
     );
-    let after_invalid: EditorView = command(&client, Command::EditorView);
-    assert_eq!(after_invalid.fields.attributes.len(), 1);
+    let same_names: EditorView = command(&client, Command::EditorView);
+    assert_eq!(same_names.fields.attributes.len(), 2);
+    assert_ne!(same_names.fields.attributes[0].id, same_names.fields.attributes[1].id);
     let attribute = draft.fields.attributes[0].id.clone().unwrap();
     command::<()>(
         &client,
