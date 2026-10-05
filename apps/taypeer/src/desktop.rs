@@ -1,4 +1,4 @@
-//! Shared desktop bootstrap; native capabilities are currently implemented for macOS.
+//! Shared desktop bootstrap; native capabilities are implemented for macOS and Linux.
 
 use taypeer_database_ui::actions;
 use taypeer_ui::assets;
@@ -21,6 +21,8 @@ pub fn run(profile: Option<std::path::PathBuf>) {
     gpui_kit::application()
         .with_assets(ProductAssets)
         .run(move |cx| {
+            #[cfg(target_os = "linux")]
+            cx.set_app_identity("io.taypeer.Taypeer", "Taypeer");
             cx.set_global(LaunchProfile::new(profile));
             cx.set_global(file_picker::FileDialogs::native());
             gpui_kit::init(cx);
@@ -31,6 +33,7 @@ pub fn run(profile: Option<std::path::PathBuf>) {
             ui::bind(cx);
             // Initial native window bounds are platform pixels, independent of app zoom.
             let options = WindowOptions {
+                app_id: cfg!(target_os = "linux").then(|| "io.taypeer.Taypeer".to_owned()),
                 window_bounds: Some(WindowBounds::centered(size(px(1320.), px(820.)), cx)),
                 window_min_size: Some(size(px(1100.), px(720.))),
                 ..gpui_kit::component::TitleBar::window_options()

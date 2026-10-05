@@ -43,12 +43,20 @@ impl WorkspaceStore {
         &mut self,
         code: taypeer_runtime::InvitationCode,
         path: PathBuf,
+        password: String,
         cx: &mut Context<Self>,
     ) {
-        self.sync.update(cx, |sync, cx| sync.join(code, path, cx));
+        self.sync
+            .update(cx, |sync, cx| sync.join(code, path, password, cx));
     }
-    pub(crate) fn resume_join(&mut self, request: Digest, cx: &mut Context<Self>) {
-        self.sync.update(cx, |sync, cx| sync.resume(request, cx));
+    pub(crate) fn resume_join(
+        &mut self,
+        request: Digest,
+        password: String,
+        cx: &mut Context<Self>,
+    ) {
+        self.sync
+            .update(cx, |sync, cx| sync.resume(request, password, cx));
     }
     pub(crate) fn set_relay(
         &mut self,

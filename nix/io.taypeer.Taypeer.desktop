@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Taypeer
+Comment=Personal password databases
+Comment[ru]=Личные базы паролей
+Exec=taypeer
+Icon=io.taypeer.Taypeer
+Terminal=false
+Categories=Utility;Security;
+StartupWMClass=io.taypeer.Taypeer

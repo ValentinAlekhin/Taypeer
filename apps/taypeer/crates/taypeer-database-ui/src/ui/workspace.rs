@@ -1159,12 +1159,18 @@ impl taypeer_sync_ui::host::SyncHost for WorkspaceStore {
         &mut self,
         code: taypeer_runtime::InvitationCode,
         path: PathBuf,
+        password: String,
         cx: &mut Context<Self>,
     ) {
-        WorkspaceStore::join_database(self, code, path, cx)
+        WorkspaceStore::join_database(self, code, path, password, cx)
     }
-    fn resume_join(&mut self, request: taypeer_trust::Digest, cx: &mut Context<Self>) {
-        WorkspaceStore::resume_join(self, request, cx)
+    fn resume_join(
+        &mut self,
+        request: taypeer_trust::Digest,
+        password: String,
+        cx: &mut Context<Self>,
+    ) {
+        WorkspaceStore::resume_join(self, request, password, cx)
     }
     fn set_notice(&mut self, notice: &'static str, cx: &mut Context<Self>) {
         WorkspaceStore::set_notice(self, notice, cx)

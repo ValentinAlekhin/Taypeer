@@ -134,6 +134,14 @@ pub enum Command {
     ConsentManagement(taypeer_trust::Digest),
     /// Durably relinquish management using the recipient's explicit signed consent.
     TransferManagement(taypeer_trust::HandoffConsent),
+    /// Private enrollment command: authenticate received ciphertext using a retry password.
+    /// The staging password and author remain in the enrollment worker.
+    BindInvitation {
+        /// Fully downloaded working file.
+        path: std::path::PathBuf,
+        /// Exact database master password, permitting correction after receipt.
+        password: Zeroizing<Vec<u8>>,
+    },
     /// Rotate password/key, optionally revoking a member in the same durable transition.
     RotatePassword {
         /// Idempotent administrative operation.
@@ -495,7 +503,13 @@ pub enum RuntimeError {
 }
 impl From<crate::profile::ProfileError> for RuntimeError {
     fn from(error: crate::profile::ProfileError) -> Self {
-        Self::Profile(error)
+        if error == crate::profile::ProfileError::CommitUncertain {
+            Self::Service(taypeer_services::ServiceError::Storage(
+                taypeer_storage::Error::CommitUncertain,
+            ))
+        } else {
+            Self::Profile(error)
+        }
     }
 }
 impl From<ServiceError> for RuntimeError {

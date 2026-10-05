@@ -44,6 +44,15 @@ pub struct PendingJoin {
     /// Explicit selected new working-copy destination.
     pub path: PathBuf,
 }
+/// Nonsecret index entry; private invitation details remain in password-encrypted staging.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PendingJoinSummary {
+    /// Database whose enrollment can be resumed after authenticating its staging.
+    pub database: DatabaseId,
+    /// Explicit destination selected by the user.
+    pub path: PathBuf,
+}
 /// Progress distinguishes a pending approval from a completely saved encrypted database.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum JoinProgress {
@@ -74,28 +83,49 @@ pub(crate) struct Network {
 impl RuntimeHost {
     /// Start Iroh for this CLI lifetime. A relay is used only when explicitly selected.
     pub fn start_network(&self, relay: RelaySetting) -> Result<EndpointAddr, RuntimeError> {
+        *self
+            .requested_relay
+            .lock()
+            .map_err(|_| RuntimeError::Transport)? = Some(relay.clone());
+        let contexts = self.context.active_contexts()?;
+        let mut first = None;
+        for context in contexts {
+            if !context.profile.is_persistent() {
+                continue;
+            }
+            let address = self.start_context_network(context, relay.clone())?;
+            first.get_or_insert(address);
+        }
+        first.ok_or(RuntimeError::Closed)
+    }
+    fn start_context_network(
+        &self,
+        context: Arc<crate::host::HostContext>,
+        relay: RelaySetting,
+    ) -> Result<EndpointAddr, RuntimeError> {
         let mut slot = self.network.lock().map_err(|_| RuntimeError::Transport)?;
-        if let Some(network) = slot.as_ref() {
+        let key = context.transport.public();
+        if let Some(network) = slot.get(&key) {
             if network.relay != relay {
                 return Err(RuntimeError::Protocol);
             }
             return Ok(network.node.address());
         }
         let routes: BTreeMap<PublicKey, EndpointAddr> =
-            self.profile().load_state("routes")?.unwrap_or_default();
+            context.profile.load_state("routes")?.unwrap_or_default();
         for (key, address) in routes {
             if *address.id.as_bytes() != *key.as_bytes() {
                 return Err(RuntimeError::Protocol);
             }
-            self.context
+            context
                 .coordinator
                 .remember_route(address)
                 .map_err(sync_error)?;
         }
-        let backend: Arc<dyn taypeer_sync::Backend> = self.context.coordinator.clone();
+        let backend: Arc<dyn taypeer_sync::Backend> = context.coordinator.clone();
         let node = Arc::new(
             self.runtime
-                .block_on(Node::bind(&self.context.transport, &relay, backend))
+                .block_on(Node::bind(&context.transport, &relay, backend))
                 .map_err(sync_error)?,
         );
         if !matches!(relay, RelaySetting::Disabled) {
@@ -103,7 +133,6 @@ impl RuntimeHost {
         }
         let progress = Arc::new(Mutex::new(BTreeMap::new()));
         let updates = Arc::clone(&progress);
-        let context = Arc::clone(&self.context);
         let endpoint = Arc::clone(&node);
         let wake = Arc::new(tokio::sync::Notify::new());
         let triggered = Arc::clone(&wake);
@@ -178,21 +207,29 @@ impl RuntimeHost {
             }
         });
         let address = node.address();
-        *slot = Some(Network {
-            relay,
-            node,
-            pump,
-            progress,
-            wake,
-        });
+        slot.insert(
+            key,
+            Network {
+                relay,
+                node,
+                pump,
+                progress,
+                wake,
+            },
+        );
         Ok(address)
     }
     /// Stop all network tasks without closing the registered ciphertext files or open workers.
     pub fn stop_network(&self) {
-        // Serialize lifecycle changes, but never hold this lock for an exchange or disk write.
-        if let Ok(mut slot) = self.network.lock()
-            && let Some(network) = slot.take()
-        {
+        if let Ok(mut requested) = self.requested_relay.lock() {
+            *requested = None;
+        }
+        let networks = self
+            .network
+            .lock()
+            .map(|mut slot| std::mem::take(&mut *slot))
+            .unwrap_or_default();
+        for (_, network) in networks {
             network.pump.abort();
             self.runtime.block_on(async {
                 let _ = network.pump.await;
@@ -204,7 +241,17 @@ impl RuntimeHost {
         self.network
             .lock()
             .map_err(|_| RuntimeError::Transport)?
-            .as_ref()
+            .values()
+            .next()
+            .map(|network| Arc::clone(&network.node))
+            .ok_or(RuntimeError::Closed)
+    }
+    pub(crate) fn node_for(&self, database: &DatabaseId) -> Result<Arc<Node>, RuntimeError> {
+        let context = self.context.for_database(database)?;
+        self.network
+            .lock()
+            .map_err(|_| RuntimeError::Transport)?
+            .get(&context.transport.public())
             .map(|network| Arc::clone(&network.node))
             .ok_or(RuntimeError::Closed)
     }
@@ -212,21 +259,29 @@ impl RuntimeHost {
     pub fn network_address(&self) -> Result<EndpointAddr, RuntimeError> {
         Ok(self.network_node()?.address())
     }
+    /// Endpoint of the independently activated transport for a selected database.
+    pub fn network_address_for(&self, database: &DatabaseId) -> Result<EndpointAddr, RuntimeError> {
+        Ok(self.node_for(database)?.address())
+    }
     /// Safe per-peer receipt/error status. Application is reported separately by the worker.
     pub fn network_progress(&self) -> Result<Vec<PeerProgress>, RuntimeError> {
-        let progress = self
+        let progress: Vec<_> = self
             .network
             .lock()
             .map_err(|_| RuntimeError::Transport)?
-            .as_ref()
-            .map(|network| Arc::clone(&network.progress))
-            .ok_or(RuntimeError::Closed)?;
-        let values = progress
-            .lock()
-            .map_err(|_| RuntimeError::Transport)?
             .values()
-            .cloned()
+            .map(|network| Arc::clone(&network.progress))
             .collect();
+        let mut values = Vec::new();
+        for progress in progress {
+            values.extend(
+                progress
+                    .lock()
+                    .map_err(|_| RuntimeError::Transport)?
+                    .values()
+                    .cloned(),
+            );
+        }
         Ok(values)
     }
     /// Exchange once with an explicitly supplied route. The peer must already be admitted.
@@ -235,7 +290,7 @@ impl RuntimeHost {
         address: EndpointAddr,
         database: DatabaseId,
     ) -> Result<ExchangeReport, RuntimeError> {
-        let node = self.network_node()?;
+        let node = self.node_for(&database)?;
         self.runtime
             .block_on(node.exchange(address, database))
             .map_err(sync_error)
@@ -247,11 +302,13 @@ impl RuntimeHost {
         executable: &Path,
         code: InvitationCode,
         destination: &Path,
+        password: String,
     ) -> Result<JoinProgress, RuntimeError> {
         self.join_cancellable(
             executable,
             code,
             destination,
+            password,
             &NetworkCancellation::default(),
         )
     }
@@ -261,8 +318,10 @@ impl RuntimeHost {
         executable: &Path,
         code: InvitationCode,
         destination: &Path,
+        password: String,
         cancellation: &NetworkCancellation,
     ) -> Result<JoinProgress, RuntimeError> {
+        let password = Zeroizing::new(password);
         cancellation.check()?;
         if *code.address.id.as_bytes() != *code.invitation.transport.as_bytes() {
             return Err(RuntimeError::Protocol);
@@ -274,9 +333,11 @@ impl RuntimeHost {
         {
             return Err(storage(taypeer_storage::Error::AlreadyExists));
         }
-        let proof = Worker::enroll(
+        let (proof, enrollment) = Worker::enroll(
             executable,
-            self.profile(),
+            Arc::clone(&self.context),
+            &destination,
+            password.to_string(),
             code.invitation.clone(),
             &self.sessions,
         )?;
@@ -287,15 +348,43 @@ impl RuntimeHost {
             path: destination,
         };
         let request = code.invitation.id().map_err(|_| RuntimeError::Protocol)?;
+        if self.profile().is_linux_lazy() {
+            self.enrollments
+                .lock()
+                .map_err(|_| RuntimeError::Transport)?
+                .insert(request, enrollment);
+        } else {
+            enrollment
+                .control
+                .invalidate(crate::session::LockReason::Manual);
+            enrollment.control.wait_closed()?;
+        }
         let mut joins = self.pending_joins()?;
         if let Some(existing) = joins.get(&request)
             && (existing.path != pending.path || existing.proof != pending.proof)
         {
             return Err(RuntimeError::Protocol);
         }
+        if self.profile().is_linux_lazy() {
+            self.profile()
+                .save_join_request(request, &pending, password.as_bytes())?;
+        }
         joins.insert(request, pending);
-        self.profile().save_state("joins", &joins)?;
-        let node = self.network_node()?;
+        let context = self.context.for_database(&code.invitation.database)?;
+        let local: BTreeMap<_, _> = joins
+            .iter()
+            .filter(|(_, pending)| pending.invitation.database == code.invitation.database)
+            .map(|(id, pending)| (*id, pending.clone()))
+            .collect();
+        context.profile.save_state("joins", &local)?;
+        let relay = self
+            .requested_relay
+            .lock()
+            .map_err(|_| RuntimeError::Transport)?
+            .clone()
+            .unwrap_or(RelaySetting::Disabled);
+        self.start_network(relay)?;
+        let node = self.node_for(&code.invitation.database)?;
         let command = Command::Join {
             invitation: Box::new(code.invitation),
             secret: code.secret,
@@ -313,23 +402,109 @@ impl RuntimeHost {
     }
     /// Public enrollment requests retained through host restart, without their bearer secrets.
     pub fn pending_joins(&self) -> Result<BTreeMap<Digest, PendingJoin>, RuntimeError> {
-        Ok(self.profile().load_state("joins")?.unwrap_or_default())
+        let mut joins = BTreeMap::new();
+        for context in self.context.active_contexts()? {
+            joins.extend(
+                context
+                    .profile
+                    .load_state::<BTreeMap<Digest, PendingJoin>>("joins")?
+                    .unwrap_or_default(),
+            );
+        }
+        Ok(joins)
+    }
+    /// List resumable requests without acquiring their author/transport credentials.
+    pub fn pending_join_summaries(
+        &self,
+    ) -> Result<BTreeMap<Digest, PendingJoinSummary>, RuntimeError> {
+        if self.profile().is_linux_lazy() {
+            return self.profile().join_summaries().map_err(RuntimeError::from);
+        }
+        Ok(self
+            .pending_joins()?
+            .into_iter()
+            .map(|(request, pending)| {
+                (
+                    request,
+                    PendingJoinSummary {
+                        database: pending.invitation.database,
+                        path: pending.path,
+                    },
+                )
+            })
+            .collect())
     }
     /// Resume approval/download using authenticated recipient identity, including after code expiry.
     /// Each fully fetched object is durably staged and reused after interruption.
-    pub fn resume_join(&self, request: Digest) -> Result<JoinProgress, RuntimeError> {
-        self.resume_join_cancellable(request, &NetworkCancellation::default())
+    pub fn resume_join(
+        &self,
+        request: Digest,
+        password: String,
+    ) -> Result<JoinProgress, RuntimeError> {
+        self.resume_join_cancellable(request, password, &NetworkCancellation::default())
     }
     /// Resume a download; cancellation keeps completely staged ciphertext for the next attempt.
     pub fn resume_join_cancellable(
         &self,
         request: Digest,
+        password: String,
         cancellation: &NetworkCancellation,
     ) -> Result<JoinProgress, RuntimeError> {
+        let password = Zeroizing::new(password);
         cancellation.check()?;
         let mut joins = self.pending_joins()?;
-        let pending = joins.get(&request).ok_or(RuntimeError::Protocol)?.clone();
-        let node = self.network_node()?;
+        let active_enrollment = self
+            .enrollments
+            .lock()
+            .map_err(|_| RuntimeError::Transport)?
+            .get(&request)
+            .is_some_and(|client| client.control.check(false).is_ok());
+        let pending = if let Some(pending) = joins
+            .get(&request)
+            .filter(|_| !self.profile().is_linux_lazy() || active_enrollment)
+        {
+            pending.clone()
+        } else if self.profile().is_linux_lazy() {
+            let pending = self
+                .profile()
+                .restore_join_request(request, password.as_bytes())?;
+            let executable = std::env::current_exe().map_err(|_| RuntimeError::Transport)?;
+            let (proof, enrollment) = Worker::enroll(
+                &executable,
+                Arc::clone(&self.context),
+                &pending.path,
+                password.to_string(),
+                pending.invitation.clone(),
+                &self.sessions,
+            )?;
+            if proof != pending.proof {
+                return Err(RuntimeError::Protocol);
+            }
+            self.enrollments
+                .lock()
+                .map_err(|_| RuntimeError::Transport)?
+                .insert(request, enrollment);
+            joins.insert(request, pending.clone());
+            let context = self.context.for_database(&pending.invitation.database)?;
+            let local: BTreeMap<_, _> = joins
+                .iter()
+                .filter(|(_, other)| other.invitation.database == pending.invitation.database)
+                .map(|(id, pending)| (*id, pending.clone()))
+                .collect();
+            context.profile.save_state("joins", &local)?;
+            let relay = self
+                .requested_relay
+                .lock()
+                .map_err(|_| RuntimeError::Transport)?
+                .clone()
+                .unwrap_or(RelaySetting::Disabled);
+            self.start_network(relay)?;
+            pending
+        } else {
+            return Err(RuntimeError::Protocol);
+        };
+        let context = self.context.for_database(&pending.invitation.database)?;
+        let node = self.node_for(&pending.invitation.database)?;
         let command = Command::JoinStatus {
             database: pending.invitation.database.clone(),
             request,
@@ -345,16 +520,48 @@ impl RuntimeHost {
             _ => return Err(RuntimeError::Protocol),
         };
         let database = self.download_join(request, &pending, metadata, cancellation)?;
-        self.context
+        if self.profile().is_linux_lazy() {
+            // An incorrect password preserves ciphertext and the pending request for retry.
+            let enrollment = self
+                .enrollments
+                .lock()
+                .map_err(|_| RuntimeError::Transport)?
+                .get(&request)
+                .cloned()
+                .ok_or(RuntimeError::Closed)?;
+            enrollment.request(
+                &crate::Command::BindInvitation {
+                    path: pending.path.clone(),
+                    password: Zeroizing::new(password.as_bytes().to_vec()),
+                },
+                false,
+            )?;
+            enrollment
+                .control
+                .invalidate(crate::session::LockReason::Manual);
+            enrollment.control.wait_closed()?;
+            self.enrollments
+                .lock()
+                .map_err(|_| RuntimeError::Transport)?
+                .remove(&request);
+        }
+        context
             .coordinator
             .remember_route(pending.address)
             .map_err(sync_error)?;
-        self.profile().save_state(
-            "routes",
-            &self.context.coordinator.routes().map_err(sync_error)?,
-        )?;
+        context
+            .profile
+            .save_state("routes", &context.coordinator.routes().map_err(sync_error)?)?;
         joins.remove(&request);
-        self.profile().save_state("joins", &joins)?;
+        let local: BTreeMap<_, _> = joins
+            .iter()
+            .filter(|(_, other)| other.invitation.database == pending.invitation.database)
+            .map(|(id, pending)| (*id, pending.clone()))
+            .collect();
+        context.profile.save_state("joins", &local)?;
+        if self.profile().is_linux_lazy() {
+            self.profile().finish_join_request(request)?;
+        }
         Ok(JoinProgress::Received(database))
     }
     fn download_join(
@@ -364,6 +571,7 @@ impl RuntimeHost {
         metadata: ArchiveMetadata,
         cancellation: &NetworkCancellation,
     ) -> Result<DatabaseId, RuntimeError> {
+        let context = self.context.for_database(&pending.invitation.database)?;
         let chain = metadata.verify(pending.invitation.root).map_err(storage)?;
         let sequence = chain
             .at(pending.invitation.control)
@@ -398,19 +606,26 @@ impl RuntimeHost {
         {
             // Lost final local response: only an already protected matching registration
             // can make an existing destination an idempotent continuation.
-            let registration = self
-                .profile()
+            let registration = context
+                .profile
                 .registration(&pending.path)?
                 .ok_or(RuntimeError::Protocol)?;
             if registration.root != pending.invitation.root {
                 return Err(RuntimeError::Protocol);
             }
-            self.context.attach(&pending.path)?;
+            context.attach(&pending.path)?;
             return Ok(registration.database);
         }
-        let directory = self.profile().directory().join(format!("join-{request}"));
-        std::fs::create_dir_all(&directory).map_err(|_| RuntimeError::Transport)?;
-        let node = self.network_node()?;
+        let directory = context.profile.directory().join(format!("join-{request}"));
+        use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&directory)
+            .map_err(|_| RuntimeError::Transport)?;
+        std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700))
+            .map_err(|_| RuntimeError::Transport)?;
+        let node = self.node_for(&pending.invitation.database)?;
         let mut candidate = ArchiveCandidate::new();
         for descriptor in metadata.manifest.body.objects.values() {
             cancellation.check()?;
@@ -460,9 +675,9 @@ impl RuntimeHost {
         let mut body = metadata.manifest.body;
         body.generation = 0;
         let signed = candidate
-            .metadata(&chain, &self.context.transport, body, metadata.journal)
+            .metadata(&chain, &context.transport, body, metadata.journal)
             .map_err(storage)?;
-        let registration = self.profile().prepare_registration(
+        let registration = context.profile.prepare_registration(
             &pending.path,
             chain.head().database.clone(),
             pending.invitation.root,
@@ -471,14 +686,11 @@ impl RuntimeHost {
             &pending.path,
             &candidate,
             signed,
-            Some(self.profile().anchor(&registration)),
+            Some(context.profile.anchor(&registration)),
         )
         .map_err(storage)?;
-        self.context
-            .coordinator
-            .register(store)
-            .map_err(sync_error)?;
-        self.context
+        context.coordinator.register(store).map_err(sync_error)?;
+        context
             .copies
             .lock()
             .map_err(|_| RuntimeError::Transport)?

@@ -14,9 +14,25 @@ deployment {
     vault = instanceOf taypeer.vault
     local = instanceOf taypeer.local
   }
-  linux = device 'Linux — после v1' {
-    technology 'Linux; planned'
-    ui = instanceOf taypeer.desktop
+  linux = device 'Linux владельца — v1' {
+    technology 'NixOS x86_64; niri / Wayland; Nix package'
+    description 'Целевая приёмка. Каждая БД активирует обмен после первого ввода мастер-пароля; отдельного пароля устройства нет.'
+    host = process 'Desktop host' {
+      ui = instanceOf taypeer.desktop
+      guard = instanceOf taypeer.sessionGuard
+      coordinator = instanceOf taypeer.coordinator
+      sync = instanceOf taypeer.sync
+      platform = instanceOf taypeer.linuxPlatform
+    }
+    worker = process 'Одна разблокированная БД' {
+      worker = instanceOf taypeer.secretWorker
+      sessions = instanceOf taypeer.sessions
+      document = instanceOf taypeer.document
+      crypto = instanceOf taypeer.crypto
+    }
+    credentials = instanceOf taypeer.localCredentials
+    state = instanceOf taypeer.localState
+    vault = instanceOf taypeer.vault
   }
   windows = device 'Windows — после v1' {
     technology 'Windows; planned'
@@ -81,8 +97,8 @@ views 'Развёртывание' {
 views 'Развёртывание' {
   deployment view desktopTargets {
     title 'Общий desktop UI — текущая и будущие платформы'
-    description 'macOS реализован частично; Linux/Windows показывают намерение, не готовые порты.'
-    include mac, linux, windows, mac.ui, linux.ui, windows.ui
+    description 'macOS реализован частично; Linux входит в v1 и требует нативной приёмки; Windows отложен.'
+    include mac, linux, windows, mac.ui, linux.host.ui, windows.ui
     autoLayout LeftRight
   }
 }
@@ -95,6 +111,15 @@ views 'Развёртывание' {
     exclude
       android.worker.storage -> android.vault,
       android.worker.platform -> android.local
+    autoLayout LeftRight
+  }
+}
+
+views 'Развёртывание' {
+  deployment view linuxProcesses {
+    title 'Linux — host, worker и локальные credentials'
+    description 'Планируемая граница полномочий; обмен ciphertext продолжается после завершения worker.'
+    include linux, linux.host, linux.host.*, linux.worker, linux.worker.*, linux.credentials, linux.state, linux.vault
     autoLayout LeftRight
   }
 }

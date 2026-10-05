@@ -77,62 +77,62 @@ impl RuntimeHost {
         } else {
             Vec::new()
         };
-        let databases: Vec<_> = self
-            .context
-            .copies
-            .lock()
-            .map_err(|_| RuntimeError::Transport)?
-            .values()
-            .map(|copy| copy.database.clone())
-            .collect();
         let mut result = NetworkSnapshot {
             running,
             databases: Vec::new(),
         };
-        for database in databases {
-            let snapshot = self
-                .context
-                .coordinator
-                .snapshot(&database)
-                .map_err(sync_error)?;
-            let head = snapshot.chain().head();
-            let devices: Vec<_> = head
-                .members
+        for context in self.context.active_contexts()? {
+            let databases: Vec<_> = context
+                .copies
+                .lock()
+                .map_err(|_| RuntimeError::Transport)?
                 .values()
-                .map(|member| DeviceExchange {
-                    id: member.identity.device,
-                    local: member.identity.transport == self.context.transport.public(),
-                    manager: member.identity.device == head.manager,
-                    progress: progress
-                        .iter()
-                        .find(|p| p.database == database && p.peer == member.identity.transport)
-                        .cloned(),
-                })
+                .map(|copy| copy.database.clone())
                 .collect();
-            result.databases.push(DatabaseExchange {
-                database,
-                managing: devices.iter().any(|device| device.local && device.manager),
-                devices,
-                invitations: snapshot
-                    .metadata()
-                    .journal
-                    .invitations
-                    .iter()
-                    .map(|(id, record)| (*id, record.status.clone()))
-                    .collect(),
-            });
+            for database in databases {
+                let snapshot = context
+                    .coordinator
+                    .snapshot(&database)
+                    .map_err(sync_error)?;
+                let head = snapshot.chain().head();
+                let devices: Vec<_> = head
+                    .members
+                    .values()
+                    .map(|member| DeviceExchange {
+                        id: member.identity.device,
+                        local: member.identity.transport == context.transport.public(),
+                        manager: member.identity.device == head.manager,
+                        progress: progress
+                            .iter()
+                            .find(|p| p.database == database && p.peer == member.identity.transport)
+                            .cloned(),
+                    })
+                    .collect();
+                result.databases.push(DatabaseExchange {
+                    database,
+                    managing: devices.iter().any(|device| device.local && device.manager),
+                    devices,
+                    invitations: snapshot
+                        .metadata()
+                        .journal
+                        .invitations
+                        .iter()
+                        .map(|(id, record)| (*id, record.status.clone()))
+                        .collect(),
+                });
+            }
         }
         Ok(result)
     }
     /// Schedule an immediate automatic exchange without starting duplicate per-peer jobs.
     pub fn wake_network(&self) -> Result<(), RuntimeError> {
-        self.network
-            .lock()
-            .map_err(|_| RuntimeError::Transport)?
-            .as_ref()
-            .ok_or(RuntimeError::Closed)?
-            .wake
-            .notify_one();
+        let networks = self.network.lock().map_err(|_| RuntimeError::Transport)?;
+        if networks.is_empty() {
+            return Err(RuntimeError::Closed);
+        }
+        for network in networks.values() {
+            network.wake.notify_one();
+        }
         Ok(())
     }
     /// Exchange with the known route of one verified member or all admitted peers.
@@ -143,18 +143,15 @@ impl RuntimeHost {
         selected: Option<DeviceId>,
         cancellation: &NetworkCancellation,
     ) -> Result<Vec<PeerProgress>, RuntimeError> {
-        let snapshot = self
-            .context
-            .coordinator
-            .snapshot(database)
-            .map_err(sync_error)?;
-        let routes = self.context.coordinator.routes().map_err(sync_error)?;
-        let node = self.network_node()?;
+        let context = self.context.for_database(database)?;
+        let snapshot = context.coordinator.snapshot(database).map_err(sync_error)?;
+        let routes = context.coordinator.routes().map_err(sync_error)?;
+        let node = self.node_for(database)?;
         let mut result = Vec::new();
         for member in snapshot.chain().head().members.values() {
             cancellation.check()?;
             let peer = member.identity.transport;
-            if peer == self.context.transport.public()
+            if peer == context.transport.public()
                 || selected.is_some_and(|id| id != member.identity.device)
             {
                 continue;
@@ -172,7 +169,7 @@ impl RuntimeHost {
                 result: exchange,
             };
             if let Ok(slot) = self.network.lock()
-                && let Some(network) = slot.as_ref()
+                && let Some(network) = slot.get(&context.transport.public())
                 && Arc::ptr_eq(&network.node, &node)
                 && let Ok(mut updates) = network.progress.lock()
             {

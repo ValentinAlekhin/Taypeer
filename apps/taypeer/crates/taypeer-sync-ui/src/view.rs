@@ -17,6 +17,7 @@ use taypeer_ui::style::*;
 pub struct SyncView<H: SyncHost> {
     store: Entity<H>,
     code: Entity<InputState>,
+    password: Entity<InputState>,
     error: Option<&'static str>,
     selecting: bool,
     epoch: u64,
@@ -26,12 +27,15 @@ impl<H: SyncHost> SyncView<H> {
     /// Create the invitation input and subscriptions once for this view.
     pub fn new(store: Entity<H>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let code = input("", true, window, cx);
+        let password = input("", true, window, cx);
         let epoch = store.read(cx).secret_epoch();
         let subscription = cx.observe_in(&store, window, |this, store, window, cx| {
             let epoch = store.read(cx).secret_epoch();
             let receiving = store.read(cx).is_receiving();
             if epoch != this.epoch || !receiving {
                 this.code
+                    .update(cx, |input, cx| input.set_value("", window, cx));
+                this.password
                     .update(cx, |input, cx| input.set_value("", window, cx));
                 this.epoch = epoch;
                 this.error = None;
@@ -41,6 +45,7 @@ impl<H: SyncHost> SyncView<H> {
         Self {
             store,
             code,
+            password,
             error: None,
             selecting: false,
             epoch,
@@ -59,6 +64,7 @@ impl<H: SyncHost> SyncView<H> {
                 return;
             }
         };
+        let password = zeroize::Zeroizing::new(self.password.read(cx).value().to_string());
         self.error = None;
         self.selecting = true;
         let epoch = self.epoch;
@@ -77,8 +83,11 @@ impl<H: SyncHost> SyncView<H> {
                     Ok(Some(path)) => {
                         this.code
                             .update(cx, |input, cx| input.set_value("", window, cx));
-                        this.store
-                            .update(cx, |store, cx| store.join_database(code, path, cx));
+                        this.password
+                            .update(cx, |input, cx| input.set_value("", window, cx));
+                        this.store.update(cx, |store, cx| {
+                            store.join_database(code, path, password.to_string(), cx)
+                        });
                     }
                     Ok(None) => {}
                     _ => this.error = Some("ui.file_error"),
@@ -130,6 +139,20 @@ impl<H: SyncHost> SyncView<H> {
                         true,
                     )),
             )
+            .child(div().text_sm().child(tr("ui.master_password")))
+            .child(
+                div()
+                    .max_w(rems(42.5))
+                    .child(taypeer_ui::clipboard::secret_field(
+                        Input::new(&self.password)
+                            .id("invitation-password")
+                            .aria_label(tr("ui.master_password"))
+                            .mask_toggle()
+                            .disabled(sync.busy() || self.selecting),
+                        &self.password,
+                        true,
+                    )),
+            )
             .child(
                 h_flex()
                     .gap_3()
@@ -170,8 +193,12 @@ impl<H: SyncHost> SyncView<H> {
                         Button::new(SharedString::from(format!("resume-{request}")))
                             .label(tr("sync.resume"))
                             .disabled(sync.busy())
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.store.update(cx, |s, cx| s.resume_join(request, cx))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                let password = this.password.read(cx).value().to_string();
+                                this.password
+                                    .update(cx, |input, cx| input.set_value("", window, cx));
+                                this.store
+                                    .update(cx, |s, cx| s.resume_join(request, password, cx))
                             })),
                     )
             }))

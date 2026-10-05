@@ -10,7 +10,11 @@ impl Host {
         self.ensure_runtime()?;
         let runtime = self.runtime.as_mut().ok_or(CliError::Io)?;
         if runtime.network_address().is_err() {
-            runtime.start_network(RelaySetting::Disabled)?;
+            match runtime.start_network(RelaySetting::Disabled) {
+                Err(taypeer_runtime::RuntimeError::Closed) => {}
+                Err(error) => return Err(error.into()),
+                Ok(_) => {}
+            }
         }
         Ok(())
     }
@@ -136,13 +140,13 @@ impl Host {
                 let (invitation, secret): (Invitation, Zeroizing<[u8; 32]>) =
                     serde_json::from_value(material).map_err(|_| CliError::Io)?;
                 value(InvitationCode {
-                    invitation,
+                    invitation: invitation.clone(),
                     secret,
                     address: self
                         .runtime
                         .as_ref()
                         .ok_or(CliError::Io)?
-                        .network_address()?,
+                        .network_address_for(&invitation.database)?,
                 })
             }
             InviteCommand::Requests => {
@@ -151,7 +155,7 @@ impl Host {
                     .runtime
                     .as_ref()
                     .ok_or(CliError::Io)?
-                    .coordinator()
+                    .database_coordinator(&taypeer_core::DatabaseId::new(id.clone()))?
                     .snapshot(&taypeer_core::DatabaseId::new(id))
                     .map_err(|_| CliError::Io)?;
                 value(&snapshot.metadata().journal.invitations)
@@ -171,27 +175,35 @@ impl Host {
                     None => serde_json::from_str(&self.input.secret("invitation_code")?)
                         .map_err(|_| CliError::Input)?,
                 };
+                let password = self.input.secret("master_password")?;
                 self.ensure_network()?;
                 value(self.runtime.as_ref().ok_or(CliError::Io)?.join(
                     &self.executable,
                     code,
                     &path,
+                    password.to_string(),
                 )?)
             }
             InviteCommand::Pending => {
                 self.ensure_runtime()?;
-                value(self.runtime.as_ref().ok_or(CliError::Io)?.pending_joins()?)
+                value(
+                    self.runtime
+                        .as_ref()
+                        .ok_or(CliError::Io)?
+                        .pending_join_summaries()?,
+                )
             }
             InviteCommand::Resume { request } => {
                 self.ensure_network()?;
                 let runtime = self.runtime.as_ref().ok_or(CliError::Io)?;
                 let path = runtime
-                    .pending_joins()?
+                    .pending_join_summaries()?
                     .get(&request)
                     .ok_or(CliError::Input)?
                     .path
                     .clone();
-                let progress = runtime.resume_join(request)?;
+                let password = self.input.secret("master_password")?;
+                let progress = runtime.resume_join(request, password.to_string())?;
                 if let JoinProgress::Received(database) = &progress {
                     let id = database.as_str().to_owned();
                     self.databases.insert(

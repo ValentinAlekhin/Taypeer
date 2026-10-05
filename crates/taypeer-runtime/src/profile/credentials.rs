@@ -3,8 +3,12 @@ use super::*;
 
 #[derive(Clone)]
 pub(super) enum Credentials {
+    #[cfg(not(target_os = "linux"))]
     Native,
+    #[cfg(target_os = "linux")]
+    LazyLinux,
     Platform(Arc<dyn CredentialStore>),
+    Transient(Arc<dyn CredentialStore>),
     #[cfg(feature = "ui-test-support")]
     Fixture(PathBuf),
 }
@@ -15,8 +19,11 @@ impl Credentials {
         account: &str,
     ) -> Result<Option<Zeroizing<Vec<u8>>>, ProfileError> {
         match self {
+            #[cfg(target_os = "linux")]
+            Self::LazyLinux => Err(ProfileError::Credentials),
+            #[cfg(not(target_os = "linux"))]
             Self::Native => native::get(service, account),
-            Self::Platform(store) => {
+            Self::Platform(store) | Self::Transient(store) => {
                 let value = store.get(service, account)?;
                 if value.as_ref().is_some_and(|bytes| bytes.len() > 65536) {
                     return Err(ProfileError::Invalid);
@@ -51,8 +58,11 @@ impl Credentials {
         bytes: &[u8],
     ) -> Result<(), ProfileError> {
         match self {
+            #[cfg(target_os = "linux")]
+            Self::LazyLinux => Err(ProfileError::Credentials),
+            #[cfg(not(target_os = "linux"))]
             Self::Native => native::set(service, account, bytes),
-            Self::Platform(store) => {
+            Self::Platform(store) | Self::Transient(store) => {
                 if bytes.len() > 65536 {
                     return Err(ProfileError::Invalid);
                 }

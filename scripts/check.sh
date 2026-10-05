@@ -24,12 +24,12 @@ cargo check-all
 cargo lint
 cargo test --workspace --exclude taypeer --all-features --locked
 cargo test -p taypeer --lib --all-features --locked
-if [ "$(uname -s)" = Darwin ]; then
+if [ "$(uname -s)" = Darwin ] || [ "$(uname -s)" = Linux ]; then
     cargo test -p taypeer --features ui-test-support --test ui --locked -- --test-threads=1
 fi
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked
 cargo build --workspace --release --locked
-cargo run --locked --quiet -p taypeer -- --smoke-test
+cargo run --locked --quiet -p taypeer --features ui-test-support -- --smoke-test
 
 if [ "$native_keychain" -eq 1 ]; then
     echo "Explicit native tests: macOS Keychain may request access. Do not rebuild CLI concurrently."

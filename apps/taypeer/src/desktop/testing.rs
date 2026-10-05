@@ -89,7 +89,7 @@ impl Session {
             session
                 .cx
                 .capture_screenshot(session.window)
-                .expect("PNG requested, but offscreen Metal rendering is unavailable");
+                .expect("PNG requested, but offscreen rendering is unavailable");
         }
         session
     }
@@ -238,6 +238,12 @@ impl Session {
     /// Deliver an OS lock event through the platform boundary.
     pub fn system_lock(&mut self) {
         self.cx.update(|cx| cx.global::<Platform>().fixture_lock());
+    }
+    /// Deliver confirmed OS activity before allowing fresh authentication.
+    pub fn system_active(&mut self) {
+        self.cx
+            .update(|cx| cx.global::<Platform>().fixture_active());
+        self.pump();
     }
     /// Transfer the fixture helper's clipboard to another GPUI test platform.
     pub fn transfer_clipboard_to(&mut self, other: &mut Session) {

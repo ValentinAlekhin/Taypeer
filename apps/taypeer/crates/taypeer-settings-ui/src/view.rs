@@ -231,14 +231,15 @@ impl<H: SettingsHost> SettingsView<H> {
                     ),
                 cx,
             ))
-            .child(section("ui.touch_id"))
-            .child(row(
-                "ui.biometric",
-                Button::new("biometric")
-                    .disabled(true)
-                    .label(tr("ui.touch_id_unavailable")),
-                cx,
-            ))
+            .when(cfg!(target_os = "macos"), |column| {
+                column.child(section("ui.touch_id")).child(row(
+                    "ui.biometric",
+                    Button::new("biometric")
+                        .disabled(true)
+                        .label(tr("ui.touch_id_unavailable")),
+                    cx,
+                ))
+            })
             .child(section("ui.connection"))
             .child(row(
                 "ui.relay",

@@ -36,8 +36,10 @@ views 'Обзор' {
       taypeer.ffi,
       taypeer.sessions,
       taypeer.macPlatform,
+      taypeer.linuxPlatform,
       taypeer.androidPlatform,
       macos,
+      linuxos,
       androidos,
       taypeer.theme,
       taypeer.generator,
@@ -61,6 +63,8 @@ views 'Обзор' {
       taypeer.compatibility,
       taypeer.vault,
       taypeer.local,
+      taypeer.localCredentials,
+      taypeer.localState,
       peer,
       relay
     autoLayout LeftRight

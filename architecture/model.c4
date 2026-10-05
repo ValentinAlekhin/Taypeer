@@ -9,6 +9,7 @@ model {
     description 'Маршрут обмена при разрешении пользователя; не хранилище БД.'
   }
   macos = external 'macOS' { #external }
+  linuxos = external 'Linux / NixOS' { #external }
   androidos = external 'Android' { #external }
   files = external 'Выбранные файлы' { #external }
   websites = external 'Источники иконок' { #external }
@@ -22,7 +23,7 @@ model {
       #partial
       technology 'Rust + GPUI + GPUI Kit'
       style { color blue; border solid }
-      description 'Общий GPUI-клиент; текущая реализация macOS. Подключается к общему runtime через типизированный адаптер и процессы БД. Headless smoke остаётся отдельной проверкой сервиса.'
+      description 'Общий GPUI-клиент; реализация macOS и Linux с отдельной нативной приёмкой. Подключается к общему runtime через типизированный адаптер и процессы БД. Headless smoke остаётся отдельной проверкой сервиса.'
       metadata {
         source 'apps/taypeer/src/main.rs'
         evidence 'spikes/gpui-android/MACOS-2026-09-09.md'
@@ -50,19 +51,19 @@ model {
     secretWorker = component 'Процесс открытой БД' {
       #partial
       technology 'Rust; отдельный процесс'
-      description 'Владеет открытым документом и ключами чтения. Блокировка инвалидирует сессию и завершает процесс даже при ошибке черновика.'
+      description 'Владеет открытым документом, ключами БД и авторским ключом. Linux передаёт host только независимую транспортную capability. Блокировка инвалидирует сессию и завершает процесс даже при ошибке черновика.'
       metadata { source 'crates/taypeer-runtime/src/lib.rs'; contract 'docs/core-cli.md'; evidence 'apps/taypeer-cli/tests/files.rs' }
     }
     sessionGuard = component 'Контроль времени жизни сессий' {
       #partial
       technology 'Rust; runtime'
-      description 'Общий монотонный таймер, инвалидирование ответов и завершение процессов CLI/macOS независимо от команд. AppKit передаёт события ОС; нативная приёмка остаётся открытой.'
+      description 'Общий монотонный таймер, инвалидирование ответов и завершение процессов CLI/desktop независимо от команд. AppKit и Linux-адаптер передают события ОС; нативная приёмка остаётся открытой.'
       metadata { source 'crates/taypeer-runtime/src/session/mod.rs'; contract 'docs/sessions.md'; evidence 'crates/taypeer-runtime/src/worker/tests.rs' }
     }
     coordinator = component 'Координатор рабочей копии' {
       #partial
       style { border solid }
-      technology 'Rust; host CLI/macOS'
+      technology 'Rust; host CLI/desktop'
       description 'Единственный файловый writer. Сериализует зашифрованные кандидаты и приём, проверяет поколение и подтверждает только надёжную фиксацию.'
       metadata { source 'crates/taypeer-sync/src/coordinator.rs'; contract 'docs/p2p.md'; evidence 'docs/p2p-acceptance.md' }
     }
@@ -157,6 +158,22 @@ model {
       description 'Credentials runtime, файловые диалоги GPUI и безоконный AppKit helper: lifecycle, защищённое копирование целого значения или выделения, подтверждение записи и очистка по владению. Биометрия пока недоступна.'
       metadata { source 'apps/taypeer/crates/taypeer-desktop-platform/src/macos.rs'; contract 'docs/architecture.md' }
     }
+    linuxPlatform = component 'Адаптеры Linux' {
+      #partial
+      technology 'Rust; logind / ScreenSaver; Wayland data-control'
+      description 'События ОС, буфер с подтверждением владения, XDG-профиль и зашифрованные credentials каждой БД; без Secret Service и пароля устройства.'
+      metadata { contract 'docs/linux.md'; source 'apps/taypeer/crates/taypeer-desktop-platform/src/lib.rs' }
+    }
+    localCredentials = store 'Credentials каждой БД' {
+      #partial
+      description 'Авторский ключ и независимый LocalStateKey зашифрованы ключом эпохи БД; только локальный профиль.'
+      metadata { contract 'docs/storage.md'; source 'crates/taypeer-runtime/src/profile/linux.rs'; evidence 'crates/taypeer-runtime/src/host/linux_tests.rs' }
+    }
+    localState = store 'Независимое локальное состояние БД' {
+      #partial
+      description 'LocalStateStore поверх FileStore: транспортный ключ, регистрация и контрольные отметки. Без ключей чтения и авторства.'
+      metadata { contract 'docs/storage.md'; source 'crates/taypeer-runtime/src/profile/linux.rs'; evidence 'crates/taypeer-runtime/src/host/linux_tests.rs' }
+    }
     androidPlatform = component 'Адаптеры Android' {
       #partial
       technology 'Kotlin + AndroidX'
@@ -183,6 +200,15 @@ model {
 
   }
 
+  taypeer.desktop -> taypeer.linuxPlatform 'События ОС, буфер, профиль и диалоги'
+  taypeer.cli -> taypeer.linuxPlatform 'Ленивые контексты БД и XDG-профиль'
+  taypeer.linuxPlatform -> linuxos 'logind, ScreenSaver и Wayland'
+  taypeer.linuxPlatform -> taypeer.sessionGuard 'Немедленно отозвать доступ при сне, блокировке или потере событий'
+  taypeer.secretWorker -> taypeer.localCredentials 'Проверить и расшифровать после мастер-пароля'
+  taypeer.secretWorker -> taypeer.coordinator 'Приватный IPC: независимая транспортная capability'
+  taypeer.coordinator -> taypeer.localState 'Регистрация, транспорт и prepared/final markers'
+  taypeer.storage -> taypeer.localCredentials 'Атомарное зашифрованное хранение эпохи'
+  taypeer.storage -> taypeer.localState 'FileStore под независимым LocalStateKey'
   owner -> taypeer.desktop 'Работает с БД'
   owner -> taypeer.android 'Работает с БД'
   owner -> taypeer.cli 'Команды и интерактивная сессия'

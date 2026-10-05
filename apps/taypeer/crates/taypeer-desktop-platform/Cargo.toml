@@ -14,8 +14,22 @@ serde.workspace = true
 serde_json.workspace = true
 zeroize.workspace = true
 
+[target.'cfg(target_os = "linux")'.dependencies]
+gpui-kit.workspace = true
+wayland-client.workspace = true
+wayland-protocols.workspace = true
+wayland-protocols-wlr.workspace = true
+zbus.workspace = true
+rustix.workspace = true
+rand_core.workspace = true
+
 [target.'cfg(target_os = "macos")'.dependencies]
 gpui-kit.workspace = true
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+wayland-server.workspace = true
+wayland-protocols = { workspace = true, features = ["server"] }
+wayland-protocols-wlr = { workspace = true, features = ["server"] }
 
 [lints]
 workspace = true

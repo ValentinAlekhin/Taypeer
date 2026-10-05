@@ -1,16 +1,23 @@
 //! Taypeer UI prototype and portable headless service smoke.
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use taypeer_runtime_client as backend;
 mod launch;
-#[cfg(all(target_os = "macos", feature = "ui-test-support"))]
+#[cfg(all(
+    any(target_os = "macos", target_os = "linux"),
+    feature = "ui-test-support"
+))]
 use taypeer_settings_ui::local_settings;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 mod desktop;
+#[cfg(any(test, feature = "ui-test-support"))]
 mod smoke;
-#[cfg(all(target_os = "macos", feature = "ui-test-support"))]
+#[cfg(all(
+    any(target_os = "macos", target_os = "linux"),
+    feature = "ui-test-support"
+))]
 pub use desktop::testing;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 rust_i18n::i18n!("locales", fallback = "en");
 
 /// Start the native application or its private worker mode.
@@ -33,19 +40,27 @@ pub fn run() {
         }
     };
     if mode == launch::LaunchMode::Smoke {
-        smoke::run();
-        return;
+        #[cfg(any(test, feature = "ui-test-support"))]
+        {
+            smoke::run();
+            return;
+        }
+        #[cfg(not(any(test, feature = "ui-test-support")))]
+        {
+            eprintln!("The public demo smoke requires the ui-test-support feature.");
+            std::process::exit(2);
+        }
     }
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     match mode {
         launch::LaunchMode::Ui => {
             desktop::run(launch::profile(&args).expect("validated UI arguments"))
         }
         launch::LaunchMode::Smoke => unreachable!("smoke mode returned above"),
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
-        eprintln!("The GUI requires macOS. Use --smoke-test for the portable demo.");
+        eprintln!("The GUI requires macOS or Linux. Use --smoke-test for the portable demo.");
         std::process::exit(2);
     }
 }

@@ -24,6 +24,15 @@ pub use pending::ReceivedSource;
 #[cfg(test)]
 mod tests;
 
+/// Stages of the local credential transaction surrounding a database epoch commit.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum EpochCredentialStage {
+    /// Durably prepare the new object and marker before committing the database.
+    Prepare,
+    /// Publish the new object and final marker after the database commit.
+    Finalize,
+}
+
 impl From<taypeer_trust::Error> for ServiceError {
     fn from(error: taypeer_trust::Error) -> Self {
         Self::Trust(error)
@@ -450,6 +459,49 @@ impl DatabaseService {
             objects: vec![checkpoint, baseline],
         })
     }
+    /// Authenticate a portable archive before acquiring local credentials. The returned
+    /// epoch key belongs exclusively to the plaintext worker, never its host.
+    pub fn authenticate_archive_credentials(
+        snapshot: &ArchiveSnapshot,
+        password: &[u8],
+    ) -> Result<ReadKey, ServiceError> {
+        let active = snapshot.object(snapshot.metadata().manifest.body.checkpoint)?;
+        let latest = snapshot.chain().head_hash()?;
+        let selected = if active.envelope().epoch != snapshot.chain().head().epoch
+            || active.envelope().control != latest
+        {
+            latest_baseline(snapshot)?
+        } else {
+            active
+        };
+        let key = selected.unlock_key(password)?;
+        let _ = codec::read_checkpoint(&selected, &key, snapshot.chain())?;
+        Ok(key)
+    }
+
+    /// Obtain authenticated historical epoch keys solely for rewrapping local credentials
+    /// after a learned rotation. This API is confined to the plaintext worker.
+    pub fn authenticate_archive_keyring(
+        snapshot: &ArchiveSnapshot,
+        password: &[u8],
+    ) -> Result<Vec<(u64, ReadKey)>, ServiceError> {
+        let active = snapshot.object(snapshot.metadata().manifest.body.checkpoint)?;
+        let selected = if active.envelope().epoch != snapshot.chain().head().epoch
+            || active.envelope().control != snapshot.chain().head_hash()?
+        {
+            latest_baseline(snapshot)?
+        } else {
+            active
+        };
+        let key = selected.unlock_key(password)?;
+        let (metadata, _) = codec::read_checkpoint(&selected, &key, snapshot.chain())?;
+        metadata
+            .keys
+            .keys()
+            .map(|epoch| Ok((*epoch, metadata.key(*epoch)?)))
+            .collect()
+    }
+
     /// Authenticate a registered or copied archive. The credential callback runs only
     /// after successful password authentication. An unadmitted identity gets read/export access.
     pub fn open_managed(

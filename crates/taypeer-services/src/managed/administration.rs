@@ -227,6 +227,25 @@ impl DatabaseService {
         password: &[u8],
         revoke: Option<DeviceId>,
     ) -> Result<(), ServiceError> {
+        self.rotate_password_with_credentials(session, operation, password, revoke, |_, _, _, _| {
+            Ok(())
+        })
+    }
+    /// Rotate with a worker-owned local credential transaction. Preparation precedes
+    /// the database commit; finalization must be durable before success is returned.
+    pub fn rotate_password_with_credentials(
+        &mut self,
+        session: &SessionToken,
+        operation: Digest,
+        password: &[u8],
+        revoke: Option<DeviceId>,
+        mut credentials: impl FnMut(
+            EpochCredentialStage,
+            &ReadKey,
+            &ReadKey,
+            u64,
+        ) -> Result<(), ServiceError>,
+    ) -> Result<(), ServiceError> {
         let state = self.checked_mut(session)?;
         let document = state.document().clone();
         let managed = state.managed.as_mut().ok_or(ServiceError::InvalidContext)?;
@@ -271,7 +290,11 @@ impl DatabaseService {
             header,
             journal: managed.snapshot.metadata().journal.clone(),
         };
-        managed.persist(&document, metadata, Vec::new(), Some(transition))
+        let previous = open.metadata.key(managed.snapshot.chain().head().epoch)?;
+        let epoch = transition.chain.head().epoch;
+        credentials(EpochCredentialStage::Prepare, &previous, &key, epoch)?;
+        managed.persist(&document, metadata, Vec::new(), Some(transition))?;
+        credentials(EpochCredentialStage::Finalize, &previous, &key, epoch)
     }
     /// Update shared quotas. Changing the KDF target additionally authenticates the
     /// current password and creates a new independent epoch with the requested calibration.

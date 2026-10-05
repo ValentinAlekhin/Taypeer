@@ -109,6 +109,7 @@ impl SyncState {
         &mut self,
         code: taypeer_runtime::InvitationCode,
         path: PathBuf,
+        password: String,
         cx: &mut Context<Self>,
     ) {
         if let Some(backend) = &self.backend {
@@ -116,14 +117,15 @@ impl SyncState {
                 backend,
                 code,
                 path,
+                password,
                 self.settings.read(cx).values().relay.clone(),
             );
             cx.notify();
         }
     }
     /// Resume a persisted ciphertext receipt without retaining the invitation code.
-    pub fn resume(&mut self, request: Digest, cx: &mut Context<Self>) {
-        self.model.resume(request);
+    pub fn resume(&mut self, request: Digest, password: String, cx: &mut Context<Self>) {
+        self.model.resume(request, password);
         cx.notify();
     }
     fn poll(&mut self, cx: &mut Context<Self>) {

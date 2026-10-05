@@ -118,12 +118,6 @@ pub(crate) struct PipeActor {
 pub(crate) trait CallbackHandler: Send {
     fn handle(&mut self, request: IoRequest) -> Result<crate::cipher_ipc::IoValue, RuntimeError>;
 }
-pub(crate) struct EnrollmentCallbacks;
-impl CallbackHandler for EnrollmentCallbacks {
-    fn handle(&mut self, _: IoRequest) -> Result<crate::cipher_ipc::IoValue, RuntimeError> {
-        Err(RuntimeError::Protocol)
-    }
-}
 impl CallbackHandler for Callbacks {
     fn handle(&mut self, request: IoRequest) -> Result<crate::cipher_ipc::IoValue, RuntimeError> {
         self.handle(request)

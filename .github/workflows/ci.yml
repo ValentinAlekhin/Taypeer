@@ -17,10 +17,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Ubuntu checks portability of the core; it is not a release target.
+        # Linux and macOS run the shared desktop scenarios.
         os: [ubuntu-24.04, macos-15]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    timeout-minutes: 90
     env:
       CARGO_BUILD_JOBS: 2
     steps:
@@ -32,12 +32,15 @@ jobs:
           cache: pnpm
       - name: Install architecture tooling
         run: pnpm install --frozen-lockfile
+      - name: Install Linux GUI dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev libfreetype6-dev libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev libxcb1-dev libxcb-xkb-dev libx11-dev libegl1-mesa-dev libvulkan-dev libglib2.0-dev libssl-dev
       - name: Install repository toolchain
         run: rustup show
       - name: Check architecture, documentation and Rust
         run: sh scripts/check.sh
       - name: Upload UI failure diagnostics
-        if: failure() && runner.os == 'macOS'
+        if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: taypeer-ui-diagnostics
@@ -54,3 +57,18 @@ jobs:
           path: artifacts/architecture/
           if-no-files-found: error
           retention-days: 14
+
+  linux-package:
+    name: Linux Nix package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install Nix
+        run: sudo apt-get update && sudo apt-get install -y nix-bin && sudo systemctl start nix-daemon
+      - name: Build production package
+        run: nix --extra-experimental-features 'nix-command flakes' build .#taypeer --cores 2
+      - name: Check packaged private worker and fixture exclusion
+        run: sh scripts/check-linux-package.sh result
+      - name: Verify encrypted sessions with packaged worker
+        run: nix --extra-experimental-features 'nix-command flakes' develop -c env TAYPEER_PUBLIC_LINUX_WORKER="$PWD/result/bin/taypeer" cargo test -p taypeer-runtime host::linux_tests --locked -- --test-threads=1

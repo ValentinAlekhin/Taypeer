@@ -54,7 +54,7 @@ ACL элементов БД не ослабляются; доступ всем �
 В том числе на Ubuntu:
 
 ```sh
-rtk cargo run --locked -p taypeer -- --smoke-test
+rtk cargo run --locked -p taypeer --features ui-test-support -- --smoke-test
 rtk proxy sh scripts/check.sh
 ```
 

@@ -6,7 +6,7 @@ use std::{
 };
 use taypeer_core::DatabaseId;
 use taypeer_runtime::{
-    Command, InvitationCode, JoinProgress, NetworkSnapshot, PendingJoin, RuntimeError,
+    Command, InvitationCode, JoinProgress, NetworkSnapshot, PendingJoinSummary, RuntimeError,
     WorkerControl,
 };
 use taypeer_runtime_client::{Backend, Connection, NetworkTicket, error_key};
@@ -31,7 +31,7 @@ pub struct IssuedInvitation {
 }
 struct Overview {
     network: NetworkSnapshot,
-    joins: BTreeMap<Digest, PendingJoin>,
+    joins: BTreeMap<Digest, PendingJoinSummary>,
 }
 enum Outcome {
     Started,
@@ -48,7 +48,7 @@ pub struct SyncStore {
     /// Last confirmed network overview.
     pub(crate) snapshot: NetworkSnapshot,
     /// Pending join requests keyed by invitation digest.
-    pub(crate) joins: BTreeMap<Digest, PendingJoin>,
+    pub(crate) joins: BTreeMap<Digest, PendingJoinSummary>,
     /// Currently presented invitation, if any.
     pub(crate) invitation: Option<IssuedInvitation>,
     /// Localized recoverable network failure.
@@ -60,6 +60,8 @@ pub struct SyncStore {
     refresh: Option<NetworkTicket<Overview>>,
     refresh_at: Instant,
     continuation: Option<(Digest, PathBuf)>,
+    // Retained only while polling admission; restart/retry asks for the password again.
+    join_password: Option<Zeroizing<String>>,
     resume_at: Instant,
     received: Option<PathBuf>,
 }
@@ -76,6 +78,7 @@ impl Default for SyncStore {
             refresh: None,
             refresh_at: Instant::now(),
             continuation: None,
+            join_password: None,
             resume_at: Instant::now(),
             received: None,
         }
@@ -155,7 +158,8 @@ impl SyncStore {
         self.invitation = None;
         self.status = "sync.creating_invitation";
         self.operation = Some(backend.network(move |host, _| {
-            let address = host.start_network(relay.setting()?)?;
+            host.start_network(relay.setting()?)?;
+            let address = host.network_address_for(&connection.database)?;
             let (invitation, secret): (Invitation, Zeroizing<[u8; 32]>) =
                 connection.command(Command::CreateInvitation).wait()?;
             let id = invitation.id().map_err(|_| RuntimeError::Protocol)?;
@@ -248,6 +252,7 @@ impl SyncStore {
         backend: &Backend,
         code: InvitationCode,
         path: PathBuf,
+        password: String,
         relay: RelayPreference,
     ) {
         if self.busy() {
@@ -257,19 +262,28 @@ impl SyncStore {
         self.error = None;
         self.status = "sync.connecting";
         let executable = backend.executable.clone();
+        let password = Zeroizing::new(password);
+        self.join_password = Some(password.clone());
         self.operation = Some(backend.network(move |host, cancellation| {
             host.start_network(relay.setting()?)?;
 
-            let progress = host.join_cancellable(&executable, code, &path, cancellation)?;
+            let progress = host.join_cancellable(
+                &executable,
+                code,
+                &path,
+                password.to_string(),
+                cancellation,
+            )?;
             Ok(Outcome::Joined { path, progress })
         }));
     }
     /// Resume a pending join by its stable request identity.
-    pub fn resume(&mut self, request: Digest) {
+    pub fn resume(&mut self, request: Digest, password: String) {
         if self.busy() {
             return;
         }
         if let Some(pending) = self.joins.get(&request) {
+            self.join_password = Some(Zeroizing::new(password));
             self.continuation = Some((request, pending.path.clone()));
             self.resume_at = Instant::now();
             self.error = None;
@@ -279,6 +293,7 @@ impl SyncStore {
     pub fn pause(&mut self) {
         self.operation = None;
         self.continuation = None;
+        self.join_password = None;
         self.invitation = None;
         self.status = "sync.paused";
         self.refresh_at = Instant::now();
@@ -318,11 +333,13 @@ impl SyncStore {
                     }
                     JoinProgress::Received(_) => {
                         self.continuation = None;
+                        self.join_password = None;
                         self.status = "sync.received_locked";
                         self.received = Some(path);
                     }
                     JoinProgress::Rejected => {
                         self.continuation = None;
+                        self.join_password = None;
                         self.error = Some("sync.join_rejected");
                         self.status = "sync.failed";
                     }
@@ -334,6 +351,7 @@ impl SyncStore {
                 }
                 Err(error) => {
                     self.continuation = None;
+                    self.join_password = None;
                     self.error = Some(sync_error_key(&error));
                     self.status = "sync.failed";
                 }
@@ -357,7 +375,7 @@ impl SyncStore {
             self.refresh = Some(backend.network(|host, _| {
                 Ok(Overview {
                     network: host.network_snapshot()?,
-                    joins: host.pending_joins()?,
+                    joins: host.pending_join_summaries()?,
                 })
             }));
         }
@@ -365,12 +383,19 @@ impl SyncStore {
             && Instant::now() >= self.resume_at
             && let Some((request, path)) = self.continuation.clone()
         {
+            let Some(password) = self.join_password.clone() else {
+                return changed;
+            };
             let relay = relay.clone();
             self.status = "sync.downloading";
             self.operation = Some(backend.network(move |host, cancellation| {
                 host.start_network(relay.setting()?)?;
                 Ok(Outcome::Joined {
-                    progress: host.resume_join_cancellable(request, cancellation)?,
+                    progress: host.resume_join_cancellable(
+                        request,
+                        password.to_string(),
+                        cancellation,
+                    )?,
                     path,
                 })
             }));

@@ -18,6 +18,26 @@ pub(super) const MAX_ENCODED_SIZE: u64 =
     HEADER as u64 + MAX_PAYLOAD + (MAX_PAYLOAD.div_ceil(CHUNK as u64) + 1) * 40;
 const MAGIC: &[u8; 8] = b"TAYPEER\0";
 
+// Keyed local objects have no password wrapper. The prefix is nevertheless
+// authenticated by the existing stream codec, including its random stream ID.
+pub(super) fn keyed_header(magic: &[u8; 8]) -> Result<Vec<u8>, Error> {
+    let mut header = vec![0; HEADER];
+    header[..8].copy_from_slice(magic);
+    header[8..12].copy_from_slice(&[1, 0, 3, 0]);
+    header[12..16].copy_from_slice(&3_u32.to_le_bytes());
+    header[16..WRAPPED].copy_from_slice(&random::<88>()?);
+    Ok(header)
+}
+
+pub(super) fn validate_keyed(header: &[u8], length: u64, magic: &[u8; 8]) -> Result<(), Error> {
+    if header.len() != HEADER || &header[..8] != magic {
+        return Err(Error::InvalidFile);
+    }
+    let mut standard = header.to_vec();
+    standard[..8].copy_from_slice(MAGIC);
+    validate(&standard, length)
+}
+
 /// An unlocked content key. Not cloneable or printable; its own allocation is zeroized.
 /// This does not guarantee erasure of plaintext in other allocations.
 pub struct ReadKey(Zeroizing<[u8; 32]>);

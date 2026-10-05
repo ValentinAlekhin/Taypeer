@@ -11,7 +11,7 @@ mod worker;
 pub use host::{RegisteredCompatibility, RuntimeHost};
 pub use network::{
     DatabaseExchange, DeviceExchange, InvitationCode, JoinProgress, NetworkCancellation,
-    NetworkSnapshot, PeerProgress, PendingJoin,
+    NetworkSnapshot, PeerProgress, PendingJoin, PendingJoinSummary,
 };
 pub use protocol::{Command, RuntimeError, erase_view};
 #[cfg(feature = "ui-test-support")]
@@ -19,7 +19,7 @@ pub use worker::run_test_worker;
 pub use worker::run_worker;
 
 use host::{Callbacks, HostContext};
-use process::{Client, EnrollmentCallbacks};
+use process::Client;
 use protocol::Boot;
 use serde_json::Value;
 use session::{DraftDisposition, LockOutcome, LockReason, SessionController};
@@ -47,35 +47,44 @@ pub struct Worker {
 impl Worker {
     pub(crate) fn enroll(
         executable: &Path,
-        profile: &profile::NativeProfile,
+        context: Arc<HostContext>,
+        destination: &Path,
+        password: String,
         invitation: taypeer_trust::Invitation,
         sessions: &SessionController,
-    ) -> Result<taypeer_trust::JoinProof, RuntimeError> {
+    ) -> Result<(taypeer_trust::JoinProof, Arc<Client>), RuntimeError> {
         let spool = tempfile::tempdir().map_err(|_| RuntimeError::Transport)?;
-        let boot = Boot {
-            path: profile.directory().to_owned(),
-            password: String::new(),
+        let mut boot = Boot {
+            path: destination.to_owned(),
+            password,
             create_name: None,
             create_form: None,
-            profile: profile.directory().to_owned(),
+            profile: context.profile.directory().to_owned(),
             spool: spool.path().to_owned(),
             invitation: Some(invitation),
         };
-        let client = Client::spawn(executable, sessions, Box::new(EnrollmentCallbacks), spool)?;
+        let callbacks = Callbacks::new(context, destination.to_owned(), spool.path().to_owned());
+        let client = Client::spawn(executable, sessions, Box::new(callbacks), spool)?;
         let result = client
             .request(&boot, true)
             .and_then(|value| serde_json::from_value(value).map_err(|_| RuntimeError::Protocol));
-        client.control.invalidate(LockReason::Manual);
-        let closed = client.control.wait_closed();
-        // A failed or unconfirmed process shutdown cannot confirm enrollment.
-        let outcome = closed?;
-        if let Some(error) = outcome.error {
-            return Err(error);
+        boot.password.zeroize();
+        match result {
+            Ok(proof) => {
+                client.control.opened(
+                    boot.invitation
+                        .as_ref()
+                        .ok_or(RuntimeError::Protocol)?
+                        .database
+                        .clone(),
+                )?;
+                Ok((proof, client))
+            }
+            Err(error) => {
+                client.control.invalidate(LockReason::Transport);
+                Err(error)
+            }
         }
-        if outcome.draft != DraftDisposition::Preserved {
-            return Err(RuntimeError::OperationInterrupted(outcome.reason));
-        }
-        result
     }
     pub(crate) fn open(
         launcher: &dyn platform::ProcessLauncher,
@@ -100,7 +109,7 @@ impl Worker {
             spool: directory.clone(),
             invitation: None,
         };
-        let mut events = context.coordinator.subscribe();
+        let contexts = Arc::clone(&context);
         let client = Client::connect(
             launcher.launch()?,
             sessions,
@@ -119,6 +128,9 @@ impl Worker {
             }
         };
         client.control.opened(database.clone())?;
+        let mut events = contexts.for_database(&database)?.coordinator.subscribe();
+        let watched_context = contexts.for_database(&database)?;
+        let linux_credentials = contexts.profile.is_linux_lazy();
         let weak = Arc::downgrade(&client);
         let watched_database = database.clone();
         let application = Arc::new(Mutex::new(None));
@@ -153,15 +165,15 @@ impl Worker {
         });
         let watch = runtime.spawn(async move {
             loop {
-                let (invalidate, apply) = match events.recv().await {
-                    Ok(
-                        CoordinatorEvent::ControlChanged {
-                            database,
-                            lock: true,
-                            ..
-                        }
-                        | CoordinatorEvent::Frozen(database),
-                    ) => (database == watched_database, false),
+                let (invalidate, apply, rotation) = match events.recv().await {
+                    Ok(CoordinatorEvent::ControlChanged {
+                        database,
+                        lock: true,
+                        control,
+                    }) => (database == watched_database, false, Some(control)),
+                    Ok(CoordinatorEvent::Frozen(database)) => {
+                        (database == watched_database, false, None)
+                    }
                     Ok(
                         CoordinatorEvent::Received { database, .. }
                         | CoordinatorEvent::ControlChanged {
@@ -169,15 +181,70 @@ impl Worker {
                             lock: false,
                             ..
                         },
-                    ) => (false, database == watched_database),
-                    Ok(_) => (false, false),
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => (true, false),
+                    ) => (false, database == watched_database, None),
+                    Ok(_) => (false, false, None),
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => (true, false, None),
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 };
                 let Some(client) = weak.upgrade() else {
                     break;
                 };
                 if invalidate {
+                    if linux_credentials && let Some(control) = rotation {
+                        let epoch = watched_context
+                            .coordinator
+                            .snapshot(&watched_database)
+                            .ok()
+                            .filter(|snapshot| snapshot.chain().head_hash().ok() == Some(control))
+                            .map(|snapshot| snapshot.chain().head().epoch);
+                        let prepared = watched_context
+                            .profile
+                            .load_state::<Option<u64>>("credential_prepared")
+                            .ok()
+                            .flatten()
+                            .flatten();
+                        let finalized = watched_context
+                            .profile
+                            .load_state::<u64>("credential_final")
+                            .ok()
+                            .flatten();
+                        if epoch.is_some() && finalized == epoch && prepared.is_none() {
+                            continue;
+                        }
+                        if let Some(epoch) = epoch
+                            && prepared == Some(epoch)
+                        {
+                            // The initiating worker must finish the already durable
+                            // rotation's local credentials. Other control changes and
+                            // lifecycle sources continue to revoke independently.
+                            let context = Arc::clone(&watched_context);
+                            let weak = Arc::downgrade(&client);
+                            tokio::spawn(async move {
+                                let deadline =
+                                    tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+                                loop {
+                                    let final_epoch =
+                                        context.profile.load_state::<u64>("credential_final");
+                                    let prepared = context
+                                        .profile
+                                        .load_state::<Option<u64>>("credential_prepared");
+                                    if matches!(final_epoch, Ok(Some(value)) if value == epoch)
+                                        && matches!(prepared, Ok(Some(None)))
+                                    {
+                                        return;
+                                    }
+                                    if tokio::time::Instant::now() >= deadline {
+                                        break;
+                                    }
+                                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                                }
+                                if let Some(client) = weak.upgrade() {
+                                    client.control.invalidate(LockReason::Authority);
+                                }
+                            });
+                            continue;
+                        }
+                    }
                     client.control.invalidate(LockReason::Authority);
                     break;
                 }

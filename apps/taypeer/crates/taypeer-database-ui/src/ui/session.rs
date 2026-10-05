@@ -338,14 +338,16 @@ impl SessionView {
                                 });
                             })),
                     )
-                    .child(
-                        Button::new("unlock-touch-id")
-                            .w(rems(8.))
-                            .icon(icon("fingerprint"))
-                            .label(tr("ui.touch_id"))
-                            .disabled(true)
-                            .tooltip(tr("ui.touch_id_unavailable")),
-                    )
+                    .when(cfg!(target_os = "macos"), |row| {
+                        row.child(
+                            Button::new("unlock-touch-id")
+                                .w(rems(8.))
+                                .icon(icon("fingerprint"))
+                                .label(tr("ui.touch_id"))
+                                .disabled(true)
+                                .tooltip(tr("ui.touch_id_unavailable")),
+                        )
+                    })
                     .child(div().flex_1())
                     .child(
                         Button::new("unlock")

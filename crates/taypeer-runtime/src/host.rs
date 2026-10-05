@@ -12,7 +12,7 @@ use std::{
 use taypeer_core::DatabaseId;
 use taypeer_storage::{ArchiveSeed, ArchiveSnapshot, ArchiveStore, PreparedCommit};
 use taypeer_sync::Coordinator;
-use taypeer_trust::{ControlChain, Digest, TransportKey};
+use taypeer_trust::{ControlChain, Digest, PublicKey, TransportKey};
 use tempfile::NamedTempFile;
 
 /// Platform/CLI host. Writers and native transport identity outlive individual unlocked workers.
@@ -21,7 +21,9 @@ pub struct RuntimeHost {
     _lease: ProfileLease,
     pub(crate) context: Arc<HostContext>,
     pub(crate) runtime: tokio::runtime::Runtime,
-    pub(crate) network: Mutex<Option<crate::network::Network>>,
+    pub(crate) network: Mutex<BTreeMap<PublicKey, crate::network::Network>>,
+    pub(crate) requested_relay: Mutex<Option<taypeer_sync::RelaySetting>>,
+    pub(crate) enrollments: Mutex<BTreeMap<Digest, Arc<crate::process::Client>>>,
 }
 
 /// Public format and transport-admission state; querying it never unlocks a database.
@@ -37,6 +39,9 @@ pub(crate) struct HostContext {
     pub coordinator: Arc<Coordinator>,
     pub transport: Arc<TransportKey>,
     pub copies: Mutex<BTreeMap<PathBuf, Registration>>,
+    children: Mutex<BTreeMap<DatabaseId, Arc<HostContext>>>,
+    #[cfg(test)]
+    credential_fault: std::sync::atomic::AtomicU8,
 }
 impl RuntimeHost {
     /// Shared supervisor for input activity and explicit platform lock events.
@@ -57,6 +62,20 @@ impl RuntimeHost {
     }
     /// Shared native profile location used by desktop clients and the CLI.
     pub fn default_profile_path() -> Result<PathBuf, RuntimeError> {
+        #[cfg(target_os = "linux")]
+        {
+            let directory = std::env::var_os("XDG_DATA_HOME")
+                .map(PathBuf::from)
+                .filter(|path| path.is_absolute())
+                .or_else(|| {
+                    std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share"))
+                })
+                .ok_or(RuntimeError::Profile(
+                    crate::profile::ProfileError::Credentials,
+                ))?;
+            Ok(directory.join("taypeer/profiles/default"))
+        }
+        #[cfg(not(target_os = "linux"))]
         std::env::var_os("HOME")
             .map(|home| {
                 PathBuf::from(home).join("Library/Application Support/Taypeer/profiles/default")
@@ -77,12 +96,7 @@ impl RuntimeHost {
         name: Option<String>,
     ) -> Result<taypeer_services::SessionToken, RuntimeError> {
         let path = canonical_path(path)?;
-        let existed = self
-            .context
-            .copies
-            .lock()
-            .map_err(|_| RuntimeError::Transport)?
-            .contains_key(&path);
+        let existed = self.context.has_path(&path)?;
         let opened = (|| {
             let registration = if let Some(name) = name {
                 let author = self.profile().author()?;
@@ -185,7 +199,11 @@ impl RuntimeHost {
         sessions: crate::session::SessionController,
     ) -> Result<Self, RuntimeError> {
         let profile = lease.profile().clone();
-        let transport = Arc::new(profile.transport()?);
+        let transport = Arc::new(if profile.is_linux_lazy() {
+            TransportKey::generate().map_err(|_| RuntimeError::Transport)?
+        } else {
+            profile.transport()?
+        });
         let coordinator = Arc::new(Coordinator::new(Arc::clone(&transport)));
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -194,12 +212,17 @@ impl RuntimeHost {
         Ok(Self {
             sessions,
             _lease: lease,
-            network: Mutex::new(None),
+            network: Mutex::new(BTreeMap::new()),
+            requested_relay: Mutex::new(None),
+            enrollments: Mutex::new(BTreeMap::new()),
             context: Arc::new(HostContext {
                 profile,
                 coordinator,
                 transport,
                 copies: Mutex::new(BTreeMap::new()),
+                children: Mutex::new(BTreeMap::new()),
+                #[cfg(test)]
+                credential_fault: std::sync::atomic::AtomicU8::new(0),
             }),
             runtime,
         })
@@ -249,12 +272,7 @@ impl RuntimeHost {
         form: Option<taypeer_services::CreateDatabase>,
     ) -> Result<Worker, RuntimeError> {
         let path = canonical_path(path)?;
-        let existed = self
-            .context
-            .copies
-            .lock()
-            .map_err(|_| RuntimeError::Transport)?
-            .contains_key(&path);
+        let existed = self.context.has_path(&path)?;
         let opened = Worker::open(
             launcher,
             &path,
@@ -264,6 +282,18 @@ impl RuntimeHost {
             self.runtime.handle(),
             &self.sessions,
         );
+        if opened.is_ok() {
+            let relay = self
+                .requested_relay
+                .lock()
+                .map_err(|_| RuntimeError::Transport)?
+                .clone();
+            if let Some(relay) = relay {
+                // Network startup never publishes an authentication failure; its
+                // independently queryable status records whether exchange is running.
+                let _ = self.start_network(relay);
+            }
+        }
         // A cancelled open may still be finishing an admitted ciphertext callback.
         // Retain that writer for retry/host shutdown; cleanup must not wait for it
         // or race a subsequent open of this same path.
@@ -282,16 +312,13 @@ impl RuntimeHost {
     }
     /// Release a locked/unlocked catalog item after its worker has been closed.
     pub fn close(&self, database: &DatabaseId) -> Result<(), RuntimeError> {
-        let mut copies = self
-            .context
-            .copies
-            .lock()
-            .map_err(|_| RuntimeError::Transport)?;
+        let context = self.context.for_database(database)?;
+        let mut copies = context.copies.lock().map_err(|_| RuntimeError::Transport)?;
         if let Some(path) = copies
             .iter()
             .find_map(|(path, r)| (&r.database == database).then_some(path.clone()))
         {
-            self.context
+            context
                 .coordinator
                 .unregister(database)
                 .map_err(sync_error)?;
@@ -304,11 +331,8 @@ impl RuntimeHost {
         &self,
         database: &DatabaseId,
     ) -> Result<RegisteredCompatibility, RuntimeError> {
-        let snapshot = self
-            .context
-            .coordinator
-            .snapshot(database)
-            .map_err(sync_error)?;
+        let context = self.context.for_database(database)?;
+        let snapshot = context.coordinator.snapshot(database).map_err(sync_error)?;
         Ok(RegisteredCompatibility {
             format: snapshot.compatibility(&taypeer_core::ClientCapabilities::default()),
             admitted: snapshot
@@ -316,12 +340,21 @@ impl RuntimeHost {
                 .head()
                 .members
                 .values()
-                .any(|member| member.identity.transport == self.context.transport.public()),
+                .any(|member| member.identity.transport == context.transport.public()),
         })
     }
     /// Shared ciphertext coordinator, safe to use while all plaintext workers are stopped.
     pub fn coordinator(&self) -> &Arc<Coordinator> {
         &self.context.coordinator
+    }
+    /// Ciphertext writer for a database activated in this host lifetime.
+    pub fn database_coordinator(
+        &self,
+        database: &DatabaseId,
+    ) -> Result<Arc<Coordinator>, RuntimeError> {
+        Ok(Arc::clone(
+            &self.context.for_database(database)?.coordinator,
+        ))
     }
     /// Nonsecret native profile metadata and explicit credential acquisition adapter.
     pub fn profile(&self) -> &NativeProfile {
@@ -336,7 +369,89 @@ pub(crate) fn sync_error(error: taypeer_sync::Error) -> RuntimeError {
     }
 }
 impl HostContext {
+    fn has_path(self: &Arc<Self>, path: &Path) -> Result<bool, RuntimeError> {
+        for context in self.active_contexts()? {
+            if context
+                .copies
+                .lock()
+                .map_err(|_| RuntimeError::Transport)?
+                .contains_key(path)
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+    pub(crate) fn for_database(
+        self: &Arc<Self>,
+        database: &DatabaseId,
+    ) -> Result<Arc<Self>, RuntimeError> {
+        if !self.profile.is_linux_lazy() {
+            return Ok(Arc::clone(self));
+        }
+        self.children
+            .lock()
+            .map_err(|_| RuntimeError::Transport)?
+            .get(database)
+            .cloned()
+            .ok_or(RuntimeError::Closed)
+    }
+    pub(crate) fn active_contexts(self: &Arc<Self>) -> Result<Vec<Arc<Self>>, RuntimeError> {
+        if !self.profile.is_linux_lazy() {
+            return Ok(vec![Arc::clone(self)]);
+        }
+        Ok(self
+            .children
+            .lock()
+            .map_err(|_| RuntimeError::Transport)?
+            .values()
+            .cloned()
+            .collect())
+    }
+    fn activate(
+        self: &Arc<Self>,
+        capability: crate::profile::TransportCapability,
+    ) -> Result<Arc<Self>, RuntimeError> {
+        if !self.profile.is_linux_lazy() {
+            return Err(RuntimeError::Protocol);
+        }
+        let mut children = self.children.lock().map_err(|_| RuntimeError::Transport)?;
+        let database = capability.database.clone();
+        if let Some(context) = children.get(&database) {
+            let transport = TransportKey::from_seed(&capability.transport_seed);
+            if context.profile.is_persistent() != capability.local_state_seed.is_some()
+                || (context.profile.is_persistent()
+                    && transport.public() != context.transport.public())
+            {
+                return Err(RuntimeError::Protocol);
+            }
+            return Ok(Arc::clone(context));
+        }
+        let (profile, transport) = self.profile.activate(&capability)?;
+        let transport = Arc::new(transport);
+        let context = Arc::new(Self {
+            profile,
+            coordinator: Arc::new(Coordinator::new(Arc::clone(&transport))),
+            transport,
+            copies: Mutex::new(BTreeMap::new()),
+            children: Mutex::new(BTreeMap::new()),
+            #[cfg(test)]
+            credential_fault: std::sync::atomic::AtomicU8::new(
+                self.credential_fault
+                    .load(std::sync::atomic::Ordering::Acquire),
+            ),
+        });
+        children.insert(database, Arc::clone(&context));
+        Ok(context)
+    }
     fn unregister_path(&self, path: &Path) -> Result<(), RuntimeError> {
+        if self.profile.is_linux_lazy() {
+            let children = self.children.lock().map_err(|_| RuntimeError::Transport)?;
+            for context in children.values() {
+                context.unregister_path(path)?;
+            }
+            return Ok(());
+        }
         let mut copies = self.copies.lock().map_err(|_| RuntimeError::Transport)?;
         if let Some(registration) = copies.remove(path) {
             self.coordinator
@@ -433,6 +548,51 @@ impl Callbacks {
     pub fn handle(&mut self, request: IoRequest) -> Result<IoValue, RuntimeError> {
         self.spools.clear();
         match request {
+            IoRequest::PrepareCredentials { epoch } => {
+                #[cfg(test)]
+                if self
+                    .context
+                    .credential_fault
+                    .load(std::sync::atomic::Ordering::Acquire)
+                    == 1
+                {
+                    return Err(cipher_ipc::storage(taypeer_storage::Error::Io));
+                }
+                self.context
+                    .profile
+                    .save_state("credential_prepared", &Some(epoch))?;
+                Ok(IoValue::Done)
+            }
+            IoRequest::FinalizeCredentials { epoch } => {
+                #[cfg(test)]
+                if self
+                    .context
+                    .credential_fault
+                    .load(std::sync::atomic::Ordering::Acquire)
+                    == 3
+                {
+                    return Err(cipher_ipc::storage(taypeer_storage::Error::CommitUncertain));
+                }
+                let finalized = self
+                    .context
+                    .profile
+                    .save_state("credential_final", &epoch)
+                    .and_then(|()| {
+                        self.context
+                            .profile
+                            .save_state("credential_prepared", &None::<u64>)
+                    });
+                finalized
+                    .map_err(|_| cipher_ipc::storage(taypeer_storage::Error::CommitUncertain))?;
+                Ok(IoValue::Done)
+            }
+            IoRequest::Activate(capability) => {
+                if self.registration.is_some() {
+                    return Err(RuntimeError::Protocol);
+                }
+                self.context = self.context.activate(*capability)?;
+                Ok(IoValue::Done)
+            }
             IoRequest::Open => {
                 self.registration = Some(self.context.attach(&self.path)?);
                 self.snapshot(None)
@@ -481,6 +641,15 @@ impl Callbacks {
             }
             IoRequest::Snapshot { known } => self.snapshot(known),
             IoRequest::Commit(request) => {
+                #[cfg(test)]
+                if self
+                    .context
+                    .credential_fault
+                    .load(std::sync::atomic::Ordering::Acquire)
+                    == 2
+                {
+                    return Err(cipher_ipc::storage(taypeer_storage::Error::Io));
+                }
                 let registration = self.registration.as_ref().ok_or(RuntimeError::Protocol)?;
                 let chain = ControlChain::validate(request.controls.clone(), registration.root)
                     .map_err(|_| RuntimeError::Protocol)?;
@@ -501,6 +670,15 @@ impl Callbacks {
                         },
                     )
                     .map_err(sync_error)?;
+                #[cfg(test)]
+                if self
+                    .context
+                    .credential_fault
+                    .load(std::sync::atomic::Ordering::Acquire)
+                    == 4
+                {
+                    return Err(cipher_ipc::storage(taypeer_storage::Error::CommitUncertain));
+                }
                 self.snapshot(None)
             }
             IoRequest::SaveDraft(path) => {
@@ -592,3 +770,6 @@ pub(crate) fn canonical_path(path: &Path) -> Result<PathBuf, RuntimeError> {
         .map_err(|_| RuntimeError::Transport)?
         .join(path.file_name().ok_or(RuntimeError::Protocol)?))
 }
+
+#[cfg(all(test, target_os = "linux"))]
+mod linux_tests;

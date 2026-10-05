@@ -154,6 +154,87 @@ pub(crate) fn persist(temp: NamedTempFile, path: &Path, create: bool) -> Result<
 }
 
 impl FileStore {
+    pub(crate) fn read_keyed_object(
+        path: &Path,
+        key: &ReadKey,
+        magic: &[u8; 8],
+    ) -> Result<Zeroizing<Vec<u8>>, Error> {
+        let mut file = File::open(path)?;
+        let mut header = vec![0; crypto::HEADER];
+        file.read_exact(&mut header)
+            .map_err(|_| Error::InvalidFile)?;
+        crypto::validate_keyed(&header, file.metadata()?.len(), magic)?;
+        if crypto::payload_length(&header)? > MAX_FILE_SIZE as u64 {
+            return Err(Error::TooLarge);
+        }
+        let before = fingerprint(&mut file)?;
+        file.seek(SeekFrom::Start(crypto::HEADER as u64))?;
+        let mut clear = Zeroizing::new(Vec::new());
+        crypto::decrypt_stream(&header, key, &mut file, &mut *clear)?;
+        if fingerprint(&mut file)? != before || fingerprint(&mut File::open(path)?)? != before {
+            return Err(Error::Changed);
+        }
+        Ok(clear)
+    }
+    pub(crate) fn create_keyed_object(
+        path: &Path,
+        key: &ReadKey,
+        clear: &[u8],
+        magic: &[u8; 8],
+    ) -> Result<Self, Error> {
+        if clear.len() > MAX_FILE_SIZE {
+            return Err(Error::TooLarge);
+        }
+        let path = canonical_destination(path)?;
+        let guard = lock(&path)?;
+        if path.try_exists()? {
+            return Err(Error::AlreadyExists);
+        }
+        let initial = crypto::keyed_header(magic)?;
+        let mut temp = NamedTempFile::new_in(parent(&path)?)?;
+        let header = crypto::encrypt_stream(&initial, key, clear, clear.len() as u64, &mut temp)?;
+        let fingerprint = fingerprint(temp.as_file_mut())?;
+        persist(temp, &path, true)?;
+        Ok(Self {
+            path,
+            _lock: guard,
+            header,
+            fingerprint,
+            uncertain: false,
+        })
+    }
+
+    pub(crate) fn open_keyed_object(path: &Path, magic: &[u8; 8]) -> Result<Self, Error> {
+        let path = path.canonicalize()?;
+        let guard = lock(&path)?;
+        let mut file = File::open(&path)?;
+        let mut header = vec![0; crypto::HEADER];
+        file.read_exact(&mut header)
+            .map_err(|_| Error::InvalidFile)?;
+        crypto::validate_keyed(&header, file.metadata()?.len(), magic)?;
+        let fingerprint = fingerprint(&mut file)?;
+        Ok(Self {
+            path,
+            _lock: guard,
+            header,
+            fingerprint,
+            uncertain: false,
+        })
+    }
+
+    pub(crate) fn unlock_keyed_object(&self, key: &ReadKey) -> Result<Zeroizing<Vec<u8>>, Error> {
+        if crypto::payload_length(&self.header)? > MAX_FILE_SIZE as u64 {
+            return Err(Error::TooLarge);
+        }
+        self.check_unchanged()?;
+        let mut file = File::open(&self.path)?;
+        file.seek(SeekFrom::Start(crypto::HEADER as u64))?;
+        let mut clear = Zeroizing::new(Vec::new());
+        crypto::decrypt_stream(&self.header, key, &mut file, &mut *clear)?;
+        self.check_unchanged()?;
+        Ok(clear)
+    }
+
     /// Create a new encrypted database without replacing an existing path.
     pub fn create(path: &Path, password: &[u8], clear: &[u8]) -> Result<(Self, ReadKey), Error> {
         if clear.len() > MAX_FILE_SIZE {

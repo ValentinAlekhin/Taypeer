@@ -1,11 +1,15 @@
 //! Desktop capabilities. Native protocols remain private to the OS adapter.
 //!
-//! macOS is the only implemented adapter. Linux and Windows need native lifecycle
-//! and protected clipboard implementations before enabling their GUI builds.
+//! Native macOS and Linux adapters own lifecycle and protected clipboard resources.
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "macos")]
 pub use macos::{Platform, activity, helper_path};
+
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "linux")]
+pub use linux::{Platform, activity, helper_path};
 
 /// Typed events consumed by the session owner, never native protocol strings.
 pub enum Event {
@@ -30,7 +34,20 @@ pub fn profile_path() -> std::io::Result<std::path::PathBuf> {
             .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "home unavailable"))?;
         Ok(std::path::PathBuf::from(home).join("Library/Application Support/Taypeer"))
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    {
+        let data = match std::env::var_os("XDG_DATA_HOME") {
+            Some(path) if std::path::Path::new(&path).is_absolute() => {
+                std::path::PathBuf::from(path)
+            }
+            _ => std::path::PathBuf::from(std::env::var_os("HOME").ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::NotFound, "home unavailable")
+            })?)
+            .join(".local/share"),
+        };
+        Ok(data.join("taypeer/profiles/default"))
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     Err(std::io::Error::new(
         std::io::ErrorKind::Unsupported,
         "desktop adapter not implemented",

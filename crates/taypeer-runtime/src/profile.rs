@@ -1,4 +1,4 @@
-//! Native profile credentials and working-copy registrations. No file-based secret fallback.
+//! Platform credentials and password-authenticated per-database Linux registrations.
 use serde::{Deserialize, Serialize};
 use std::{
     fs::{File, OpenOptions},
@@ -12,7 +12,9 @@ use taypeer_trust::{AuthorKey, Digest, Identity, PublicKey, TransportKey};
 use zeroize::Zeroizing;
 
 mod credentials;
+mod linux;
 use credentials::Credentials;
+pub use linux::TransportCapability;
 
 /// Platform-protected credential store, supplied by the application host.
 /// Implementations must authenticate encrypted values, bind them to service/account,
@@ -37,6 +39,8 @@ pub enum ProfileError {
     Io,
     /// Another running host already owns this profile's transport endpoint.
     Busy,
+    /// A local atomic replacement occurred but durability could not be confirmed.
+    CommitUncertain,
 }
 impl std::fmt::Display for ProfileError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -112,6 +116,11 @@ impl NativeProfile {
     /// Open/create a native profile and reserve its endpoint for this host lifetime.
     /// Only the transport role is acquired here; author access belongs to unlocked workers.
     pub fn acquire(directory: &Path) -> Result<ProfileLease, ProfileError> {
+        #[cfg(target_os = "linux")]
+        {
+            linux::acquire(directory)
+        }
+        #[cfg(not(target_os = "linux"))]
         Self::acquire_with(directory, Credentials::Native)
     }
     /// Acquire the host profile using an explicitly supplied platform credential store.
@@ -178,6 +187,11 @@ impl NativeProfile {
     }
     /// Load public configuration only. This is the worker-side operation before authentication.
     pub fn load(directory: &Path) -> Result<Self, ProfileError> {
+        #[cfg(target_os = "linux")]
+        {
+            Self::load_with(directory, Credentials::LazyLinux)
+        }
+        #[cfg(not(target_os = "linux"))]
         Self::load_with(directory, Credentials::Native)
     }
     /// Load only an explicitly selected synthetic fixture profile.
@@ -213,7 +227,7 @@ impl NativeProfile {
             credentials,
         })
     }
-    /// Directory contains only public configuration and the host lock.
+    /// Local profile directory; encrypted credentials and state never enter portable archives.
     pub fn directory(&self) -> &Path {
         &self.directory
     }
@@ -453,7 +467,7 @@ mod native {
             .map_err(|_| ProfileError::Credentials)
     }
 }
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 mod native {
     use super::*;
     pub fn get(_: &str, _: &str) -> Result<Option<Zeroizing<Vec<u8>>>, ProfileError> {

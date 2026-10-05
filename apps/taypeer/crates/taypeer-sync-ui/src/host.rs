@@ -41,10 +41,11 @@ pub trait SyncHost: Sized + 'static {
         &mut self,
         code: taypeer_runtime::InvitationCode,
         path: std::path::PathBuf,
+        password: String,
         cx: &mut Context<Self>,
     );
     /// Resume receipt using a public request identifier.
-    fn resume_join(&mut self, request: Digest, cx: &mut Context<Self>);
+    fn resume_join(&mut self, request: Digest, password: String, cx: &mut Context<Self>);
     /// Present a localized, content-free failure category.
     fn set_notice(&mut self, notice: &'static str, cx: &mut Context<Self>);
 }

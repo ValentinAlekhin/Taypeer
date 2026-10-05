@@ -76,3 +76,6 @@ __pycache__/
 !tests/fixtures/**/*.pass2p
 !tests/fixtures/**/*.kdbx
 !tests/fixtures/**/*.keyx
+
+# Linux desktop entry source is not a database sidecar.
+!/nix/io.taypeer.Taypeer.desktop

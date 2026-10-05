@@ -15,7 +15,7 @@ fn decode<const N: usize>(text: &str) -> Result<[u8; N], Error> {
         return Err(Error::Invalid);
     }
     let mut result = [0; N];
-    for (out, pair) in result.iter_mut().zip(text.as_bytes().chunks_exact(2)) {
+    for (out, pair) in result.iter_mut().zip(text.as_bytes().as_chunks::<2>().0) {
         let digit = |b: u8| if b <= b'9' { b - b'0' } else { b - b'a' + 10 };
         *out = digit(pair[0]) * 16 + digit(pair[1]);
     }

@@ -57,8 +57,15 @@ impl Platform {
             .to_string()
     }
     #[cfg(feature = "ui-test-support")]
+    /// Confirm the synthetic desktop has returned to an active, unlocked state.
+    pub fn fixture_active(&self) {
+        self.available.store(true, Ordering::Release);
+        let _ = self.event_sender.send("active".into());
+    }
+    #[cfg(feature = "ui-test-support")]
     /// Revoke fixture sessions and enqueue the corresponding lifecycle event.
     pub fn fixture_lock(&self) {
+        self.available.store(false, Ordering::Release);
         if let Some(sessions) = self.sessions.lock().expect("fixture sessions").as_ref() {
             sessions.lock_all(taypeer_runtime::session::LockReason::SystemLocked);
         }

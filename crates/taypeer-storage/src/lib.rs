@@ -8,6 +8,7 @@ mod ciphertext_file;
 mod crypto;
 mod encrypted_object;
 mod file;
+mod local_state;
 mod locking;
 mod stream;
 mod temporary;
@@ -27,6 +28,7 @@ pub use bundle::BundleReader;
 pub use ciphertext_file::{CiphertextFile, CiphertextIo};
 pub use crypto::ReadKey;
 pub use file::{BinaryDraft, FileStore};
+pub use local_state::{LocalCredentialStore, LocalStateKey, LocalStateStore};
 pub use locking::try_lock_exclusive;
 pub use temporary::{TemporaryFileProvider, TemporaryStorage};
 

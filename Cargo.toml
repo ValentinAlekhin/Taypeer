@@ -10,6 +10,11 @@ rust-version = "1.97.1"
 publish = false
 
 [workspace.dependencies]
+wayland-server = "=0.31.13"
+wayland-client = "=0.31.14"
+wayland-protocols = { version = "=0.32.12", features = ["client", "staging"] }
+wayland-protocols-wlr = { version = "=0.3.12", features = ["client"] }
+zbus = { version = "=5.16.0", features = ["blocking-api"] }
 uniffi = "=0.29.4"
 taypeer-database-ui = { path = "apps/taypeer/crates/taypeer-database-ui" }
 taypeer-sync-ui = { path = "apps/taypeer/crates/taypeer-sync-ui" }

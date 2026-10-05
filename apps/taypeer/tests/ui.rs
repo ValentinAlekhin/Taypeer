@@ -1,13 +1,13 @@
 //! Real UI events against isolated public fixtures and process workers.
 fn main() {
-    #[cfg(target_os = "macos")]
-    macos::run();
-    #[cfg(not(target_os = "macos"))]
-    println!("UI scenarios require macOS; portable components are checked separately");
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    desktop::run();
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    println!("UI scenarios require macOS or Linux; portable components are checked separately");
 }
 
-#[cfg(target_os = "macos")]
-mod macos {
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+mod desktop {
     use gpui_kit::test::TestWindowExt;
     use std::path::Path;
     use std::time::{Duration, Instant};
@@ -81,7 +81,7 @@ mod macos {
                 "input enabled: {id}"
             );
             window.click(id, cx);
-            window.press("cmd-a", cx);
+            window.press(&taypeer_desktop_platform::primary_shortcut("a"), cx);
         });
         app.pump();
         app.update(|window, cx| {
@@ -188,7 +188,10 @@ mod macos {
             let back = window.find("unlock-back").bounds();
             let unlock = window.find("unlock").bounds();
             assert_eq!(window.find("unlock-password").focused(), Some(true));
+            #[cfg(target_os = "macos")]
             assert!(window.find("unlock-touch-id").visible());
+            #[cfg(target_os = "linux")]
+            assert!(window.try_find("unlock-touch-id").is_none());
             assert!(back.origin.y > input.origin.y + input.size.height);
             assert_eq!(back.origin.y, unlock.origin.y);
             assert!(back.origin.x < unlock.origin.x);
@@ -295,7 +298,7 @@ mod macos {
     }
     fn open(app: &mut Session, path: &Path) {
         app.open_paths(Some(vec![path.to_owned()]));
-        app.update(|window, cx| window.press("cmd-o", cx));
+        app.update(|window, cx| window.press(&taypeer_desktop_platform::primary_shortcut("o"), cx));
         app.pump();
         app.assert_dialogs_consumed();
         unlock(app);
@@ -331,6 +334,7 @@ mod macos {
             assert!(!control.is_open());
             assert!(control.wait_closed().unwrap().error.is_none());
         }
+        app.system_active();
         unlock(&mut app);
         app.wait("draft offered", |window, _| {
             window.try_find("restore-draft").is_some()
@@ -367,9 +371,10 @@ mod macos {
         click(&mut a, "copy-invitation");
         a.transfer_clipboard_to(&mut b);
         click(&mut b, "welcome-receive");
+        fill(&mut b, "invitation-password", PASSWORD);
         click(&mut b, "invitation-code");
         b.update(|window, cx| {
-            window.press("cmd-v", cx);
+            window.press(&taypeer_desktop_platform::primary_shortcut("v"), cx);
         });
         b.pump();
         let received = second.path().join("PUBLIC-received.taypeer");
@@ -426,6 +431,7 @@ mod macos {
         });
         assert!(controls.iter().all(|control| !control.is_open()));
         b.update(|window, _| assert!(title_cell(window).is_none()));
+        b.system_active();
         unlock(&mut b);
         b.wait("received ciphertext applied on unlock", |window, _| {
             title_cell(window).is_some_and(|e| e.label() == Some("PUBLIC while locked"))
@@ -459,7 +465,7 @@ mod macos {
         app.update(|window, _| {
             assert_eq!(title_cell(window).unwrap().path().last(), Some(&identity))
         });
-        app.update(|window, cx| window.press("cmd-,", cx));
+        app.update(|window, cx| window.press(&taypeer_desktop_platform::primary_shortcut(","), cx));
         app.wait("settings opened", |window, _| {
             window.try_find("font-size").is_some()
         });
@@ -479,7 +485,7 @@ mod macos {
         app.wait("zoomed workspace", |window, _| title_cell(window).is_some());
         app.update(|window, cx| {
             assert_eq!(title_cell(window).unwrap().path().last(), Some(&identity));
-            window.press("cmd-f", cx);
+            window.press(&taypeer_desktop_platform::primary_shortcut("f"), cx);
         });
         app.pump();
         app.update(|window, _| assert_eq!(window.find("search").focused(), Some(true)));
@@ -510,6 +516,29 @@ mod macos {
         app.wait("pending inspector reveal revoked", |window, _| {
             window.try_find("unlock").is_some() && window.try_find("read-None-Password").is_none()
         });
+        #[cfg(target_os = "linux")]
+        {
+            let revoked = app.worker_controls();
+            fill(&mut app, "unlock-password", PASSWORD);
+            click(&mut app, "unlock");
+            app.wait_idle();
+            app.update(|window, _| {
+                assert!(window.find("unlock").visible());
+                assert!(title_cell(window).is_none());
+                assert!(window.try_find("read-None-Password").is_none());
+            });
+            let controls = app.worker_controls();
+            assert_eq!(
+                controls.len(),
+                revoked.len(),
+                "inactive OS must not publish a new session"
+            );
+            assert!(
+                controls.iter().all(|control| !control.is_open()),
+                "revoked workers remain closed"
+            );
+        }
+        app.system_active();
         unlock(&mut app);
         app.wait("unlocked rows loaded", |window, _| {
             title_cell(window).is_some()

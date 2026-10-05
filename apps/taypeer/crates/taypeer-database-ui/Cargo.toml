@@ -23,7 +23,7 @@ taypeer-sync.workspace = true
 zeroize.workspace = true
 serde_json.workspace = true
 qrcode.workspace = true
-[target.'cfg(target_os = "macos")'.dependencies]
+[target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
 gpui-kit.workspace = true
 [lints]
 workspace = true

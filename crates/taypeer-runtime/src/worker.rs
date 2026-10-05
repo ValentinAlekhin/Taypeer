@@ -82,10 +82,24 @@ fn run_with_profile(
     if let Some(invitation) = boot.invitation.take() {
         let result = (|| {
             let profile = load(&boot.profile)?;
-            let author = profile.author()?;
-            let identity =
-                taypeer_trust::Identity::new(author.public(), profile.transport_public())
-                    .map_err(|_| RuntimeError::Protocol)?;
+            let (author, transport) = if profile.is_linux_lazy() {
+                let (author, capability) =
+                    profile.prepare_join_credentials(&invitation, boot.password.as_bytes())?;
+                let transport =
+                    taypeer_trust::TransportKey::from_seed(&capability.transport_seed).public();
+                let reply = channel
+                    .lock()
+                    .map_err(|_| RuntimeError::Transport)?
+                    .io(crate::cipher_ipc::IoRequest::Activate(Box::new(capability)))?;
+                if !matches!(reply, crate::cipher_ipc::IoValue::Done) {
+                    return Err(RuntimeError::Protocol);
+                }
+                (author, transport)
+            } else {
+                (profile.author()?, profile.transport_public())
+            };
+            let identity = taypeer_trust::Identity::new(author.public(), transport)
+                .map_err(|_| RuntimeError::Protocol)?;
             let proof = taypeer_trust::JoinProof::sign(&invitation, identity, &author)
                 .map_err(|_| RuntimeError::Protocol)?;
             value(&proof)
@@ -94,13 +108,68 @@ fn run_with_profile(
             .lock()
             .map_err(|_| RuntimeError::Transport)?
             .response(result)?;
-        // Keep the supervised opening generation alive until its host closes it.
-        let mut channel = channel.lock().map_err(|_| RuntimeError::Transport)?;
-        if !matches!(channel.read::<Command>()?, Command::Lock) {
-            return Err(RuntimeError::Protocol);
+        // Retain staging authentication solely in this process until receipt is verified.
+        loop {
+            let command = channel
+                .lock()
+                .map_err(|_| RuntimeError::Transport)?
+                .read::<Command>()?;
+            match command {
+                Command::Lock => {
+                    boot.password.zeroize();
+                    channel
+                        .lock()
+                        .map_err(|_| RuntimeError::Transport)?
+                        .response(Ok(Value::Null))?;
+                    return Ok(());
+                }
+                Command::BindInvitation { path, password } => {
+                    let bound = (|| {
+                        let snapshot = taypeer_storage::ArchiveSnapshot::open(&path, None)
+                            .map_err(crate::cipher_ipc::storage)?;
+                        let key = DatabaseService::authenticate_archive_credentials(
+                            &snapshot, &password,
+                        )?;
+                        let profile = load(&boot.profile)?;
+                        if profile.is_linux_lazy() {
+                            profile.bind_join_credentials(
+                                &snapshot,
+                                boot.password.as_bytes(),
+                                &key,
+                            )?;
+                            let history = DatabaseService::authenticate_archive_keyring(
+                                &snapshot, &password,
+                            )?;
+                            let _verified = profile.database_credentials(
+                                &snapshot.chain().head().database,
+                                snapshot
+                                    .chain()
+                                    .root()
+                                    .map_err(|_| RuntimeError::Protocol)?,
+                                snapshot.chain().head().epoch,
+                                &key,
+                                &history,
+                            )?;
+                            profile.finalize_authenticated_credentials(
+                                &snapshot.chain().head().database,
+                                snapshot
+                                    .chain()
+                                    .root()
+                                    .map_err(|_| RuntimeError::Protocol)?,
+                                &key,
+                                snapshot.chain().head().epoch,
+                            )?;
+                        }
+                        Ok(Value::Null)
+                    })();
+                    channel
+                        .lock()
+                        .map_err(|_| RuntimeError::Transport)?
+                        .response(bound)?;
+                }
+                _ => return Err(RuntimeError::Protocol),
+            }
         }
-        channel.response(Ok(Value::Null))?;
-        return Ok(());
     }
     let mut service = DatabaseService::new();
     let opened = open(&mut boot, &channel, &mut service);
@@ -165,6 +234,9 @@ fn open_profile(
                 policy: Default::default(),
             })
     });
+    if profile.is_linux_lazy() {
+        return open_linux(boot, channel, service, profile, form, wrap);
+    }
     let seed = match form {
         Some(form) => {
             let author = profile.author()?;
@@ -201,6 +273,132 @@ fn open_profile(
         .map_err(RuntimeError::from)
 }
 
+fn open_linux(
+    boot: &mut Boot,
+    channel: &Arc<Mutex<Channel>>,
+    service: &mut DatabaseService,
+    profile: crate::profile::NativeProfile,
+    form: Option<taypeer_services::CreateDatabase>,
+    wrap: fn(RemotePersistence) -> Box<dyn taypeer_storage::CipherPersistence>,
+) -> Result<SessionToken, RuntimeError> {
+    use crate::cipher_ipc::{IoRequest, IoValue};
+    use taypeer_storage::ArchiveSnapshot;
+    use taypeer_trust::{AuthorKey, Identity, TransportKey};
+    let (seed, author, capability, authenticated, credential_key) = if let Some(form) = form {
+        let author = AuthorKey::generate().map_err(|_| RuntimeError::Protocol)?;
+        let transport = TransportKey::generate().map_err(|_| RuntimeError::Protocol)?;
+        let identity = Identity::new(author.public(), transport.public())
+            .map_err(|_| RuntimeError::Protocol)?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|_| RuntimeError::Protocol)?
+            .as_millis();
+        let seed = DatabaseService::prepare_managed_form(
+            form,
+            boot.password.as_bytes(),
+            &author,
+            identity,
+            now.try_into().map_err(|_| RuntimeError::Protocol)?,
+        )?;
+        let head = seed.controls.last().ok_or(RuntimeError::Protocol)?;
+        let root = seed
+            .controls
+            .first()
+            .ok_or(RuntimeError::Protocol)?
+            .hash()
+            .map_err(|_| RuntimeError::Protocol)?;
+        let checkpoint = seed
+            .objects
+            .iter()
+            .find(|object| object.descriptor().digest == seed.checkpoint)
+            .ok_or(RuntimeError::Protocol)?;
+        let key = checkpoint
+            .unlock_key(boot.password.as_bytes())
+            .map_err(crate::cipher_ipc::storage)?;
+        let capability = profile.create_database_credentials(
+            &head.body.database,
+            root,
+            head.body.epoch,
+            &key,
+            &author,
+            &transport,
+        )?;
+        (Some(seed), Some(author), capability, None, Some(key))
+    } else {
+        // Authentication and local-key acquisition occur in this worker, before host activation.
+        let snapshot =
+            ArchiveSnapshot::open(&boot.path, None).map_err(crate::cipher_ipc::storage)?;
+        let key =
+            DatabaseService::authenticate_archive_credentials(&snapshot, boot.password.as_bytes())?;
+        profile.bind_join_credentials(&snapshot, boot.password.as_bytes(), &key)?;
+        let history =
+            DatabaseService::authenticate_archive_keyring(&snapshot, boot.password.as_bytes())?;
+        let (author, capability) = profile.database_credentials(
+            &snapshot.chain().head().database,
+            snapshot
+                .chain()
+                .root()
+                .map_err(|_| RuntimeError::Protocol)?,
+            snapshot.chain().head().epoch,
+            &key,
+            &history,
+        )?;
+        (
+            None,
+            author,
+            capability,
+            Some(snapshot.fingerprint()),
+            Some(key),
+        )
+    };
+    let persistent = capability.local_state_seed.is_some();
+    let epoch = seed
+        .as_ref()
+        .and_then(|seed| seed.controls.last().map(|control| control.body.epoch));
+    let reply = channel
+        .lock()
+        .map_err(|_| RuntimeError::Transport)?
+        .io(IoRequest::Activate(Box::new(capability)))?;
+    if !matches!(reply, IoValue::Done) {
+        return Err(RuntimeError::Protocol);
+    }
+    let port = RemotePersistence::attach(
+        Arc::clone(channel),
+        boot.path.clone(),
+        boot.spool.clone(),
+        seed,
+    )?;
+    if let Some(expected) = authenticated
+        && taypeer_storage::CipherPersistence::snapshot(&port)
+            .map_err(crate::cipher_ipc::storage)?
+            .fingerprint()
+            != expected
+    {
+        return Err(crate::cipher_ipc::storage(taypeer_storage::Error::Changed));
+    }
+    if persistent {
+        let current = taypeer_storage::CipherPersistence::snapshot(&port)
+            .map_err(crate::cipher_ipc::storage)?;
+        let epoch = epoch.unwrap_or(current.chain().head().epoch);
+        profile.finalize_authenticated_credentials(
+            &current.chain().head().database,
+            current.chain().root().map_err(|_| RuntimeError::Protocol)?,
+            credential_key.as_ref().ok_or(RuntimeError::Protocol)?,
+            epoch,
+        )?;
+        let reply = channel
+            .lock()
+            .map_err(|_| RuntimeError::Transport)?
+            .io(IoRequest::FinalizeCredentials { epoch })?;
+        if !matches!(reply, IoValue::Done) {
+            return Err(RuntimeError::Protocol);
+        }
+    }
+    service
+        .open_managed(wrap(port), boot.password.as_bytes(), || Ok(author))
+        .map_err(RuntimeError::from)
+}
+
 fn serve(
     channel: &Arc<Mutex<Channel>>,
     service: &mut DatabaseService,
@@ -214,6 +412,8 @@ fn serve(
             .map_err(|_| RuntimeError::Transport)?
             .read()?;
         let lock = matches!(command, Command::Lock);
+        let credential_rotation = matches!(&command, Command::RotatePassword { .. })
+            && load(&boot.profile)?.is_linux_lazy();
         let result = match command {
             Command::RecoverTrust {
                 path,
@@ -231,13 +431,85 @@ fn serve(
                 },
                 load,
             ),
+            Command::RotatePassword {
+                operation,
+                password,
+                revoke,
+            } if cfg!(target_os = "linux") => {
+                let profile = load(&boot.profile)?;
+                if profile.is_linux_lazy() {
+                    service
+                        .rotate_password_with_credentials(
+                            session,
+                            operation,
+                            &password,
+                            revoke,
+                            |stage, old, new, epoch| {
+                                use crate::cipher_ipc::{IoRequest, IoValue};
+                                use taypeer_services::{EpochCredentialStage, ServiceError};
+                                let request = match stage {
+                                    EpochCredentialStage::Prepare => {
+                                        profile.prepare_credential_rotation(
+                                            &session.database,
+                                            old,
+                                            new,
+                                            epoch,
+                                        )?;
+                                        IoRequest::PrepareCredentials { epoch }
+                                    }
+                                    EpochCredentialStage::Finalize => {
+                                        profile.finalize_credential_rotation(&session.database)?;
+                                        IoRequest::FinalizeCredentials { epoch }
+                                    }
+                                };
+                                let reply = channel
+                                    .lock()
+                                    .map_err(|_| ServiceError::Credentials)?
+                                    .io(request)
+                                    .map_err(|error| match error {
+                                        RuntimeError::Service(error) => error,
+                                        _ => ServiceError::Credentials,
+                                    })?;
+                                if !matches!(reply, IoValue::Done) {
+                                    return Err(ServiceError::Credentials);
+                                }
+                                Ok(())
+                            },
+                        )
+                        .map(|()| Value::Null)
+                        .map_err(RuntimeError::from)
+                } else {
+                    dispatch(
+                        service,
+                        session,
+                        Command::RotatePassword {
+                            operation,
+                            password,
+                            revoke,
+                        },
+                    )
+                }
+            }
             command => dispatch(service, session, command),
         };
+        let uncertain = credential_rotation
+            && matches!(
+                result,
+                Err(RuntimeError::Service(
+                    taypeer_services::ServiceError::Storage(
+                        taypeer_storage::Error::CommitUncertain
+                    )
+                ))
+            );
+        if uncertain {
+            // The database may already have advanced; no subsequent edit may use this generation.
+            let _closed = service.lock_all_checked();
+        }
         channel
             .lock()
             .map_err(|_| RuntimeError::Transport)?
             .response(result)?;
-        if lock {
+        if lock || uncertain {
             return Ok(());
         }
     }
@@ -630,6 +902,7 @@ fn dispatch(
                 .value
                 .expose(),
         )?,
+        Command::BindInvitation { .. } => return Err(RuntimeError::Protocol),
         Command::Lock => {
             service.lock(session)?;
             Value::Null

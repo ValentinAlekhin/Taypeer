@@ -26,7 +26,10 @@ mod patch;
 mod presentation;
 pub use presentation::*;
 mod persistence;
-pub use managed::{ApplyReport, CollectionReport, PendingPacket, PendingReason, ReceivedSource};
+pub use managed::{
+    ApplyReport, CollectionReport, EpochCredentialStage, PendingPacket, PendingReason,
+    ReceivedSource,
+};
 pub use operations::{ConflictFieldView, ConflictVariantView, ConflictView, new_operation_id};
 pub use patch::{EntryPatch, FieldUpdate};
 pub use taypeer_document::{ConflictContext, Resolution};
