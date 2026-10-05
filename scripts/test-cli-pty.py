@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Exercise the actual CLI terminal using public synthetic data only (POSIX)."""
 import json
+import argparse
+import hashlib
 import os
 from pathlib import Path
 import pty
@@ -20,12 +22,14 @@ def json_response(data):
 
 
 class Terminal:
-    def __init__(self, binary, profile=None):
+    def __init__(self, binary, profile=None, public_fixture=False):
         self.pid, self.fd = pty.fork()
         if self.pid == 0:
             arguments = [binary, "--json"]
             if profile is not None:
                 arguments.extend(["--profile", str(profile)])
+            if public_fixture:
+                arguments.append("--public-fixture-profile")
             os.execv(binary, arguments + ["session"])
         self.pending = b""
         self.transcript = b""
@@ -61,7 +65,8 @@ class Terminal:
         return result
 
     def create(self, path):
-        self.send(f'db create "{path}" --name "PUBLIC PTY"')
+        operation = hashlib.sha256(str(path).encode()).hexdigest()
+        self.send(f'db create --name "PUBLIC PTY" --operation {operation}')
         self.wait(b"Master password: ")
         self.send("PUBLIC_PTY_MASTER_CANARY")
         self.wait(b"Repeat master password: ")
@@ -69,6 +74,7 @@ class Terminal:
         result = self.wait(b"\x1b[6n")
         self.wait(b"\x1b[?25h")
         assert b'"locked":false' in result
+        return Path(json_response(result)["file"])
 
     def close(self):
         os.close(self.fd)
@@ -83,18 +89,20 @@ class Terminal:
 
 
 def main():
-    binary = str(Path(sys.argv[1] if len(sys.argv) > 1 else "target/debug/taypeer-cli").resolve())
+    parser = argparse.ArgumentParser()
+    parser.add_argument("binary", nargs="?", default="target/debug/taypeer-cli")
+    parser.add_argument("--public-fixture-profile", action="store_true")
+    args = parser.parse_args()
+    binary = str(Path(args.binary).resolve())
     profile_directory = tempfile.TemporaryDirectory(prefix="taypeer-public-pty-profile-")
     profile = Path(profile_directory.name) / "profile"
-    terminal = Terminal(binary, profile)
+    terminal = Terminal(binary, profile, args.public_fixture_profile)
     try:
         with tempfile.TemporaryDirectory(prefix="taypeer-public-pty-") as directory:
             path = Path(directory) / "public.taypeer"
-            terminal.create(path)
+            path = terminal.create(path)
             result = terminal.command('group create --name "PUBLIC group"')
-            match = re.search(rb'\{"id":"([^"]+)"', result)
-            assert match, "group creation returned no identity"
-            group = match[1].decode()
+            group = json_response(result)["id"]
             terminal.send(f'entry create --group {group} --title "PUBLIC entry" --password-prompt')
             terminal.wait(b"Entry password: ")
             terminal.send("PUBLIC_PTY_ENTRY_CANARY")
@@ -110,15 +118,13 @@ def main():
             assert b"PUBLIC entry" in terminal.command('search "PUBLIC entry"')
             terminal.command("db close")
             assert b"PUBLIC entry" in terminal.command("entry list")
-            prepared = json_response(terminal.command(f"group trash {group}"))
             selection = Path(directory) / "public-selection.json"
-            selection.write_text(json.dumps(prepared), encoding="utf-8")
             entry = json_response(terminal.command("entry list"))[0]["id"]
             terminal.command(f"draft edit {entry}")
-            confirmation = f'trash confirm --input "{selection}" --yes --operation PUBLIC-PTY-trash'
-            assert b"EditorAlreadyOpen" in terminal.command(confirmation)
-            terminal.command("draft discard")
+            confirmation = f'group trash {group} --operation PUBLIC-PTY-trash'
             assert b'"error"' not in terminal.command(confirmation)
+            assert b'"error"' not in terminal.command(confirmation)
+            terminal.command("draft discard")
             assert json_response(terminal.command("entry list")) == []
             assert len(json_response(terminal.command("trash list"))) == 2
             restore = json_response(terminal.command(f"trash prepare restore group {group}"))
@@ -149,8 +155,7 @@ def main():
             terminal.wait(b"\x1b[6n")
             terminal.wait(b"\x1b[?25h")
             assert b"PUBLIC entry" in terminal.command("entry list")
-            assert b'"error"' in terminal.command("attachment list --draft")
-            assert b'"error"' not in terminal.command("draft restore")
+            assert b'"error"' not in terminal.command(f"draft edit {entry}")
             restored = json_response(terminal.command("attachment list --draft"))
             assert len(restored["attachments"]) == 1
             blob = restored["attachments"][0]["contents"][0]["id"]
@@ -184,12 +189,12 @@ def main():
             else:
                 raise AssertionError("CLI did not terminate")
             result = subprocess.run(
-                [binary, "--profile", str(profile), "--json", "--file", str(path), "--password-stdin", "entry", "list"],
+                [binary, "--profile", str(profile), "--json", *(["--public-fixture-profile"] if args.public_fixture_profile else []), "--file", str(path), "--password-stdin", "entry", "list"],
                 input=b"PUBLIC_PTY_MASTER_CANARY", capture_output=True, timeout=30,
             )
             assert result.returncode == 0, "worker retained the writer lock after exit"
             assert len(json.loads(result.stdout)) == 1
-        print("CLI PTY: hidden input, cancellation, draft guard, trash/restore, move, binary draft cancel/restore/export/save, lock, close and reopen passed")
+        print("CLI PTY: hidden input, cancellation, immediate trash/retry, restore, move, binary form cancel/resume/export/save, lock, close and reopen passed")
     finally:
         terminal.close()
         profile_directory.cleanup()
