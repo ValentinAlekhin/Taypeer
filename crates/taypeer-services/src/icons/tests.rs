@@ -1,7 +1,7 @@
 //! Loopback-only synthetic HTTP responses. No public website is contacted.
 use super::*;
 use std::{
-    io::{Read, Write},
+    io::{BufRead, BufReader, Write},
     net::TcpListener,
     sync::{
         Arc, Mutex,
@@ -32,15 +32,22 @@ impl Server {
                 match listener.accept() {
                     Ok((mut socket, _)) => {
                         socket
-                            .set_read_timeout(Some(Duration::from_secs(2)))
+                            .set_read_timeout(Some(Duration::from_secs(30)))
                             .unwrap();
                         let mut bytes = Vec::new();
-                        let mut byte = [0];
-                        while bytes.len() < 8192 && !bytes.ends_with(b"\r\n\r\n") {
-                            if socket.read(&mut byte).unwrap_or(0) == 0 {
-                                break;
+                        {
+                            let mut input = BufReader::new(&mut socket);
+                            while bytes.len() < 8192 && !bytes.ends_with(b"\r\n\r\n") {
+                                if input.read_until(b'\n', &mut bytes).unwrap_or(0) == 0 {
+                                    break;
+                                }
                             }
-                            bytes.push(byte[0]);
+                        }
+                        // A cancelled/preconnected socket is not an HTTP request.
+                        // Keep the fixture within the loader's 30-second deadline
+                        // even when other tests perform concurrent password KDFs.
+                        if !bytes.ends_with(b"\r\n\r\n") {
+                            continue;
                         }
                         let request = String::from_utf8_lossy(&bytes).into_owned();
                         let response = response(&request);
