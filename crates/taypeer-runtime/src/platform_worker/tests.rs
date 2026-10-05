@@ -1136,6 +1136,73 @@ fn selected_stream_limits_failure_stale_editor_and_visibility_preserve_state() {
 }
 
 #[test]
+fn clean_picker_pin_survives_process_background_without_a_document_revision() {
+    let f = Fixture::new();
+    let mut worker = f.open(PASSWORD, true).unwrap();
+    worker.request(&Command::BeginCreateUngrouped).unwrap();
+    let clean = editor(&mut worker);
+    assert!(!clean.dirty);
+    let before = f.launcher.writer.snapshot().unwrap().fingerprint();
+    let pinned: taypeer_services::DraftIdentity =
+        serde_json::from_value(worker.request(&Command::PinActiveForm).unwrap()).unwrap();
+    assert_eq!(pinned, clean.identity);
+    worker.request(&Command::PersistDrafts).unwrap();
+    worker.close().unwrap();
+    let mut worker = f.open(PASSWORD, false).unwrap();
+    let forms = worker.request(&Command::Drafts).unwrap();
+    assert_eq!(forms.as_array().unwrap().len(), 1);
+    assert_eq!(forms[0]["dirty"], false);
+    worker
+        .request(&Command::ResumeDraft(pinned.draft.clone()))
+        .unwrap();
+    let resumed = editor(&mut worker);
+    assert_eq!(resumed.identity, pinned);
+    assert!(!resumed.dirty);
+    worker.request(&Command::BeginCreateUngrouped).unwrap();
+    let replacement: taypeer_services::DraftIdentity =
+        serde_json::from_value(worker.request(&Command::PinActiveForm).unwrap()).unwrap();
+    assert_ne!(replacement.draft, pinned.draft);
+    worker
+        .request(&Command::UnpinForm(pinned.draft.clone()))
+        .unwrap();
+    assert_eq!(editor(&mut worker).identity, replacement);
+    let forms = worker.request(&Command::Drafts).unwrap();
+    assert_eq!(forms.as_array().unwrap().len(), 1);
+    assert_eq!(
+        forms[0]["identity"]["draft"],
+        serde_json::to_value(&replacement.draft).unwrap()
+    );
+    worker.close().unwrap();
+    let mut worker = f.open(PASSWORD, false).unwrap();
+    worker
+        .request(&Command::ResumeDraft(replacement.draft.clone()))
+        .unwrap();
+    assert!(matches!(
+        worker.request(&Command::ResumeDraft(pinned.draft)),
+        Err(RuntimeError::Service(
+            taypeer_services::ServiceError::NoDraft
+        ))
+    ));
+    worker
+        .request(&Command::UnpinForm(replacement.draft.clone()))
+        .unwrap();
+    assert_eq!(editor(&mut worker).identity, replacement);
+    assert_eq!(f.launcher.writer.snapshot().unwrap().fingerprint(), before);
+    worker.close().unwrap();
+    let mut worker = f.open(PASSWORD, false).unwrap();
+    assert!(
+        worker
+            .request(&Command::Drafts)
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(worker.request(&Command::ActiveDraft).unwrap().is_null());
+    worker.close().unwrap();
+}
+
+#[test]
 fn invitation_only_process_returns_public_proof_without_opening_a_document() {
     let manager = Fixture::new();
     let mut opened = manager.open(PASSWORD, true).unwrap();

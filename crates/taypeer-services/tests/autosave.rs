@@ -649,3 +649,280 @@ fn local_fallback_reports_its_own_failure_and_deleted_attempts_cannot_resurrect(
         ServiceError::OperationConflict
     );
 }
+
+#[test]
+fn picker_pin_keeps_a_clean_exact_form_through_restart_and_unpin_preserves_live_input() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("PUBLIC picker pin.taypeer");
+    let mut service = DatabaseService::new();
+    let session = service
+        .create_file(&path, "PUBLIC picker database".into(), PASSWORD)
+        .unwrap();
+    let identity = service
+        .start_create_entry_ungrouped(&session)
+        .unwrap()
+        .value
+        .identity;
+    let committed = std::fs::read(&path).unwrap();
+    assert!(!service.editor_view(&session).unwrap().dirty);
+    assert_eq!(service.pin_active_form(&session).unwrap().value, identity);
+    assert_eq!(service.pin_active_form(&session).unwrap().value, identity);
+    let retained = service.drafts(&session).unwrap().value;
+    assert_eq!(retained.len(), 1);
+    assert_eq!(retained[0].identity, identity);
+    assert!(!retained[0].dirty);
+    service.persist_drafts(&session).unwrap();
+    service.lock(&session).unwrap();
+    drop(service);
+    let mut service = DatabaseService::new();
+    let session = service.open_file(&path, PASSWORD).unwrap();
+    assert_eq!(
+        service
+            .resume_draft(&session, &identity.draft)
+            .unwrap()
+            .value,
+        identity
+    );
+    assert!(!service.editor_view(&session).unwrap().dirty);
+    service
+        .unpin_form(&session, &taypeer_core::DraftId::new("PUBLIC old picker"))
+        .unwrap();
+    assert_eq!(service.drafts(&session).unwrap().value.len(), 1);
+    service.unpin_form(&session, &identity.draft).unwrap();
+    service.unpin_form(&session, &identity.draft).unwrap();
+    assert_eq!(service.editor_view(&session).unwrap().identity, identity);
+    assert!(!service.editor_view(&session).unwrap().dirty);
+    assert!(service.drafts(&session).unwrap().value.is_empty());
+    assert_eq!(std::fs::read(&path).unwrap(), committed);
+    service.lock(&session).unwrap();
+    drop(service);
+    let mut service = DatabaseService::new();
+    let session = service.open_file(&path, PASSWORD).unwrap();
+    assert!(service.drafts(&session).unwrap().value.is_empty());
+    assert!(service.active_draft(&session).unwrap().value.is_none());
+    assert!(
+        service
+            .entries(&session, None, "")
+            .unwrap()
+            .value
+            .is_empty()
+    );
+    let identity = service
+        .start_create_entry_ungrouped(&session)
+        .unwrap()
+        .value
+        .identity;
+    service
+        .patch_draft(&session, title("PUBLIC changed while picker retained"))
+        .unwrap();
+    let dirty = service.editor_view(&session).unwrap().identity;
+    service.pin_active_form(&session).unwrap();
+    service.unpin_form(&session, &identity.draft).unwrap();
+    service.lock(&session).unwrap();
+    drop(service);
+    let mut service = DatabaseService::new();
+    let session = service.open_file(&path, PASSWORD).unwrap();
+    assert_eq!(
+        service
+            .resume_draft(&session, &identity.draft)
+            .unwrap()
+            .value,
+        dirty
+    );
+    assert_eq!(
+        service.editor_view(&session).unwrap().fields.title,
+        "PUBLIC changed while picker retained"
+    );
+}
+
+#[test]
+fn metadata_pin_and_failed_publication_do_not_fabricate_dirty_state_or_history() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("PUBLIC metadata picker.taypeer");
+    let sidecar = directory
+        .path()
+        .join("PUBLIC metadata picker.taypeer.draft");
+    let displaced = directory.path().join("PUBLIC pinned sidecar");
+    let mut service = DatabaseService::new();
+    let session = service
+        .create_file(&path, "PUBLIC metadata picker".into(), PASSWORD)
+        .unwrap();
+    let group = service
+        .create_group(
+            &session,
+            "PUBLIC pinned group".into(),
+            None,
+            &new_operation_id().unwrap(),
+        )
+        .unwrap()
+        .value
+        .id;
+    let group_history = service.group_history(&session, &group).unwrap().value.len();
+    let database_history = service.database_history(&session).unwrap().value.len();
+    let identity = service
+        .start_edit_group(&session, &group)
+        .unwrap()
+        .value
+        .identity;
+    std::fs::create_dir(&sidecar).unwrap();
+    assert!(service.pin_active_form(&session).is_err());
+    assert!(service.drafts(&session).unwrap().value.is_empty());
+    assert!(
+        !service
+            .metadata_draft(&session, &identity.draft)
+            .unwrap()
+            .value
+            .dirty
+    );
+    std::fs::remove_dir(&sidecar).unwrap();
+    service.pin_active_form(&session).unwrap();
+    std::fs::rename(&sidecar, &displaced).unwrap();
+    std::fs::create_dir(&sidecar).unwrap();
+    assert!(service.unpin_form(&session, &identity.draft).is_err());
+    assert_eq!(
+        service.drafts(&session).unwrap().value[0].identity,
+        identity
+    );
+    std::fs::remove_dir(&sidecar).unwrap();
+    std::fs::rename(&displaced, &sidecar).unwrap();
+    service.lock(&session).unwrap();
+    drop(service);
+    let mut service = DatabaseService::new();
+    let session = service.open_file(&path, PASSWORD).unwrap();
+    assert_eq!(
+        service
+            .resume_draft(&session, &identity.draft)
+            .unwrap()
+            .value,
+        identity
+    );
+    assert!(
+        !service
+            .metadata_draft(&session, &identity.draft)
+            .unwrap()
+            .value
+            .dirty
+    );
+    service.unpin_form(&session, &identity.draft).unwrap();
+    let database_form = service
+        .start_edit_database_info(&session)
+        .unwrap()
+        .value
+        .identity;
+    service.pin_active_form(&session).unwrap();
+    assert_eq!(
+        service.group_history(&session, &group).unwrap().value.len(),
+        group_history
+    );
+    assert_eq!(
+        service.database_history(&session).unwrap().value.len(),
+        database_history
+    );
+    service.lock(&session).unwrap();
+    drop(service);
+    let mut service = DatabaseService::new();
+    let session = service.open_file(&path, PASSWORD).unwrap();
+    assert_eq!(
+        service
+            .resume_draft(&session, &database_form.draft)
+            .unwrap()
+            .value,
+        database_form
+    );
+    assert!(
+        !service
+            .metadata_draft(&session, &database_form.draft)
+            .unwrap()
+            .value
+            .dirty
+    );
+    service
+        .delete_draft(&session, &database_form.draft)
+        .unwrap();
+    assert!(service.drafts(&session).unwrap().value.is_empty());
+    assert_eq!(
+        service.group_history(&session, &group).unwrap().value.len(),
+        group_history
+    );
+    assert_eq!(
+        service.database_history(&session).unwrap().value.len(),
+        database_history
+    );
+}
+
+#[test]
+fn a_new_picker_replaces_an_orphaned_pin_and_old_cleanup_cannot_unpin_it() {
+    for dirty in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("PUBLIC orphaned picker.taypeer");
+        let mut service = DatabaseService::new();
+        let session = service
+            .create_file(&path, "PUBLIC orphaned picker".into(), PASSWORD)
+            .unwrap();
+        service.start_create_entry_ungrouped(&session).unwrap();
+        if dirty {
+            service
+                .patch_draft(&session, title("PUBLIC retained old input"))
+                .unwrap();
+        }
+        let old = service.pin_active_form(&session).unwrap().value;
+        service.lock(&session).unwrap();
+        drop(service);
+        let mut service = DatabaseService::new();
+        let session = service.open_file(&path, PASSWORD).unwrap();
+        // The client lost its former URI and pending operation during restart.
+        let new = service
+            .start_create_entry_ungrouped(&session)
+            .unwrap()
+            .value
+            .identity;
+        assert_ne!(old.draft, new.draft);
+        assert_eq!(service.pin_active_form(&session).unwrap().value, new);
+        service.unpin_form(&session, &old.draft).unwrap();
+        let forms = service.drafts(&session).unwrap().value;
+        assert!(forms.iter().any(|form| form.identity == new && !form.dirty));
+        assert_eq!(forms.iter().any(|form| form.identity == old), dirty);
+        service.lock(&session).unwrap();
+        drop(service);
+        let mut service = DatabaseService::new();
+        let session = service.open_file(&path, PASSWORD).unwrap();
+        if dirty {
+            assert_eq!(
+                service.resume_draft(&session, &old.draft).unwrap().value,
+                old
+            );
+            assert_eq!(
+                service.editor_view(&session).unwrap().fields.title,
+                "PUBLIC retained old input"
+            );
+        } else {
+            assert_eq!(
+                service.resume_draft(&session, &old.draft).unwrap_err(),
+                ServiceError::NoDraft
+            );
+        }
+        assert_eq!(
+            service.resume_draft(&session, &new.draft).unwrap().value,
+            new
+        );
+        service.unpin_form(&session, &old.draft).unwrap();
+        service.persist_drafts(&session).unwrap();
+        assert!(
+            service
+                .drafts(&session)
+                .unwrap()
+                .value
+                .iter()
+                .any(|form| form.identity == new && !form.dirty)
+        );
+        assert!(
+            service
+                .entries(&session, None, "")
+                .unwrap()
+                .value
+                .is_empty()
+        );
+        service.unpin_form(&session, &new.draft).unwrap();
+        assert_eq!(service.editor_view(&session).unwrap().identity, new);
+    }
+}

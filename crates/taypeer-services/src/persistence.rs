@@ -21,7 +21,7 @@ impl DatabaseState {
 
     pub(super) fn clear_saved_draft(&mut self) -> Result<(), ServiceError> {
         let mut collection = self.drafts.clone();
-        collection.entry = None;
+        collection.clear_entry();
         self.persist_draft_collection(&collection, self.blobs()?)?;
         self.drafts = collection;
         Ok(())

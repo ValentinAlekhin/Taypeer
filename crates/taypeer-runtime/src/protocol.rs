@@ -69,6 +69,11 @@ pub enum Command {
     /// Confirm a durable local fallback for navigation after a document write failure.
     /// This never reports the database as saved or creates a history revision.
     PersistDrafts,
+    /// Explicitly retain the active form during an OS picker background transition.
+    /// Clean forms retain their identity without a document or input revision.
+    PinActiveForm,
+    /// Durably release only the specified OS picker pin.
+    UnpinForm(DraftId),
     /// Durably save the exact captured revision, preserving the editor and later input.
     SaveDraftSnapshot {
         /// Stable local editor identity.

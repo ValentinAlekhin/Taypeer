@@ -781,6 +781,11 @@ pub(crate) fn dispatch(
             service.persist_drafts(session)?;
             Value::Null
         }
+        Command::PinActiveForm => value(&service.pin_active_form(session)?.value)?,
+        Command::UnpinForm(id) => {
+            service.unpin_form(session, &id)?;
+            Value::Null
+        }
         Command::SaveDraftSnapshot {
             draft,
             revision,

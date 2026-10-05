@@ -282,6 +282,9 @@ pub(super) struct DraftCollection {
     attempts: BTreeMap<OperationId, SnapshotAttempt>,
     #[serde(default)]
     cancelled: BTreeSet<OperationId>,
+    // One explicit OS picker may retain an otherwise clean form through lock.
+    #[serde(default)]
+    pinned: Option<DraftId>,
 }
 
 impl DraftCollection {
@@ -295,6 +298,7 @@ impl DraftCollection {
             active_metadata: None,
             attempts: BTreeMap::new(),
             cancelled: BTreeSet::new(),
+            pinned: None,
         }
     }
     pub(super) fn validate(&self, database: &DatabaseId) -> Result<(), ServiceError> {
@@ -306,6 +310,9 @@ impl DraftCollection {
             || self.attempts.len() + self.cancelled.len() > 100_000
         {
             return Err(ServiceError::InvalidContext);
+        }
+        if self.pinned.as_ref().is_some_and(|id| !self.contains(id)) {
+            return Err(ServiceError::InvalidDocument);
         }
         for (id, draft) in &self.entries {
             if id != &draft.identity().draft {
@@ -376,9 +383,32 @@ impl DraftCollection {
     pub(super) fn database_id(&self) -> &DatabaseId {
         &self.database
     }
+    fn contains(&self, id: &DraftId) -> bool {
+        self.entry
+            .as_ref()
+            .is_some_and(|entry| &entry.identity().draft == id)
+            || self.entries.contains_key(id)
+            || self.metadata.contains_key(id)
+    }
+    pub(super) fn clear_entry(&mut self) {
+        if let Some(entry) = self.entry.take()
+            && self.pinned.as_ref() == Some(&entry.identity().draft)
+        {
+            self.pinned = None;
+        }
+    }
+    fn remove_unpinned_clean_parked(&mut self) {
+        self.entries
+            .retain(|id, entry| entry.is_dirty() || self.pinned.as_ref() == Some(id));
+        self.metadata.retain(|id, draft| {
+            draft.fields != draft.baseline
+                || self.pinned.as_ref() == Some(id)
+                || self.active_metadata.as_ref() == Some(id)
+        });
+    }
     pub(super) fn park_entry(&mut self) {
         if let Some(draft) = self.entry.take()
-            && draft.is_dirty()
+            && (draft.is_dirty() || self.pinned.as_ref() == Some(&draft.identity().draft))
         {
             self.entries.insert(draft.identity().draft, draft);
         }
@@ -426,12 +456,15 @@ impl DraftCollection {
         }
     }
     pub(super) fn stash(&mut self) {
-        if self.entry.as_ref().is_some_and(|entry| !entry.is_dirty()) {
+        if self.entry.as_ref().is_some_and(|entry| {
+            !entry.is_dirty() && self.pinned.as_ref() != Some(&entry.identity().draft)
+        }) {
             self.entry = None;
         }
-        self.entries.retain(|_, entry| entry.is_dirty());
+        self.entries
+            .retain(|id, entry| entry.is_dirty() || self.pinned.as_ref() == Some(id));
         self.metadata
-            .retain(|_, draft| draft.fields != draft.baseline);
+            .retain(|id, draft| draft.fields != draft.baseline || self.pinned.as_ref() == Some(id));
         if self
             .active_metadata
             .as_ref()
@@ -458,7 +491,7 @@ impl DraftCollection {
             .unwrap_or(false)
         {
             // Legacy SaveDraft closes its editor; the receipt already protects its data.
-            self.entry = None;
+            self.clear_entry();
         }
         let operations: Vec<_> = self
             .attempts
@@ -575,6 +608,52 @@ pub(super) fn new_draft_id() -> Result<DraftId, ServiceError> {
 }
 
 impl DatabaseService {
+    /// Durably retain the exact active form through an intentional OS picker
+    /// background transition, including a clean editor. This creates no document
+    /// revision and does not change dirty state or input revision. A new explicit
+    /// selection replaces an orphaned pin while preserving every dirty form.
+    pub fn pin_active_form(
+        &mut self,
+        session: &SessionToken,
+    ) -> Result<SessionValue<DraftIdentity>, ServiceError> {
+        let identity = self
+            .active_draft(session)?
+            .value
+            .ok_or(ServiceError::NoDraft)?;
+        let state = self.checked_mut(session)?;
+        if let Some(entry) = &state.drafts.entry {
+            entry.document()?;
+        }
+        let mut collection = state.drafts.clone();
+        collection.pinned = Some(identity.draft.clone());
+        collection.remove_unpinned_clean_parked();
+        collection.validate(&session.database)?;
+        state.persist_draft_collection(&collection, state.blobs()?)?;
+        state.drafts = collection;
+        Ok(stamped(session, identity))
+    }
+
+    /// Release this picker pin durably after success or cancellation. Clean forms
+    /// may leave local storage; the active in-memory editor and dirty forms remain.
+    /// Repeating an already completed unpin succeeds without changing another pin.
+    pub fn unpin_form(
+        &mut self,
+        session: &SessionToken,
+        id: &DraftId,
+    ) -> Result<SessionValue<()>, ServiceError> {
+        let state = self.checked_mut(session)?;
+        if state.drafts.pinned.as_ref() != Some(id) {
+            return Ok(stamped(session, ()));
+        }
+        let mut collection = state.drafts.clone();
+        collection.pinned = None;
+        let mut retained = collection.clone();
+        retained.stash();
+        state.persist_draft_collection(&retained, state.blobs()?)?;
+        state.drafts = collection;
+        Ok(stamped(session, ()))
+    }
+
     /// Confirm durable local storage of every current form and immutable pending attempt.
     /// This creates no document revision and does not confirm a failed database write.
     pub fn persist_drafts(
@@ -627,7 +706,9 @@ impl DatabaseService {
             .entry
             .iter()
             .chain(collection.entries.values())
-            .filter(|draft| draft.is_dirty())
+            .filter(|draft| {
+                draft.is_dirty() || collection.pinned.as_ref() == Some(&draft.identity().draft)
+            })
             .map(|draft| DraftSummary {
                 identity: draft.identity(),
                 dirty: draft.is_dirty(),
@@ -637,7 +718,10 @@ impl DatabaseService {
             collection
                 .metadata
                 .values()
-                .filter(|draft| draft.fields != draft.baseline)
+                .filter(|draft| {
+                    draft.fields != draft.baseline
+                        || collection.pinned.as_ref() == Some(&draft.identity.draft)
+                })
                 .map(|draft| DraftSummary {
                     identity: draft.identity.clone(),
                     dirty: draft.fields != draft.baseline,
@@ -701,6 +785,9 @@ impl DatabaseService {
         };
         if !removed {
             return Err(ServiceError::NoDraft);
+        }
+        if collection.pinned.as_ref() == Some(id) {
+            collection.pinned = None;
         }
         if collection.active_metadata.as_ref() == Some(id) {
             collection.active_metadata = None;
