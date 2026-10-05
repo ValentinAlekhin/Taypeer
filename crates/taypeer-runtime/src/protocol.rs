@@ -240,6 +240,31 @@ pub enum Command {
         /// Retry identity.
         operation: OperationId,
     },
+    /// Import an explicitly selected stream into this exact active local form.
+    /// The opaque capability is usable only by a platform worker, never a path.
+    ImportSelectedAttachment {
+        /// Exact local editor that owns the selected input.
+        draft: taypeer_core::DraftId,
+        /// Platform-owned input capability.
+        input: u64,
+        /// Declared complete plaintext length, checked while streaming.
+        length: u64,
+        /// Exact selected filename for a new attachment.
+        name: String,
+        /// Existing attachment identity when replacing only its content.
+        replacement: Option<taypeer_core::AttachmentId>,
+        /// Stable content-bound retry identity.
+        operation: OperationId,
+    },
+    /// Export visible content through an explicitly selected platform output.
+    ExportSelectedBinary {
+        /// Visibility scope checked by the service.
+        target: taypeer_services::BinaryTarget,
+        /// Selected immutable content.
+        blob: taypeer_core::BlobId,
+        /// Platform-owned output capability.
+        output: u64,
+    },
     /// Explicitly export one accessible binary variant to a selected path.
     ExportBinary {
         /// Visibility scope checked by the service.
@@ -517,6 +542,7 @@ impl Command {
                 erase_text_patch(&mut patch.description);
             }
             Self::DraftExpiry(value) => value.zeroize(),
+            Self::ImportSelectedAttachment { name, .. } => name.zeroize(),
             Self::PatchAttribute { patch, .. } => {
                 patch.name.zeroize();
                 if let taypeer_services::FieldUpdate::Set(value) = &mut patch.value {

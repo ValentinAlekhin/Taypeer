@@ -26,6 +26,23 @@ pub trait PlatformDocument: CipherPersistence + Sync {
     fn author(&self, authenticated: Option<Digest>) -> Result<Option<AuthorKey>, RuntimeError>;
     /// Public identity of the host transport. It conveys no author authority.
     fn transport_public(&self) -> Result<PublicKey, RuntimeError>;
+    /// Consume a selected plaintext input capability for this worker generation.
+    /// Ordinary ciphertext persistence adapters have no selected-file access.
+    fn selected_input(&self, _id: u64) -> Result<Box<dyn Read + Send>, RuntimeError> {
+        Err(RuntimeError::Protocol)
+    }
+    /// Consume a selected output capability for this worker generation.
+    /// Its owner must revoke it on lock and discard incomplete publication.
+    fn selected_output(&self, _id: u64) -> Result<Box<dyn SelectedOutput>, RuntimeError> {
+        Err(RuntimeError::Protocol)
+    }
+}
+
+/// A selected plaintext output whose explicit finish confirms durable publication.
+/// Dropping the stream is cleanup and must never report export success.
+pub trait SelectedOutput: Write + Send {
+    /// Flush, synchronize and complete this selected output, or return a typed failure.
+    fn finish(&mut self) -> Result<(), RuntimeError>;
 }
 
 #[derive(Serialize, Deserialize)]
@@ -170,7 +187,7 @@ pub fn run_platform_worker(
             .map_err(|_| RuntimeError::Transport)?
             .read()?;
         let locking = matches!(command, crate::Command::Lock);
-        let result = crate::worker::dispatch(&mut service, &session, command);
+        let result = dispatch_platform(&mut service, &session, command, document.as_ref());
         channel
             .lock()
             .map_err(|_| RuntimeError::Transport)?
@@ -180,6 +197,49 @@ pub fn run_platform_worker(
         }
     })();
     outcome.and(service.lock_all_checked().map_err(RuntimeError::from))
+}
+
+fn dispatch_platform(
+    service: &mut DatabaseService,
+    session: &taypeer_services::SessionToken,
+    command: crate::Command,
+    document: &dyn PlatformDocument,
+) -> Result<serde_json::Value, RuntimeError> {
+    match command {
+        crate::Command::ImportSelectedAttachment {
+            draft,
+            input,
+            length,
+            name,
+            replacement,
+            operation,
+        } => {
+            service.import_attachment_stream(
+                session,
+                &draft,
+                document.selected_input(input)?,
+                taypeer_services::AttachmentImport {
+                    length,
+                    name,
+                    replacement,
+                },
+                &operation,
+            )?;
+            Ok(serde_json::Value::Null)
+        }
+        crate::Command::ExportSelectedBinary {
+            target,
+            blob,
+            output,
+        } => {
+            service.binary_export_length(session, &target, &blob)?;
+            let mut output = document.selected_output(output)?;
+            service.export_binary_stream(session, &target, &blob, &mut output)?;
+            output.finish()?;
+            Ok(serde_json::Value::Null)
+        }
+        command => crate::worker::dispatch(service, session, command),
+    }
 }
 
 impl crate::RuntimeHost {

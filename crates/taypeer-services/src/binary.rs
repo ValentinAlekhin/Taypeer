@@ -1,7 +1,10 @@
 //! Session-checked binary editing, explicit export and quota/retention reporting.
 
 use super::*;
-use std::{fs::File, io::Write};
+use std::{
+    fs::File,
+    io::{Read, Write},
+};
 use taypeer_core::{
     AttachmentId, BlobId, Color, DatabasePolicy, EntryField, EntryFields, FieldValue, ICON_LIMIT,
     IconRef, IconSource, OperationId,
@@ -12,6 +15,139 @@ mod types;
 pub use types::*;
 
 impl DatabaseService {
+    /// Stream one selected attachment into this exact active entry editor.
+    /// Contents are encrypted while reading; short, long or failed input leaves
+    /// the form and its blob aliases intact. Equal retries are checked against
+    /// verified content rather than a transient platform capability or filename.
+    pub fn import_attachment_stream(
+        &mut self,
+        session: &SessionToken,
+        draft_id: &taypeer_core::DraftId,
+        input: impl Read,
+        import: AttachmentImport,
+        operation: &OperationId,
+    ) -> Result<SessionValue<()>, ServiceError> {
+        let AttachmentImport {
+            length,
+            name,
+            replacement,
+        } = import;
+        if operation.as_str().is_empty() || name.is_empty() {
+            return Err(ServiceError::InvalidInput);
+        }
+        let active = self
+            .active_draft(session)?
+            .value
+            .ok_or(ServiceError::NoDraft)?;
+        if &active.draft != draft_id
+            || !matches!(
+                active.target,
+                DraftTarget::Entry(_) | DraftTarget::NewEntry { .. }
+            )
+        {
+            return Err(ServiceError::InvalidContext);
+        }
+        let state = self.checked_mut(session)?;
+        let mut draft = state.draft_for_edit()?;
+        draft.document()?;
+        let policy = state.policy();
+        if length > policy.attachment_bytes() {
+            return Err(ServiceError::AttachmentLimit);
+        }
+        let mut blobs = state.blobs()?.clone();
+        let blob = blobs.insert(input, length, policy.attachment_bytes())?;
+        let digest = blobs
+            .content_digest(&blob)
+            .ok_or(StorageError::MissingBlob)?;
+        let intent = serde_json::json!({
+            "action": "import_attachment_stream",
+            "draft": draft_id,
+            "name": name,
+            "replacement": replacement,
+            "length": length,
+            "digest": digest,
+        });
+        // Re-read even an acknowledged operation: capabilities and selected
+        // documents can change while keeping their name and reported length.
+        if draft.binary_receipt(operation, &intent)? {
+            return Ok(stamped(session, ()));
+        }
+        let document = draft.document_mut()?;
+        match replacement {
+            Some(id) => {
+                document
+                    .fields_mut()
+                    .attachments
+                    .get_mut(&id)
+                    .ok_or(ServiceError::NotFound)?
+                    .blob = blob;
+            }
+            None => {
+                document.add_attachment(name, blob);
+            }
+        }
+        // Incomplete ordinary fields belong to the local editor. Attachment
+        // acquisition must not require a title or create a document revision.
+        check_attachment_quota(state.document(), document.fields(), &blobs, policy)?;
+        draft.record_binary(operation.clone(), intent)?;
+        state.persist_binary_draft(&draft, &blobs)?;
+        state.blobs = Some(blobs);
+        state.drafts.entry = Some(draft);
+        Ok(stamped(session, ()))
+    }
+
+    /// Copy one visible immutable content into a selected output stream.
+    /// EOF authenticates the content; the caller must finish durable publication
+    /// and retain generation control before reporting export success.
+    pub fn export_binary_stream(
+        &self,
+        session: &SessionToken,
+        target: &BinaryTarget,
+        blob: &BlobId,
+        output: &mut impl Write,
+    ) -> Result<SessionValue<()>, ServiceError> {
+        self.binary_export_length(session, target, blob)?;
+        std::io::copy(&mut self.checked(session)?.blobs()?.reader(blob)?, output)
+            .map_err(StorageError::from)?;
+        Ok(stamped(session, ()))
+    }
+
+    /// Validate the selected scope and content before acquiring a destructive
+    /// output capability. This returns only its already verified byte length.
+    pub fn binary_export_length(
+        &self,
+        session: &SessionToken,
+        target: &BinaryTarget,
+        blob: &BlobId,
+    ) -> Result<SessionValue<u64>, ServiceError> {
+        self.require_visible_blob(session, target, blob)?;
+        let length = self
+            .checked(session)?
+            .blobs()?
+            .length(blob)
+            .ok_or(StorageError::MissingBlob)?;
+        Ok(stamped(session, length))
+    }
+
+    fn require_visible_blob(
+        &self,
+        session: &SessionToken,
+        target: &BinaryTarget,
+        blob: &BlobId,
+    ) -> Result<(), ServiceError> {
+        let view = self.binary_view(session, target)?.value;
+        let allowed = view
+            .attachments
+            .iter()
+            .flat_map(|a| &a.contents)
+            .any(|b| &b.id == blob)
+            || view.icons.iter().any(|icon| icon.blob() == Some(blob));
+        if !allowed {
+            return Err(ServiceError::NotFound);
+        }
+        Ok(())
+    }
+
     /// Read one unique local icon through its checked visibility scope. No network or plaintext file.
     pub fn icon_preview(
         &self,
@@ -320,23 +456,13 @@ impl DatabaseService {
         {
             return Err(ServiceError::InvalidInput);
         }
-        let view = self.binary_view(session, target)?.value;
-        let allowed = view
-            .attachments
-            .iter()
-            .flat_map(|a| &a.contents)
-            .any(|b| &b.id == blob)
-            || view.icons.iter().any(|icon| icon.blob() == Some(blob));
-        if !allowed {
-            return Err(ServiceError::NotFound);
-        }
-        let state = self.checked(session)?;
+        self.require_visible_blob(session, target, blob)?;
         let parent = destination
             .parent()
             .filter(|p| !p.as_os_str().is_empty())
             .unwrap_or(Path::new("."));
         let mut temp = tempfile::NamedTempFile::new_in(parent).map_err(StorageError::from)?;
-        std::io::copy(&mut state.blobs()?.reader(blob)?, &mut temp).map_err(StorageError::from)?;
+        self.export_binary_stream(session, target, blob, &mut temp)?;
         temp.flush().map_err(StorageError::from)?;
         taypeer_storage::publish_file(
             temp,
@@ -536,11 +662,21 @@ pub(super) fn check_quota(
         edit,
         BinaryEdit::Attachment(AttachmentEdit::Add { .. } | AttachmentEdit::Replace { .. })
     ) {
-        let mut refs = document.blob_references()?.attachments;
-        refs.extend(fields.attachments.values().map(|a| a.blob.clone()));
-        if blobs.unique_bytes(&refs) > policy.total_attachment_bytes() {
-            return Err(ServiceError::AttachmentLimit);
-        }
+        check_attachment_quota(document, fields, blobs, policy)?;
+    }
+    Ok(())
+}
+
+fn check_attachment_quota(
+    document: &Document,
+    fields: &EntryFields,
+    blobs: &BlobStore,
+    policy: DatabasePolicy,
+) -> Result<(), ServiceError> {
+    let mut refs = document.blob_references()?.attachments;
+    refs.extend(fields.attachments.values().map(|a| a.blob.clone()));
+    if blobs.unique_bytes(&refs) > policy.total_attachment_bytes() {
+        return Err(ServiceError::AttachmentLimit);
     }
     Ok(())
 }

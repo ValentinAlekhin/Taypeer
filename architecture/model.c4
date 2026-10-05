@@ -33,7 +33,7 @@ model {
     android = app 'Приложение Android' {
       #partial
       technology 'Kotlin + Jetpack Compose / AndroidX'
-      description 'Продуктовая сборка и генератор Compose → Rust. Документный UI и P2P ещё не подключены; spike остаётся историческим стендом.'
+      description 'Каталог, документный Compose UI, история и обмен через общий Rust runtime. Генератор использует общие сервисы; физическая приёмка остаётся открытой. Spike — исторический стенд.'
       metadata { source 'apps/taypeer-android/app/src/main/java/dev/taypeer/MainActivity.kt'; evidence 'apps/taypeer-android/README.md'; contract 'docs/architecture.md' }
     }
     ffi = component 'Адаптер UniFFI' {
@@ -177,7 +177,7 @@ model {
     androidPlatform = component 'Адаптеры Android' {
       #partial
       technology 'Kotlin + AndroidX'
-      description 'SAF, Keystore, Binder и bindIsolatedService, буфер, lifecycle и фоновые задания. Контроль worker независим от команд; биометрия отложена.'
+      description 'SAF, Keystore, Binder и bindIsolatedService, буфер, lifecycle и фоновые задания. Выбранные пользователем вложения передаются отдельными ограниченными потоками; ciphertext persistence не получает plaintext. Контроль worker независим от команд; биометрия отложена.'
       metadata { source 'apps/taypeer-android/app/src/main/java/dev/taypeer/platform/DocumentService.kt'; evidence 'apps/taypeer-android/README.md'; contract 'docs/architecture.md' }
     }
     vault = store 'Рабочий файл .taypeer' {

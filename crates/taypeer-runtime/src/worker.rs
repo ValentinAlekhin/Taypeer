@@ -590,7 +590,9 @@ pub(crate) fn dispatch(
     command: Command,
 ) -> Result<Value, RuntimeError> {
     Ok(match command {
-        Command::RecoverTrust { .. } => return Err(RuntimeError::Protocol),
+        Command::RecoverTrust { .. }
+        | Command::ImportSelectedAttachment { .. }
+        | Command::ExportSelectedBinary { .. } => return Err(RuntimeError::Protocol),
         Command::ApplyReceived => value(&service.apply_received(session)?.value)?,
         Command::CollectReceived => value(&service.collect_received(session)?.value)?,
         Command::ReceivedSources => value(&service.received_sources(session)?.value)?,

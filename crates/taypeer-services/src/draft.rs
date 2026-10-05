@@ -91,7 +91,8 @@ impl DraftState {
         self.baseline = confirmed.document.fields().clone();
         self.kind = DraftKind::Existing;
         self.attempt = None;
-        self.binary_receipts.clear();
+        // The editor identity survives autosave. Lost import responses may be
+        // retried afterwards, so their immutable intents live with this draft.
         Ok(())
     }
 

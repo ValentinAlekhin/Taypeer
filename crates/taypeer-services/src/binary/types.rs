@@ -4,6 +4,17 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use taypeer_core::{AttachmentId, BlobId, Color, EntryId, GroupId, IconRef, LucideKey, RevisionId};
 
+/// Metadata of an explicitly selected attachment stream, independent of its
+/// transient platform capability. The complete declared length is authenticated.
+pub struct AttachmentImport {
+    /// Exact complete plaintext length.
+    pub length: u64,
+    /// Exact selected filename for a new attachment.
+    pub name: String,
+    /// Existing identity when changing only its immutable content.
+    pub replacement: Option<AttachmentId>,
+}
+
 /// Explicit scope of binary metadata and export; purged objects require a late source.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]

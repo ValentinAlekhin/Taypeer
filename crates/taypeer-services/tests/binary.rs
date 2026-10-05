@@ -363,3 +363,338 @@ fn failed_binary_save_preserves_the_document_and_operation_can_be_retried() {
     assert_eq!(fs::read(&path).unwrap(), committed);
     assert_eq!(service.history(&session, &entry).unwrap().value.len(), 2);
 }
+
+#[test]
+fn selected_attachment_retry_survives_autosave_newer_input_removal_and_restart() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut service = DatabaseService::new();
+    let (session, _, entry) = setup(&mut service, directory.path());
+    let draft = service
+        .start_edit_entry(&session, &entry)
+        .unwrap()
+        .value
+        .identity
+        .draft;
+    let bytes = b"PUBLIC selected attachment contents";
+    let operation = OperationId::new("PUBLIC selected attachment operation");
+    let import = |service: &mut DatabaseService, session: &SessionToken, bytes: &[u8]| {
+        service.import_attachment_stream(
+            session,
+            &draft,
+            bytes,
+            AttachmentImport {
+                length: bytes.len() as u64,
+                name: "PUBLIC selected.txt".into(),
+                replacement: None,
+            },
+            &operation,
+        )
+    };
+    import(&mut service, &session, bytes).unwrap();
+    let before = service.editor_view(&session).unwrap();
+    let binary = service
+        .binary_view(&session, &BinaryTarget::Draft)
+        .unwrap()
+        .value;
+    assert_eq!(binary.attachments.len(), 1);
+    let attachment = binary.attachments[0].id.clone();
+    let blob = binary.attachments[0].contents[0].id.clone();
+    import(&mut service, &session, bytes).unwrap();
+    assert_eq!(
+        service.editor_view(&session).unwrap().identity,
+        before.identity
+    );
+    assert_eq!(
+        import(&mut service, &session, &vec![b'x'; bytes.len()]).unwrap_err(),
+        ServiceError::InvalidInput,
+    );
+    service
+        .save_draft_snapshot(
+            &session,
+            &draft,
+            before.identity.revision,
+            &OperationId::new("PUBLIC selected first snapshot"),
+        )
+        .unwrap();
+    service
+        .patch_draft(
+            &session,
+            EntryPatch {
+                title: FieldUpdate::Set("PUBLIC newer title".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let newer = service.editor_view(&session).unwrap();
+    import(&mut service, &session, bytes).unwrap();
+    let unchanged = service.editor_view(&session).unwrap();
+    assert_eq!(unchanged.identity, newer.identity);
+    assert_eq!(unchanged.fields.title, "PUBLIC newer title");
+    assert_eq!(service.history(&session, &entry).unwrap().value.len(), 2);
+    edit(
+        &mut service,
+        &session,
+        BinaryTarget::Draft,
+        BinaryEdit::Attachment(AttachmentEdit::Remove { attachment }),
+        "PUBLIC selected remove",
+    );
+    let removed = service.editor_view(&session).unwrap();
+    import(&mut service, &session, bytes).unwrap();
+    assert_eq!(
+        service.editor_view(&session).unwrap().identity,
+        removed.identity
+    );
+    assert!(
+        service
+            .binary_view(&session, &BinaryTarget::Draft)
+            .unwrap()
+            .value
+            .attachments
+            .is_empty()
+    );
+    service
+        .save_draft_snapshot(
+            &session,
+            &draft,
+            removed.identity.revision,
+            &OperationId::new("PUBLIC selected removal snapshot"),
+        )
+        .unwrap();
+    // Retain newer unfinished input so this same editor is recoverable after restart.
+    service
+        .patch_draft(
+            &session,
+            EntryPatch {
+                notes: FieldUpdate::Set("PUBLIC later unsaved notes".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    service.lock(&session).unwrap();
+    drop(service);
+    let mut service = DatabaseService::new();
+    let session = service
+        .open_file(&directory.path().join("PUBLIC.taypeer"), PASSWORD)
+        .unwrap();
+    service.resume_draft(&session, &draft).unwrap();
+    let resumed = service.editor_view(&session).unwrap();
+    import(&mut service, &session, bytes).unwrap();
+    assert_eq!(
+        service.editor_view(&session).unwrap().identity,
+        resumed.identity
+    );
+    assert!(
+        service
+            .binary_view(&session, &BinaryTarget::Draft)
+            .unwrap()
+            .value
+            .attachments
+            .is_empty()
+    );
+    assert_eq!(service.history(&session, &entry).unwrap().value.len(), 3);
+    let mut hidden = Vec::new();
+    assert_eq!(
+        service
+            .export_binary_stream(
+                &session,
+                &BinaryTarget::Entry(entry.clone()),
+                &blob,
+                &mut hidden
+            )
+            .unwrap_err(),
+        ServiceError::NotFound
+    );
+    assert!(hidden.is_empty());
+    let revision = service.history(&session, &entry).unwrap().value[1]
+        .id
+        .clone();
+    let mut output = Vec::new();
+    service
+        .export_binary_stream(
+            &session,
+            &BinaryTarget::Revision { entry, revision },
+            &blob,
+            &mut output,
+        )
+        .unwrap();
+    assert_eq!(output, bytes);
+}
+
+struct FailingSelectedInput;
+impl std::io::Read for FailingSelectedInput {
+    fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+        Err(std::io::ErrorKind::BrokenPipe.into())
+    }
+}
+
+#[test]
+fn selected_input_failures_and_wrong_editor_preserve_prior_form_and_blobs() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut service = DatabaseService::new();
+    let (session, _, entry) = setup(&mut service, directory.path());
+    let draft = service
+        .start_edit_entry(&session, &entry)
+        .unwrap()
+        .value
+        .identity
+        .draft;
+    service
+        .patch_draft(
+            &session,
+            EntryPatch {
+                notes: FieldUpdate::Set("PUBLIC prior unsaved form".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let before = service.editor_view(&session).unwrap().identity;
+    let size = fs::metadata(directory.path().join("PUBLIC.taypeer"))
+        .unwrap()
+        .len();
+    let failed = |service: &mut DatabaseService, input: Box<dyn std::io::Read>, length| {
+        service.import_attachment_stream(
+            &session,
+            &draft,
+            input,
+            AttachmentImport {
+                length,
+                name: "PUBLIC failing source".into(),
+                replacement: None,
+            },
+            &OperationId::new("PUBLIC failed stream"),
+        )
+    };
+    assert_eq!(
+        failed(&mut service, Box::new(FailingSelectedInput), 1024).unwrap_err(),
+        ServiceError::Storage(StorageError::Io)
+    );
+    assert_eq!(
+        failed(&mut service, Box::new(b"short".as_slice()), 12).unwrap_err(),
+        ServiceError::Storage(StorageError::Io)
+    );
+    assert_eq!(
+        failed(&mut service, Box::new(b"too long".as_slice()), 2).unwrap_err(),
+        ServiceError::Storage(StorageError::InvalidFile)
+    );
+    // This reader would fail if invoked; a per-file limit must be checked first.
+    assert_eq!(
+        failed(
+            &mut service,
+            Box::new(FailingSelectedInput),
+            11 * 1024 * 1024
+        )
+        .unwrap_err(),
+        ServiceError::AttachmentLimit
+    );
+    assert_eq!(service.editor_view(&session).unwrap().identity, before);
+    assert!(
+        service
+            .binary_view(&session, &BinaryTarget::Draft)
+            .unwrap()
+            .value
+            .attachments
+            .is_empty()
+    );
+    assert_eq!(
+        service.storage_usage(&session).unwrap().value.draft_bytes,
+        0
+    );
+    assert_eq!(
+        fs::metadata(directory.path().join("PUBLIC.taypeer"))
+            .unwrap()
+            .len(),
+        size
+    );
+    let second = service
+        .start_create_entry_in(&session, None)
+        .unwrap()
+        .value
+        .identity
+        .draft;
+    assert_ne!(draft, second);
+    assert_eq!(
+        failed(&mut service, Box::new(FailingSelectedInput), 1024).unwrap_err(),
+        ServiceError::InvalidContext
+    );
+    service.resume_draft(&session, &draft).unwrap();
+    failed(&mut service, Box::new(b"PUBLIC retry".as_slice()), 12).unwrap();
+    assert_eq!(
+        service
+            .binary_view(&session, &BinaryTarget::Draft)
+            .unwrap()
+            .value
+            .attachments
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn unfinished_new_form_retains_streamed_contents_without_a_document_revision() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("PUBLIC.taypeer");
+    let mut service = DatabaseService::new();
+    let (session, _, _) = setup(&mut service, directory.path());
+    let draft = service
+        .start_create_entry_ungrouped(&session)
+        .unwrap()
+        .value
+        .identity
+        .draft;
+    let bytes = b"PUBLIC unfinished selected contents";
+    let operation = OperationId::new("PUBLIC unfinished attachment import");
+    service
+        .import_attachment_stream(
+            &session,
+            &draft,
+            bytes.as_slice(),
+            AttachmentImport {
+                length: bytes.len() as u64,
+                name: "PUBLIC unfinished attachment.txt".into(),
+                replacement: None,
+            },
+            &operation,
+        )
+        .unwrap();
+    let editor = service.editor_view(&session).unwrap();
+    assert!(editor.fields.title.is_empty());
+    let outcome = service
+        .save_draft_snapshot(
+            &session,
+            &draft,
+            editor.identity.revision,
+            &OperationId::new("PUBLIC unfinished local snapshot"),
+        )
+        .unwrap()
+        .value;
+    assert!(matches!(outcome, DraftSaveOutcome::LocalDraftSaved { .. }));
+    let blob = service
+        .binary_view(&session, &BinaryTarget::Draft)
+        .unwrap()
+        .value
+        .attachments[0]
+        .contents[0]
+        .id
+        .clone();
+    assert_eq!(
+        service
+            .entries(&session, None, "PUBLIC")
+            .unwrap()
+            .value
+            .len(),
+        1
+    );
+    service.lock(&session).unwrap();
+    drop(service);
+    let mut service = DatabaseService::new();
+    let session = service.open_file(&path, PASSWORD).unwrap();
+    service.resume_draft(&session, &draft).unwrap();
+    let resumed = service.editor_view(&session).unwrap();
+    assert_eq!(resumed.identity, editor.identity);
+    assert!(resumed.fields.title.is_empty());
+    let mut exported = Vec::new();
+    service
+        .export_binary_stream(&session, &BinaryTarget::Draft, &blob, &mut exported)
+        .unwrap();
+    assert_eq!(exported, bytes);
+}

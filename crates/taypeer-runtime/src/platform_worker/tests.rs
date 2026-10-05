@@ -60,6 +60,11 @@ enum Request {
     SaveDraft(u64),
     LoadDraft,
     DiscardDraft,
+    OpenSelectedInput(u64),
+    ReadSelectedInput(u64, usize),
+    OpenSelectedOutput(u64),
+    WriteSelectedOutput(u64, Vec<u8>),
+    FinishSelectedOutput(u64),
 }
 #[derive(Serialize, Deserialize)]
 enum Reply {
@@ -137,6 +142,50 @@ impl TemporaryFileProvider for Provider {
 struct Document {
     rpc: Arc<Rpc>,
     temporary: TemporaryStorage,
+}
+struct SelectedReader {
+    rpc: Arc<Rpc>,
+    id: u64,
+}
+impl Read for SelectedReader {
+    fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+        match self
+            .rpc
+            .call(Request::ReadSelectedInput(self.id, bytes.len().min(65536)))
+        {
+            Ok(Reply::Bytes(data)) if data.len() <= bytes.len() => {
+                bytes[..data.len()].copy_from_slice(&data);
+                Ok(data.len())
+            }
+            _ => Err(io::ErrorKind::BrokenPipe.into()),
+        }
+    }
+}
+struct SelectedWriter {
+    rpc: Arc<Rpc>,
+    id: u64,
+}
+impl Write for SelectedWriter {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        match self.rpc.call(Request::WriteSelectedOutput(
+            self.id,
+            bytes[..bytes.len().min(65536)].to_vec(),
+        )) {
+            Ok(Reply::Count(count)) if count <= bytes.len() => Ok(count),
+            _ => Err(io::ErrorKind::BrokenPipe.into()),
+        }
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+impl SelectedOutput for SelectedWriter {
+    fn finish(&mut self) -> Result<(), RuntimeError> {
+        match self.rpc.call(Request::FinishSelectedOutput(self.id))? {
+            Reply::Done => Ok(()),
+            _ => Err(RuntimeError::Protocol),
+        }
+    }
 }
 impl Document {
     fn lease(&self, ticket: u64) -> CiphertextFile {
@@ -248,6 +297,22 @@ impl PlatformDocument for Document {
             _ => Err(RuntimeError::Protocol),
         }
     }
+    fn selected_input(&self, id: u64) -> Result<Box<dyn Read + Send>, RuntimeError> {
+        self.done(Request::OpenSelectedInput(id))
+            .map_err(crate::cipher_ipc::storage)?;
+        Ok(Box::new(SelectedReader {
+            rpc: Arc::clone(&self.rpc),
+            id,
+        }))
+    }
+    fn selected_output(&self, id: u64) -> Result<Box<dyn SelectedOutput>, RuntimeError> {
+        self.done(Request::OpenSelectedOutput(id))
+            .map_err(crate::cipher_ipc::storage)?;
+        Ok(Box::new(SelectedWriter {
+            rpc: Arc::clone(&self.rpc),
+            id,
+        }))
+    }
 }
 #[test]
 #[ignore = "Private descriptor worker subprocess for PUBLIC adapter scenarios"]
@@ -313,6 +378,13 @@ struct Faults {
     hold_changed: Condvar,
     commit_entered: AtomicBool,
     before_author: Mutex<Option<AuthHook>>,
+    selected_inputs: Mutex<BTreeMap<u64, io::Cursor<Vec<u8>>>>,
+    selected_outputs: Mutex<BTreeMap<u64, Vec<u8>>>,
+    input_reads: AtomicUsize,
+    largest_input_read: AtomicUsize,
+    fail_input: AtomicBool,
+    fail_output_finish: AtomicBool,
+    output_finishes: AtomicUsize,
 }
 struct Server {
     writer: Arc<PlatformCipherWriter>,
@@ -478,6 +550,77 @@ impl Server {
             }
             Request::DiscardDraft => {
                 self.writer.discard_draft()?;
+                Ok(Reply::Done)
+            }
+            Request::OpenSelectedInput(id) => {
+                self.faults
+                    .selected_inputs
+                    .lock()
+                    .unwrap()
+                    .get_mut(&id)
+                    .ok_or(RuntimeError::Protocol)?
+                    .set_position(0);
+                Ok(Reply::Done)
+            }
+            Request::ReadSelectedInput(id, length) => {
+                if length > 65536 || self.faults.fail_input.load(Ordering::Acquire) {
+                    return Err(RuntimeError::Transport);
+                }
+                self.faults.input_reads.fetch_add(1, Ordering::Relaxed);
+                self.faults
+                    .largest_input_read
+                    .fetch_max(length, Ordering::Relaxed);
+                let mut bytes = vec![0; length];
+                let count = self
+                    .faults
+                    .selected_inputs
+                    .lock()
+                    .unwrap()
+                    .get_mut(&id)
+                    .ok_or(RuntimeError::Protocol)?
+                    .read(&mut bytes)
+                    .map_err(|_| RuntimeError::Transport)?;
+                bytes.truncate(count);
+                Ok(Reply::Bytes(bytes))
+            }
+            Request::OpenSelectedOutput(id) => {
+                self.faults
+                    .selected_outputs
+                    .lock()
+                    .unwrap()
+                    .get_mut(&id)
+                    .ok_or(RuntimeError::Protocol)?
+                    .clear();
+                Ok(Reply::Done)
+            }
+            Request::WriteSelectedOutput(id, bytes) => {
+                if bytes.len() > 65536 {
+                    return Err(RuntimeError::Protocol);
+                }
+                let count = bytes.len();
+                self.faults
+                    .selected_outputs
+                    .lock()
+                    .unwrap()
+                    .get_mut(&id)
+                    .ok_or(RuntimeError::Protocol)?
+                    .extend(bytes);
+                Ok(Reply::Count(count))
+            }
+            Request::FinishSelectedOutput(id) => {
+                if self.faults.fail_output_finish.load(Ordering::Acquire) {
+                    return Err(crate::cipher_ipc::storage(StorageError::Io));
+                }
+                if !self
+                    .faults
+                    .selected_outputs
+                    .lock()
+                    .unwrap()
+                    .contains_key(&id)
+                {
+                    return Err(RuntimeError::Protocol);
+                }
+                self.faults.output_finishes.fetch_add(1, Ordering::Release);
                 Ok(Reply::Done)
             }
         }
@@ -743,6 +886,253 @@ fn rotation_during_native_credential_prompt_does_not_release_author() {
             taypeer_services::ServiceError::Storage(StorageError::Changed)
         ))
     ));
+}
+
+fn selected_import(
+    worker: &mut Worker,
+    draft: &taypeer_core::DraftId,
+    input: u64,
+    length: u64,
+    replacement: Option<taypeer_core::AttachmentId>,
+    operation: OperationId,
+) -> Result<serde_json::Value, RuntimeError> {
+    worker.request(&Command::ImportSelectedAttachment {
+        draft: draft.clone(),
+        input,
+        length,
+        name: "PUBLIC descriptor attachment.bin".into(),
+        replacement,
+        operation,
+    })
+}
+
+#[test]
+fn selected_attachment_streams_retry_encrypt_reopen_and_finish_the_export() {
+    let f = Fixture::new();
+    let bytes: Vec<_> = (0..150_000).map(|index| (index % 251) as u8).collect();
+    f.launcher
+        .faults
+        .selected_inputs
+        .lock()
+        .unwrap()
+        .insert(1, io::Cursor::new(bytes.clone()));
+    f.launcher
+        .faults
+        .selected_outputs
+        .lock()
+        .unwrap()
+        .insert(2, b"PUBLIC old output".to_vec());
+    let mut worker = f.open(PASSWORD, true).unwrap();
+    edit(&mut worker, "PUBLIC streamed descriptor attachment");
+    let draft = editor(&mut worker).identity.draft;
+    let operation = OperationId::new("PUBLIC descriptor selected input");
+    selected_import(
+        &mut worker,
+        &draft,
+        1,
+        bytes.len() as u64,
+        None,
+        operation.clone(),
+    )
+    .unwrap();
+    let first = editor(&mut worker);
+    let binary: taypeer_services::BinaryView = serde_json::from_value(
+        worker
+            .request(&Command::BinaryView(taypeer_services::BinaryTarget::Draft))
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(binary.attachments.len(), 1);
+    let blob = binary.attachments[0].contents[0].id.clone();
+    let reads = f.launcher.faults.input_reads.load(Ordering::Acquire);
+    selected_import(
+        &mut worker,
+        &draft,
+        1,
+        bytes.len() as u64,
+        None,
+        operation.clone(),
+    )
+    .unwrap();
+    assert!(f.launcher.faults.input_reads.load(Ordering::Acquire) > reads);
+    assert!(f.launcher.faults.largest_input_read.load(Ordering::Acquire) <= 65536);
+    assert_eq!(editor(&mut worker).identity, first.identity);
+    save(
+        &mut worker,
+        &first,
+        OperationId::new("PUBLIC selected descriptor snapshot"),
+    )
+    .unwrap();
+    let entry = editor(&mut worker).entry.unwrap();
+    worker
+        .request(&Command::PatchDraft(EntryPatch {
+            notes: FieldUpdate::Set("PUBLIC newer stream editor input".into()),
+            ..Default::default()
+        }))
+        .unwrap();
+    let newer = editor(&mut worker);
+    selected_import(&mut worker, &draft, 1, bytes.len() as u64, None, operation).unwrap();
+    assert_eq!(editor(&mut worker).identity, newer.identity);
+    worker.close().unwrap();
+    assert!(
+        !std::fs::read(&f.path)
+            .unwrap()
+            .windows(64)
+            .any(|part| part == &bytes[..64])
+    );
+    let mut worker = f.open(PASSWORD, false).unwrap();
+    worker.request(&Command::ResumeDraft(draft)).unwrap();
+    let binary = worker
+        .request(&Command::BinaryView(taypeer_services::BinaryTarget::Draft))
+        .unwrap();
+    assert_eq!(binary["attachments"].as_array().unwrap().len(), 1);
+    let export = Command::ExportSelectedBinary {
+        target: taypeer_services::BinaryTarget::Entry(entry),
+        blob,
+        output: 2,
+    };
+    worker.request(&export).unwrap();
+    assert_eq!(
+        f.launcher.faults.selected_outputs.lock().unwrap()[&2],
+        bytes
+    );
+    assert_eq!(f.launcher.faults.output_finishes.load(Ordering::Acquire), 1);
+    f.launcher
+        .faults
+        .fail_output_finish
+        .store(true, Ordering::Release);
+    assert_eq!(
+        worker.request(&export).unwrap_err(),
+        RuntimeError::Service(taypeer_services::ServiceError::Storage(StorageError::Io))
+    );
+    assert_eq!(f.launcher.faults.output_finishes.load(Ordering::Acquire), 1);
+    worker.close().unwrap();
+}
+
+#[test]
+fn selected_stream_limits_failure_stale_editor_and_visibility_preserve_state() {
+    let f = Fixture::new();
+    let bytes = b"PUBLIC original selected content".to_vec();
+    f.launcher
+        .faults
+        .selected_inputs
+        .lock()
+        .unwrap()
+        .insert(1, io::Cursor::new(bytes.clone()));
+    f.launcher
+        .faults
+        .selected_outputs
+        .lock()
+        .unwrap()
+        .insert(2, b"PUBLIC retained output".to_vec());
+    let mut worker = f.open(PASSWORD, true).unwrap();
+    edit(&mut worker, "PUBLIC bounded stream");
+    let draft = editor(&mut worker).identity.draft;
+    let operation = OperationId::new("PUBLIC stream baseline");
+    selected_import(
+        &mut worker,
+        &draft,
+        1,
+        bytes.len() as u64,
+        None,
+        operation.clone(),
+    )
+    .unwrap();
+    let before = editor(&mut worker);
+    let binary: taypeer_services::BinaryView = serde_json::from_value(
+        worker
+            .request(&Command::BinaryView(taypeer_services::BinaryTarget::Draft))
+            .unwrap(),
+    )
+    .unwrap();
+    let attachment = binary.attachments[0].id.clone();
+    let blob = binary.attachments[0].contents[0].id.clone();
+    f.launcher
+        .faults
+        .selected_inputs
+        .lock()
+        .unwrap()
+        .insert(1, io::Cursor::new(vec![b'x'; bytes.len()]));
+    assert!(matches!(
+        selected_import(&mut worker, &draft, 1, bytes.len() as u64, None, operation),
+        Err(RuntimeError::Service(
+            taypeer_services::ServiceError::InvalidInput
+        ))
+    ));
+    f.launcher.faults.fail_input.store(true, Ordering::Release);
+    assert!(
+        selected_import(
+            &mut worker,
+            &draft,
+            1,
+            bytes.len() as u64,
+            Some(attachment),
+            OperationId::new("PUBLIC broken replacement")
+        )
+        .is_err()
+    );
+    let reads = f.launcher.faults.input_reads.load(Ordering::Acquire);
+    assert!(matches!(
+        selected_import(
+            &mut worker,
+            &draft,
+            1,
+            1024 * 1024 + 1,
+            None,
+            OperationId::new("PUBLIC oversized selection")
+        ),
+        Err(RuntimeError::Service(
+            taypeer_services::ServiceError::AttachmentLimit
+        ))
+    ));
+    assert_eq!(f.launcher.faults.input_reads.load(Ordering::Acquire), reads);
+    assert_eq!(editor(&mut worker).identity, before.identity);
+    worker
+        .request(&Command::ExportSelectedBinary {
+            target: taypeer_services::BinaryTarget::Draft,
+            blob,
+            output: 2,
+        })
+        .unwrap();
+    assert_eq!(
+        f.launcher.faults.selected_outputs.lock().unwrap()[&2],
+        bytes
+    );
+    f.launcher
+        .faults
+        .selected_outputs
+        .lock()
+        .unwrap()
+        .insert(2, b"PUBLIC retained output".to_vec());
+    assert!(
+        worker
+            .request(&Command::ExportSelectedBinary {
+                target: taypeer_services::BinaryTarget::Draft,
+                blob: taypeer_core::BlobId::new("PUBLIC inaccessible blob"),
+                output: 2
+            })
+            .is_err()
+    );
+    assert_eq!(
+        f.launcher.faults.selected_outputs.lock().unwrap()[&2],
+        b"PUBLIC retained output"
+    );
+    worker.request(&Command::BeginCreateUngrouped).unwrap();
+    assert!(matches!(
+        selected_import(
+            &mut worker,
+            &draft,
+            1,
+            bytes.len() as u64,
+            None,
+            OperationId::new("PUBLIC stale selected editor")
+        ),
+        Err(RuntimeError::Service(
+            taypeer_services::ServiceError::InvalidContext
+        ))
+    ));
+    assert_eq!(f.launcher.faults.input_reads.load(Ordering::Acquire), reads);
+    worker.close().unwrap();
 }
 
 #[test]

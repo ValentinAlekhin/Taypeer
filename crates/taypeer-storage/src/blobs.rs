@@ -135,6 +135,11 @@ impl BlobStore {
     pub fn length(&self, id: &BlobId) -> Option<u64> {
         self.blobs.get(id).map(|blob| blob.length)
     }
+    /// Verified content fingerprint for an encrypted idempotency intent.
+    /// This is private document metadata: never expose it in UI or diagnostics.
+    pub fn content_digest(&self, id: &BlobId) -> Option<[u8; 32]> {
+        self.blobs.get(id).map(|blob| blob.digest)
+    }
     /// Retain an exact set of aliases; shared physical bytes live while any alias needs them.
     pub fn retained(&self, ids: &BTreeSet<BlobId>) -> Self {
         Self {

@@ -148,6 +148,23 @@ views 'Локальный файл' {
   }
 }
 
+views 'Потоковые вложения Android' {
+  dynamic view androidAttachment {
+    title 'Явно выбранное вложение Android'
+    description 'Отдельная capability ограниченного plaintext-потока; ciphertext persistence не получает содержимое вложения.'
+    owner -> taypeer.android 'Выбрать файл через SAF'
+    taypeer.android -> taypeer.androidPlatform 'Удержать выбранный descriptor на время операции'
+    taypeer.android -> taypeer.ffi 'Форма, стабильный ID операции и поток'
+    taypeer.ffi -> taypeer.secretWorker 'Непрозрачный ID capability и заявленный размер'
+    taypeer.secretWorker -> taypeer.androidPlatform 'Читать порциями до 64 КиБ'
+    taypeer.secretWorker -> taypeer.sessions 'Проверить форму, квоту и точный повтор'
+    taypeer.sessions -> taypeer.storage 'Зашифровать поток в BlobStore без plaintext staging'
+    taypeer.secretWorker -> taypeer.coordinator 'Сохранить зашифрованный локальный черновик'
+    taypeer.android <- taypeer.ffi 'Актуальная форма; обычное автосохранение снимка'
+    taypeer.ffi -> taypeer.androidPlatform 'Освободить capability при завершении или отказе'
+  }
+}
+
 views 'Разбор сетевых источников' {
   dynamic view inspectReceived {
     title 'Просмотр и извлечение непринятых изменений'
