@@ -23,6 +23,7 @@ __pycache__/
 # Local caches and temporary/editor files.
 .pnpm-store/
 .cache/
+/.tools/
 /tmp/
 /temp/
 *.tmp
