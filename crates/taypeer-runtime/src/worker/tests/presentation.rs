@@ -115,7 +115,10 @@ fn editor_commands_preserve_masked_fields_and_confirm_all_tabs_once() {
     );
     let same_names: EditorView = command(&client, Command::EditorView);
     assert_eq!(same_names.fields.attributes.len(), 2);
-    assert_ne!(same_names.fields.attributes[0].id, same_names.fields.attributes[1].id);
+    assert_ne!(
+        same_names.fields.attributes[0].id,
+        same_names.fields.attributes[1].id
+    );
     let attribute = draft.fields.attributes[0].id.clone().unwrap();
     command::<()>(
         &client,

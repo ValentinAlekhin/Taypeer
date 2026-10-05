@@ -57,7 +57,7 @@ model {
     sessionGuard = component 'Контроль времени жизни сессий' {
       #partial
       technology 'Rust; runtime'
-      description 'Общий монотонный таймер, инвалидирование ответов и завершение процессов CLI/desktop независимо от команд. AppKit и Linux-адаптер передают события ОС; нативная приёмка остаётся открытой.'
+      description 'Общий монотонный таймер, инвалидирование ответов и завершение процессов CLI/desktop/Android независимо от команд. AppKit и Linux-адаптер передают события ОС; нативная приёмка остаётся открытой.'
       metadata { source 'crates/taypeer-runtime/src/session/mod.rs'; contract 'docs/sessions.md'; evidence 'crates/taypeer-runtime/src/worker/tests.rs' }
     }
     host = component 'Профиль и рабочие копии' {
@@ -69,7 +69,7 @@ model {
     coordinator = component 'Координатор рабочей копии' {
       #partial
       style { border solid }
-      technology 'Rust; host CLI/desktop'
+      technology 'Rust; host CLI/desktop/Android'
       description 'Единственный файловый writer. Сериализует зашифрованные кандидаты и приём, проверяет поколение и подтверждает только надёжную фиксацию.'
       metadata { source 'crates/taypeer-sync/src/coordinator.rs'; contract 'docs/p2p.md'; evidence 'docs/p2p-acceptance.md' }
     }

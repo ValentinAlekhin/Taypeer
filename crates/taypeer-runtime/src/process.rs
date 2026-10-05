@@ -48,6 +48,20 @@ impl Client {
         callbacks: Box<dyn CallbackHandler>,
         spool: tempfile::TempDir,
     ) -> Result<Arc<Self>, RuntimeError> {
+        Self::connect_retained(connection, sessions, callbacks, Some(spool))
+    }
+    pub(crate) fn connect_platform(
+        connection: crate::platform::ProcessConnection,
+        sessions: &crate::session::SessionController,
+    ) -> Result<Arc<Self>, RuntimeError> {
+        Self::connect_retained(connection, sessions, Box::new(NoCallbacks), None)
+    }
+    fn connect_retained(
+        connection: crate::platform::ProcessConnection,
+        sessions: &crate::session::SessionController,
+        callbacks: Box<dyn CallbackHandler>,
+        spool: Option<tempfile::TempDir>,
+    ) -> Result<Arc<Self>, RuntimeError> {
         let (jobs, receive) = mpsc::sync_channel(1);
         // Child ownership is guarded before any fallible setup step.
         let control = Arc::new(ProcessControl::new(
@@ -113,10 +127,16 @@ pub(crate) struct PipeActor {
     pub input: Box<dyn Write + Send>,
     pub output: BufReader<Box<dyn std::io::Read + Send>>,
     pub callbacks: Box<dyn CallbackHandler>,
-    pub spool: tempfile::TempDir,
+    pub spool: Option<tempfile::TempDir>,
 }
 pub(crate) trait CallbackHandler: Send {
     fn handle(&mut self, request: IoRequest) -> Result<crate::cipher_ipc::IoValue, RuntimeError>;
+}
+struct NoCallbacks;
+impl CallbackHandler for NoCallbacks {
+    fn handle(&mut self, _: IoRequest) -> Result<crate::cipher_ipc::IoValue, RuntimeError> {
+        Err(RuntimeError::Protocol)
+    }
 }
 impl CallbackHandler for Callbacks {
     fn handle(&mut self, request: IoRequest) -> Result<crate::cipher_ipc::IoValue, RuntimeError> {

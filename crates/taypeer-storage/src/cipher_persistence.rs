@@ -84,7 +84,8 @@ pub trait CipherPersistence: Send {
     fn load_draft(&self, chain: &ControlChain) -> Result<Option<EncryptedObject>, Error>;
     /// Explicitly discard only this working copy's editor.
     fn discard_draft(&self) -> Result<(), Error>;
-    /// Physical working path, used only for scoped export protection and usage accounting.
+    /// Physical working path for scoped export protection and usage accounting.
+    /// Descriptor-only ports return an empty path; native adapters handle exports.
     fn path(&self) -> &Path;
 }
 

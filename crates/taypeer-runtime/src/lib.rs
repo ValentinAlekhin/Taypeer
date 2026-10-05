@@ -3,6 +3,7 @@ mod cipher_ipc;
 mod host;
 mod network;
 pub mod platform;
+pub mod platform_worker;
 mod process;
 pub mod profile;
 mod protocol;
@@ -131,6 +132,17 @@ impl Worker {
                 return Err(error);
             }
         };
+        Self::from_client(client, database, contexts, runtime, sessions)
+    }
+    /// Attach the common authority monitor and application queue to a successfully
+    /// booted process. Its control remains Opening until this transition.
+    pub(crate) fn from_client(
+        client: Arc<Client>,
+        database: DatabaseId,
+        contexts: Arc<HostContext>,
+        runtime: &tokio::runtime::Handle,
+        sessions: &SessionController,
+    ) -> Result<Self, RuntimeError> {
         client.control.opened(database.clone())?;
         let watched_context = contexts.for_database(&database).inspect_err(|_| {
             client.control.invalidate(LockReason::Transport);

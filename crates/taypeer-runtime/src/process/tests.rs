@@ -47,7 +47,7 @@ fn launch_with(
         input: Box::new(input),
         output: BufReader::new(Box::new(output)),
         callbacks,
-        spool: tempfile::tempdir().unwrap(),
+        spool: Some(tempfile::tempdir().unwrap()),
     };
     let running = Arc::clone(&control);
     std::thread::spawn(move || actor.run(receive, running));

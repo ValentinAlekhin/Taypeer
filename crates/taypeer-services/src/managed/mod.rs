@@ -657,9 +657,10 @@ impl DatabaseService {
             .port
             .path()
             .file_name()
-            .ok_or(ServiceError::InvalidContext)?
-            .to_string_lossy()
-            .into_owned();
+            .map(|name| name.to_string_lossy().into_owned())
+            // A descriptor-backed worker has no filesystem path. Only a public
+            // identity is retained while locked; document labels require unlock.
+            .unwrap_or_else(|| database.to_string());
         self.databases.insert(
             database.clone(),
             DatabaseState {

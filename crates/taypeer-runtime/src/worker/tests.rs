@@ -199,7 +199,7 @@ fn open_access(
         input: Box::new(input),
         output,
         callbacks: Box::new(NoIo),
-        spool,
+        spool: Some(spool),
     };
     let running = Arc::clone(&control);
     std::thread::spawn(move || actor.run(receive, running));
