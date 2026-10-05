@@ -1,6 +1,6 @@
 //! Private worker for public synthetic UI fixtures only.
 fn main() {
-    if !std::env::args().skip(1).eq(["__worker"]) {
+    if !std::env::args().skip(1).eq(["__public_fixture_worker"]) {
         std::process::exit(2);
     }
     let result = taypeer_runtime::run_test_worker(std::io::stdin(), std::io::stdout());
