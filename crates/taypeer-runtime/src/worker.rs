@@ -573,7 +573,7 @@ fn value(data: &impl Serialize) -> Result<Value, RuntimeError> {
     serde_json::to_value(data).map_err(|_| RuntimeError::Protocol)
 }
 
-fn dispatch(
+pub(crate) fn dispatch(
     service: &mut DatabaseService,
     session: &SessionToken,
     command: Command,
@@ -677,6 +677,9 @@ fn dispatch(
         )?,
         Command::Tree => value(&service.tree(session)?.value)?,
         Command::Trash => value(&service.trash(session)?.value)?,
+        Command::TrashObject { target, operation } => {
+            value(&service.trash_object(session, target, &operation)?.value)?
+        }
         Command::Inspect(target) => value(&service.inspect_object(session, &target)?.value)?,
         Command::RevealInspected {
             target,
@@ -755,6 +758,7 @@ fn dispatch(
         }
         Command::EditorView => value(&service.editor_view(session)?)?,
         Command::Drafts => value(&service.drafts(session)?.value)?,
+        Command::ActiveDraft => value(&service.active_draft(session)?.value)?,
         Command::ResumeDraft(id) => value(&service.resume_draft(session, &id)?.value)?,
         Command::DeleteDraft(id) => {
             service.delete_draft(session, &id)?;

@@ -60,6 +60,8 @@ pub enum Command {
     EditorView,
     /// List independent local forms without entered names or secrets.
     Drafts,
+    /// Identity of the active entry or metadata form, without its values.
+    ActiveDraft,
     /// Activate a retained form; read its masked view separately.
     ResumeDraft(DraftId),
     /// Durably discard one local form, leaving its confirmed object intact.
@@ -268,6 +270,13 @@ pub enum Command {
     Tree,
     /// List objects retained in the trash.
     Trash,
+    /// Immediately retain an object in trash, reusing the exact selection on retry.
+    TrashObject {
+        /// Root object selected by the user.
+        target: ObjectId,
+        /// Stable identity for a lost response.
+        operation: OperationId,
+    },
     /// Inspect a retained object or immutable late source, with secrets masked.
     Inspect(InspectionTarget),
     /// Explicitly reveal exactly one inspected field alternative.

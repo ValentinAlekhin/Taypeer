@@ -199,6 +199,17 @@ impl DatabaseService {
         })
     }
 
+    /// Trash immediately with a retry identity. Purge and restoration keep their
+    /// explicit reviewed selections; trash retries reuse the acknowledged selection.
+    pub fn trash_object(
+        &mut self,
+        session: &SessionToken,
+        target: ObjectId,
+        operation: &OperationId,
+    ) -> Result<SessionValue<Vec<ObjectId>>, ServiceError> {
+        self.lifecycle_change(session, |doc, now| doc.trash_object(target, operation, now))
+    }
+
     /// Move a group or resolve its reviewed placement/name alternatives.
     pub fn move_group(
         &mut self,

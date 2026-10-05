@@ -597,6 +597,26 @@ impl DatabaseService {
         Ok(stamped(session, ()))
     }
 
+    /// Read the exact active form identity without exposing entered values.
+    pub fn active_draft(
+        &self,
+        session: &SessionToken,
+    ) -> Result<SessionValue<Option<DraftIdentity>>, ServiceError> {
+        let collection = &self.checked(session)?.drafts;
+        let identity = match &collection.active_metadata {
+            Some(id) => Some(
+                collection
+                    .metadata
+                    .get(id)
+                    .ok_or(ServiceError::InvalidDocument)?
+                    .identity
+                    .clone(),
+            ),
+            None => collection.entry.as_ref().map(DraftState::identity),
+        };
+        Ok(stamped(session, identity))
+    }
+
     /// List recoverable local forms without returning names or entered values.
     pub fn drafts(
         &self,

@@ -313,6 +313,38 @@ impl Document {
         Ok(Some(receipt.result))
     }
 
+    /// Move the current object to trash immediately. A lost response reuses the
+    /// original exact selection rather than preparing it again against newer heads.
+    pub fn trash_object(
+        &mut self,
+        target: ObjectId,
+        operation: &OperationId,
+        now: Timestamp,
+    ) -> Result<Vec<ObjectId>, Error> {
+        let old = object(&self.doc, &ROOT, "operations")?;
+        if !self.doc.get_all(old, operation.as_str())?.is_empty() {
+            return Err(Error::DuplicateId);
+        }
+        let receipts = object(&self.doc, &ROOT, "lifecycle_receipts")?;
+        let prepared = match unique_optional(&self.doc, &receipts, operation.as_str())? {
+            Some(value) => {
+                let receipt: ActionReceipt = decode(&value)?;
+                let prepared: PreparedLifecycle =
+                    serde_json::from_value(receipt.intent).map_err(|_| Error::DuplicateId)?;
+                if prepared.database != self.database_id
+                    || prepared.action != LifecycleAction::Trash
+                    || prepared.target != target
+                    || prepared.destination.is_some()
+                {
+                    return Err(Error::DuplicateId);
+                }
+                prepared
+            }
+            None => self.prepare_lifecycle(LifecycleAction::Trash, target, None)?,
+        };
+        self.confirm_lifecycle(&prepared, operation, now)
+    }
+
     pub(super) fn validate_v6_structure(&self) -> Result<(), Error> {
         groups::tree(&self.doc)?;
         let mut owners = BTreeMap::new();

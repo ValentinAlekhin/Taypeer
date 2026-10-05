@@ -719,3 +719,33 @@ fn historical_restore_imports_attributes_from_another_retained_generation() {
     assert_eq!(doc.entry(&entry).unwrap().generation, chosen.generation);
     assert!(Document::load(&doc.export()).is_ok());
 }
+#[test]
+fn immediate_trash_retry_reuses_original_selection_after_reopen() {
+    let mut document = Document::new("PUBLIC immediate trash", 1).unwrap();
+    let group = document
+        .create_group("PUBLIC root".into(), None, 2)
+        .unwrap();
+    let other = document
+        .create_group("PUBLIC other".into(), None, 2)
+        .unwrap();
+    let operation = OperationId::new("PUBLIC immediate trash operation");
+    let target = ObjectId::Group(group.id);
+    let confirmed = document
+        .trash_object(target.clone(), &operation, 3)
+        .unwrap();
+    document
+        .create_group("PUBLIC later heads".into(), None, 4)
+        .unwrap();
+    let bytes = document.export();
+    let mut document = Document::load(&bytes).unwrap();
+    assert_eq!(
+        document.trash_object(target, &operation, 5).unwrap(),
+        confirmed
+    );
+    assert_eq!(document.export(), bytes);
+    assert_eq!(
+        document.trash_object(ObjectId::Group(other.id), &operation, 6),
+        Err(Error::DuplicateId)
+    );
+    assert_eq!(document.export(), bytes);
+}
