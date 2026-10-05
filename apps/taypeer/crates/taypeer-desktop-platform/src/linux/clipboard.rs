@@ -1,6 +1,5 @@
 //! Each copy owns a Wayland source; destroying that source never clears a later foreign copy.
-use super::Shared;
-use crate::Event;
+use crate::state::EventSource;
 use rand_core::RngCore;
 use std::{
     collections::HashMap,
@@ -193,7 +192,7 @@ impl Clipboard {
             .is_some_and(|(_, mimes)| mimes.contains(&copy.marker))
     }
 }
-pub(super) fn start(shared: Arc<Shared>) -> io::Result<mpsc::SyncSender<Command>> {
+pub(super) fn start(shared: Arc<EventSource>) -> io::Result<mpsc::SyncSender<Command>> {
     start_connection(
         Connection::connect_to_env().map_err(io::Error::other)?,
         shared,
@@ -201,7 +200,7 @@ pub(super) fn start(shared: Arc<Shared>) -> io::Result<mpsc::SyncSender<Command>
 }
 fn start_connection(
     connection: Connection,
-    shared: Arc<Shared>,
+    shared: Arc<EventSource>,
 ) -> io::Result<mpsc::SyncSender<Command>> {
     let (mut queue, mut state) = connect(&connection)?;
     let qh = queue.handle();
@@ -211,19 +210,14 @@ fn start_connection(
             match commands.recv_timeout(Duration::from_millis(20)) {
                 Ok(command) => {
                     let notify = command.notify;
-                    if shared.failed.load(std::sync::atomic::Ordering::Acquire)
-                        || !shared.available.load(std::sync::atomic::Ordering::Acquire)
-                    {
-                        let _ = shared.send.send(Event::Clipboard {
-                            success: false,
-                            notify,
-                        });
+                    if !shared.available() {
+                        shared.clipboard(false, notify);
                         continue;
                     }
                     let id = state.install(command, &qh);
                     let acknowledged = queue.roundtrip(&mut state).is_ok();
                     let success = acknowledged && id.is_ok_and(|id| state.confirmed(id));
-                    let _ = shared.send.send(Event::Clipboard { success, notify });
+                    shared.clipboard(success, notify);
                     if !acknowledged {
                         break;
                     }

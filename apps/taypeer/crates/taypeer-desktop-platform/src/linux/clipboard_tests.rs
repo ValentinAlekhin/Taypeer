@@ -1,8 +1,10 @@
 //! Native protocol scenarios use a private socket pair, never the system clipboard.
 use super::*;
+use crate::{Event, state::PlatformState};
 use std::{
+    collections::VecDeque,
     os::{fd::AsFd, unix::net::UnixStream},
-    sync::{Mutex, atomic::AtomicBool},
+    sync::Mutex,
 };
 use wayland_protocols::ext::data_control::v1::server::{
     ext_data_control_device_v1 as sed, ext_data_control_manager_v1 as sem,
@@ -244,7 +246,8 @@ source!(sws::ZwlrDataControlSourceV1, sws::Request);
 struct Fixture {
     copies: mpsc::SyncSender<Command>,
     requests: mpsc::Sender<Request>,
-    events: mpsc::Receiver<Event>,
+    state: PlatformState,
+    pending: Mutex<VecDeque<Event>>,
     server: Option<std::thread::JoinHandle<()>>,
 }
 impl Fixture {
@@ -309,23 +312,17 @@ impl Fixture {
                 }
             }
         });
-        let (send, events) = mpsc::channel();
-        let shared = Arc::new(Shared {
-            available: AtomicBool::new(true),
-            failed: AtomicBool::new(false),
-            transition: Mutex::new(()),
-            sessions: Mutex::new(None),
-            send,
-        });
+        let state = PlatformState::new(true);
         let copies = start_connection(
             Connection::from_socket(client_socket).expect("private connection"),
-            shared,
+            state.source(),
         )
         .expect("clipboard adapter");
         Self {
             copies,
             requests,
-            events,
+            state,
+            pending: Mutex::new(VecDeque::new()),
             server: Some(server),
         }
     }
@@ -339,14 +336,28 @@ impl Fixture {
             })
             .expect("copy queue");
         assert!(matches!(
-            self.events
-                .recv_timeout(Duration::from_secs(3))
-                .expect("compositor acknowledgement"),
+            self.event(),
             Event::Clipboard {
                 success: true,
                 notify: true
             }
         ));
+    }
+    fn event(&self) -> Event {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            let mut pending = self.pending.lock().expect("fixture events");
+            pending.extend(self.state.drain());
+            if let Some(event) = pending.pop_front() {
+                return event;
+            }
+            drop(pending);
+            assert!(
+                Instant::now() < deadline,
+                "compositor acknowledgement deadline"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
     }
     fn snapshot(&self) -> Snapshot {
         let (send, receive) = mpsc::channel();
@@ -436,10 +447,7 @@ fn owned_clipboard_scenario(ext: bool) {
         })
         .expect("denied copy queue");
     assert!(matches!(
-        fixture
-            .events
-            .recv_timeout(Duration::from_secs(3))
-            .expect("copy completion"),
+        fixture.event(),
         Event::Clipboard {
             success: false,
             notify: true

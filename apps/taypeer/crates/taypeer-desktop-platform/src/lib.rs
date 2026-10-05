@@ -3,13 +3,14 @@
 //! Native macOS and Linux adapters own lifecycle and protected clipboard resources.
 #[cfg(target_os = "macos")]
 mod macos;
+mod state;
 #[cfg(target_os = "macos")]
-pub use macos::{Platform, activity, helper_path};
+pub use macos::{Platform, helper_path};
 
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]
-pub use linux::{Platform, activity, helper_path};
+pub use linux::{Platform, helper_path};
 
 /// Typed events consumed by the session owner, never native protocol strings.
 pub enum Event {
@@ -26,32 +27,18 @@ pub enum Event {
     },
 }
 
+/// Record genuine user input against the attached desktop session controller.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub fn activity(cx: &gpui_kit::App) {
+    if let Some(platform) = cx.try_global::<Platform>() {
+        platform.state.activity();
+    }
+}
+
 /// Locate the device profile without leaking OS directory conventions into features.
 pub fn profile_path() -> std::io::Result<std::path::PathBuf> {
-    #[cfg(target_os = "macos")]
-    {
-        let home = std::env::var_os("HOME")
-            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "home unavailable"))?;
-        Ok(std::path::PathBuf::from(home).join("Library/Application Support/Taypeer"))
-    }
-    #[cfg(target_os = "linux")]
-    {
-        let data = match std::env::var_os("XDG_DATA_HOME") {
-            Some(path) if std::path::Path::new(&path).is_absolute() => {
-                std::path::PathBuf::from(path)
-            }
-            _ => std::path::PathBuf::from(std::env::var_os("HOME").ok_or_else(|| {
-                std::io::Error::new(std::io::ErrorKind::NotFound, "home unavailable")
-            })?)
-            .join(".local/share"),
-        };
-        Ok(data.join("taypeer/profiles/default"))
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    Err(std::io::Error::new(
-        std::io::ErrorKind::Unsupported,
-        "desktop adapter not implemented",
-    ))
+    taypeer_runtime::RuntimeHost::default_profile_path()
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::NotFound, "profile unavailable"))
 }
 
 /// Resolve the platform primary command modifier; feature commands supply the chord.
