@@ -314,7 +314,7 @@ impl Render for Sidebar {
                     .gap_3()
                     .child(tr("empty_groups"))
                     .child(
-                        gpui_kit::component::button::Button::new("empty-add-group")
+                        default_button("empty-add-group")
                             .label(tr("add_group"))
                             .on_click(cx.listener(|this, _, window, cx| {
                                 forms::group(this.store.clone(), None, None, window, cx)

@@ -100,7 +100,7 @@ pub(super) fn version(
 }
 
 pub(super) fn command(id: impl Into<ElementId>, label: &str) -> Button {
-    Button::new(id)
+    default_button(id)
         .accessibility_label(tr(label))
         .child(div().text_size(rems(13. / 16.)).child(tr(label)))
 }

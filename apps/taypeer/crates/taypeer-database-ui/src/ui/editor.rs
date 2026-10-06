@@ -6,7 +6,6 @@ use crate::ui_state::*;
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
     component::{
-        button::*,
         checkbox::Checkbox,
         input::{InputEvent, InputState, TextareaState},
         *,
@@ -45,23 +44,18 @@ pub(super) fn field_row(
         cx,
     )
 }
-pub(super) fn notes_row(
-    notes: &Entity<TextareaState>,
-    disabled: bool,
-    window: &Window,
-    cx: &App,
-) -> AnyElement {
+pub(super) fn notes_row(notes: &Entity<TextareaState>, disabled: bool, cx: &App) -> AnyElement {
     super::card::overview_row(
         EntryField::Notes,
         input_row(
             "notes",
             notes.focus_handle(cx),
-            div().id("field-notes").test_support().child(focus_control(
-                notes.focus_handle(cx),
-                super::row_textarea::control(notes, "notes", false, disabled),
-                window,
-                cx,
-            )),
+            div()
+                .id("field-notes")
+                .test_support()
+                .child(super::row_textarea::control(
+                    notes, "notes", false, disabled,
+                )),
             cx,
         ),
         cx,
@@ -174,7 +168,7 @@ impl EditorView {
             _subscriptions: subscriptions,
         }
     }
-    fn overview(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+    fn overview(&self, cx: &mut Context<Self>) -> AnyElement {
         let mut result = v_flex();
         for (entry_field, input) in &self.fields {
             let field_control = super::style::entry_field(input, entry_field.key())
@@ -228,12 +222,7 @@ impl EditorView {
             result = result.child(field_row(*entry_field, input, field_control, actions, cx));
         }
         result
-            .child(notes_row(
-                &self.notes,
-                !self.editor.read(cx).editable(),
-                window,
-                cx,
-            ))
+            .child(notes_row(&self.notes, !self.editor.read(cx).editable(), cx))
             .into_any_element()
     }
     pub(super) fn toggle_password(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -511,7 +500,7 @@ impl EditorView {
             super::details::icon_control(
                 content,
                 [
-                    super::details::choose_icon(Button::new("choose-icon"))
+                    super::details::choose_icon(default_button("choose-icon"))
                         .on_click(cx.listener(|this, _, window, cx| {
                             super::icons::choose(
                                 this.editor.read(cx).content().icon.clone(),
@@ -549,10 +538,10 @@ impl EditorView {
     }
 }
 impl Render for EditorView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let tab = self.store.read(cx).state().tab;
         let content = match tab {
-            EntryTab::Overview => self.overview(window, cx),
+            EntryTab::Overview => self.overview(cx),
             EntryTab::Advanced => self.advanced(cx),
             EntryTab::Appearance => self.appearance(cx),
             EntryTab::Properties | EntryTab::History => div().into_any_element(),

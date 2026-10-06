@@ -55,20 +55,14 @@ struct GeneratorView {
     generated: Option<GeneratedOutput>,
     _subscriptions: Vec<Subscription>,
 }
-fn command_label(button: Button, label: &str, cx: &App) -> Button {
-    button
-        .px(rems(0.625))
-        .bg(cx.theme().button)
-        .border_color(cx.theme().border)
-        .text_color(cx.theme().foreground)
-        .accessibility_label(tr(label))
-        .child(
-            div()
-                .w_full()
-                .text_size(rems(13. / 16.))
-                .font_weight(FontWeight::NORMAL)
-                .child(tr(label)),
-        )
+fn command_label(button: Button, label: &str) -> Button {
+    button.px(rems(0.625)).accessibility_label(tr(label)).child(
+        div()
+            .w_full()
+            .text_size(rems(13. / 16.))
+            .font_weight(FontWeight::NORMAL)
+            .child(tr(label)),
+    )
 }
 impl GeneratorView {
     fn new(
@@ -192,7 +186,7 @@ impl GeneratorView {
                 .width(window.rem_size() * 35.)
                 .child(options.clone())
                 .footer(
-                    Button::new("generator-options-close")
+                    default_button("generator-options-close")
                         .label(tr("close"))
                         .on_click(|_, window, cx| window.close_dialog(cx)),
                 )
@@ -554,9 +548,8 @@ impl Render for GeneratorView {
                     .when(self.mode == GeneratorMode::Password, |el| {
                         el.child(
                             command_label(
-                                Button::new("generator-options"),
+                                default_button("generator-options"),
                                 "ui.generator_advanced",
-                                cx,
                             )
                             .w(rems(11.375))
                             .on_click(cx.listener(|this, _, window, cx| this.options(window, cx))),
@@ -564,7 +557,7 @@ impl Render for GeneratorView {
                     })
                     .child(div().flex_1())
                     .child(
-                        command_label(Button::new("generator-close"), "close", cx)
+                        command_label(default_button("generator-close"), "close")
                             .w(rems(if self.mode == GeneratorMode::Passphrase {
                                 6.5
                             } else {
@@ -573,15 +566,13 @@ impl Render for GeneratorView {
                             .on_click(|_, window, cx| window.close_dialog(cx)),
                     )
                     .child(
-                        command_label(Button::new("generator-use"), "ui.use_value", cx)
+                        command_label(Button::new("generator-use"), "ui.use_value")
                             .w(rems(if self.mode == GeneratorMode::Passphrase {
                                 11.5
                             } else {
                                 7.5
                             }))
                             .primary()
-                            .bg(cx.theme().button_primary)
-                            .text_color(cx.theme().button_primary_foreground)
                             .disabled(!valid)
                             .on_click(cx.listener(|this, _, window, cx| {
                                 if this.insert(cx) {

@@ -56,7 +56,7 @@ pub fn choose(
                     })
             })))
             .footer(
-                Button::new("cancel-icon")
+                default_button("cancel-icon")
                     .label(tr("cancel"))
                     .on_click(|_, window, cx| window.close_dialog(cx)),
             )

@@ -351,7 +351,7 @@ impl Render for TextForm {
                 el.child(form_row(
                     "ui.icon",
                     None,
-                    Button::new("group-icon")
+                    default_button("group-icon")
                         .icon(icon(&selected))
                         .disabled(self.busy)
                         .label(tr("ui.choose_icon"))
@@ -453,7 +453,7 @@ fn form_actions(title: &str) -> AnyElement {
         .justify_end()
         .gap_2()
         .child(
-            Button::new("dialog-cancel")
+            default_button("dialog-cancel")
                 .label(tr("cancel"))
                 .on_click(|_, window, cx| window.dispatch_action(Box::new(dialog::Cancel), cx)),
         )

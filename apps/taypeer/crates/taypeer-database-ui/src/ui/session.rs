@@ -139,7 +139,12 @@ impl SessionView {
                                                 .min_w_0()
                                                 .items_start()
                                                 .gap_1()
-                                                .child(div().truncate().child(name))
+                                                .child(
+                                                    div()
+                                                        .text_color(cx.theme().foreground)
+                                                        .truncate()
+                                                        .child(name),
+                                                )
                                                 .child(
                                                     div()
                                                         .text_sm()
@@ -181,7 +186,7 @@ impl SessionView {
                         h_flex()
                             .gap_3()
                             .child(
-                                Button::new("welcome-open")
+                                default_button("welcome-open")
                                     .min_w(rems(9.75))
                                     .icon(icon("folder-open"))
                                     .label(tr("ui.welcome_open"))
@@ -190,7 +195,7 @@ impl SessionView {
                                     })),
                             )
                             .child(
-                                Button::new("welcome-create")
+                                default_button("welcome-create")
                                     .w(rems(8.125))
                                     .icon(icon("plus"))
                                     .label(tr("ui.welcome_create"))
@@ -205,7 +210,7 @@ impl SessionView {
             })
             .child(
                 h_flex().gap_3().child(
-                    Button::new("welcome-receive")
+                    default_button("welcome-receive")
                         .min_w(rems(10.5))
                         .label(tr("ui.welcome_receive"))
                         .on_click(cx.listener(|this, _, window, cx| {
@@ -311,7 +316,7 @@ impl SessionView {
                     .mt_2()
                     .gap_3()
                     .child(
-                        Button::new("unlock-back")
+                        default_button("unlock-back")
                             .w(rems(6.5))
                             .label(tr("ui.back"))
                             .disabled(store.busy())
@@ -327,7 +332,7 @@ impl SessionView {
                     )
                     .when(cfg!(target_os = "macos"), |row| {
                         row.child(
-                            Button::new("unlock-touch-id")
+                            default_button("unlock-touch-id")
                                 .w(rems(8.))
                                 .icon(icon("fingerprint"))
                                 .label(tr("ui.touch_id"))

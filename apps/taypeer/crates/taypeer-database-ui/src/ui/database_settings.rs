@@ -1,11 +1,7 @@
 //! Authenticated database settings, separate from device preferences.
 use super::{forms, style::*, workspace::WorkspaceStore};
 use crate::ui_state::*;
-use gpui_kit::{
-    component::{button::*, *},
-    prelude::FluentBuilder,
-    *,
-};
+use gpui_kit::{component::*, prelude::FluentBuilder, *};
 /// Database-owned settings slot embedded by the device settings view.
 pub struct DatabaseSettings {
     store: Entity<WorkspaceStore>,
@@ -84,7 +80,7 @@ impl DatabaseSettings {
                     .py_4()
                     .gap_2()
                     .child(
-                        Button::new("database-info")
+                        default_button("database-info")
                             .label(tr("ui.database_info"))
                             .disabled(!database.writable)
                             .on_click(cx.listener(move |this, _, window, cx| {
@@ -92,7 +88,7 @@ impl DatabaseSettings {
                             })),
                     )
                     .child(
-                        Button::new("database-history")
+                        default_button("database-history")
                             .label(tr("ui.database_history"))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.store
@@ -100,7 +96,7 @@ impl DatabaseSettings {
                             })),
                     )
                     .child(
-                        Button::new("protection")
+                        default_button("protection")
                             .label(tr("ui.protection"))
                             .disabled(!database.managing)
                             .on_click(

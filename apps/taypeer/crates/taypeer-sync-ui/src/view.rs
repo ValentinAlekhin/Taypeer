@@ -91,7 +91,7 @@ impl<H: SyncHost> SyncView<H> {
                 sync.busy(),
                 self.error.or(sync.error),
                 receive_actions(
-                    Button::new("receive-back").on_click(cx.listener(|this, _, window, cx| {
+                    default_button("receive-back").on_click(cx.listener(|this, _, window, cx| {
                         this.store.update(cx, |store, cx| store.go_home(window, cx))
                     })),
                     Button::new("connect-invitation")
@@ -99,14 +99,13 @@ impl<H: SyncHost> SyncView<H> {
                         .disabled(sync.busy())
                         .on_click(cx.listener(|this, _, window, cx| this.connect(window, cx))),
                     (sync.busy() || sync.waiting()).then(|| {
-                        Button::new("pause-receive")
+                        default_button("pause-receive")
                             .label(tr("sync.pause"))
                             .disabled(!sync.busy() && !sync.waiting())
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.store.update(cx, |s, cx| s.pause_sync_task(cx))
                             }))
                     }),
-                    cx,
                 ),
                 cx,
             ))
@@ -125,7 +124,7 @@ impl<H: SyncHost> SyncView<H> {
                     .py_2()
                     .child(div().flex_1().child(pending.path.display().to_string()))
                     .child(
-                        Button::new(SharedString::from(format!("resume-{request}")))
+                        default_button(SharedString::from(format!("resume-{request}")))
                             .label(tr("sync.resume"))
                             .disabled(sync.busy())
                             .on_click(cx.listener(move |this, _, window, cx| {
@@ -166,7 +165,7 @@ impl<H: SyncHost> SyncView<H> {
                             .child(tr("sync.devices")),
                     )
                     .child(
-                        Button::new("share-database")
+                        default_button("share-database")
                             .label(tr("ui.share"))
                             .disabled(!managing || busy)
                             .tooltip(tr("sync.manager_only"))
@@ -282,7 +281,7 @@ impl<H: SyncHost> SyncView<H> {
                                 )
                             })
                             .child(
-                                Button::new(SharedString::from(format!("reject-{request}")))
+                                default_button(SharedString::from(format!("reject-{request}")))
                                     .label(tr(if requested {
                                         "sync.reject"
                                     } else {
@@ -329,7 +328,7 @@ impl<H: SyncHost> SyncView<H> {
                     .child(tr("sync.receipt_hint")),
             )
             .child(
-                Button::new("sync-all")
+                default_button("sync-all")
                     .label(tr("sync.now"))
                     .disabled(busy || info.is_none())
                     .on_click(cx.listener(|this, _, _, cx| {
@@ -419,9 +418,8 @@ impl<H: SyncHost> Render for InvitationView<H> {
                 invitation.qr.clone(),
                 remaining,
                 invitation_copy(
-                    Button::new("copy-invitation")
+                    default_button("copy-invitation")
                         .on_click(cx.listener(|this, _, _, cx| this.copy_code(cx))),
-                    cx,
                 ),
                 cx,
             ));
@@ -459,7 +457,7 @@ impl<H: SyncHost> Render for InvitationView<H> {
                             .justify_end()
                             .gap_3()
                             .child(
-                                Button::new("reject-invite")
+                                default_button("reject-invite")
                                     .label(tr("sync.reject"))
                                     .disabled(sync.busy())
                                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -491,7 +489,7 @@ impl<H: SyncHost> Render for InvitationView<H> {
             } else {
                 content = content.child(
                     h_flex().justify_end().child(
-                        Button::new("cancel-invitation")
+                        default_button("cancel-invitation")
                             .label(tr("sync.cancel_invitation"))
                             .disabled(sync.busy())
                             .on_click(cx.listener(move |this, _, _, cx| {
@@ -748,15 +746,12 @@ fn receive_inputs(
         )
         .into_any_element()
 }
-fn receive_actions(back: Button, connect: Button, pause: Option<Button>, cx: &App) -> AnyElement {
+fn receive_actions(back: Button, connect: Button, pause: Option<Button>) -> AnyElement {
     h_flex()
         .justify_between()
         .child(
             back.w(rems(8.))
                 .px(rems(0.625))
-                .bg(cx.theme().button)
-                .border_color(cx.theme().border)
-                .text_color(cx.theme().foreground)
                 .accessibility_label(tr("ui.back"))
                 .child(
                     div()
@@ -903,13 +898,10 @@ fn invitation_layout(
         .into_any_element()
 }
 
-fn invitation_copy(button: Button, cx: &App) -> AnyElement {
+fn invitation_copy(button: Button) -> AnyElement {
     button
         .w(rems(13.5))
         .px(rems(0.625))
-        .bg(cx.theme().button)
-        .border_color(cx.theme().border)
-        .text_color(cx.theme().foreground)
         .icon(icon("copy"))
         .accessibility_label(tr("sync.copy_code"))
         .child(
@@ -993,10 +985,9 @@ pub fn sync_preview(case: SyncPreviewCase, window: &mut Window, cx: &mut App) ->
                     false,
                     None,
                     receive_actions(
-                        Button::new("receive-back"),
+                        default_button("receive-back"),
                         Button::new("connect-invitation").primary(),
                         None,
-                        cx,
                     ),
                     cx,
                 ),
@@ -1004,7 +995,7 @@ pub fn sync_preview(case: SyncPreviewCase, window: &mut Window, cx: &mut App) ->
                     &self.fixture_code,
                     Some(self.qr.clone()),
                     272,
-                    invitation_copy(Button::new("copy-invitation"), cx),
+                    invitation_copy(default_button("copy-invitation")),
                     cx,
                 ),
             }

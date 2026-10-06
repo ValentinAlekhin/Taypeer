@@ -271,7 +271,29 @@ mod desktop {
             assert!(receive.origin.y > recent.origin.y + recent.size.height);
             assert!(window.try_find("welcome-import").is_none());
         });
+        if welcome.captures_enabled() {
+            welcome
+                .capture_checkpoint("welcome-with-recent")
+                .expect("safe dark welcome PNG");
+        }
         drop(welcome);
+        std::fs::write(
+            directory.path().join("preferences.toml"),
+            "language = \"ru\"\ntheme = \"light\"\nfont_size = 16\ngroup_width = 224\nentry_width = 480\n",
+        )
+        .unwrap();
+        let mut light = start(directory.path(), "recent-databases-welcome-light");
+        light.wait("recent database shown in light theme", |window, _| {
+            window
+                .try_find(id.clone())
+                .is_some_and(|item| item.visible())
+        });
+        if light.captures_enabled() {
+            light
+                .capture_checkpoint("welcome-with-recent")
+                .expect("safe light welcome PNG");
+        }
+        drop(light);
         let mut locked = start(directory.path(), "unlock-layout");
         locked.wait("recent file ready for unlock layout", |window, _| {
             window.try_find(id.clone()).is_some()

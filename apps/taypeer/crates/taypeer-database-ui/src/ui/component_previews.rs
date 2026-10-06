@@ -155,7 +155,7 @@ impl Preview {
         }
     }
 
-    fn editor_body(&self, window: &Window, cx: &App) -> AnyElement {
+    fn editor_body(&self, cx: &App) -> AnyElement {
         v_flex()
             .children(self.fields.iter().map(|(field, input)| {
                 let control = entry_field(input, field.key())
@@ -173,7 +173,7 @@ impl Preview {
                 };
                 editor::field_row(*field, input, control, actions, cx)
             }))
-            .child(editor::notes_row(&self.notes, false, window, cx))
+            .child(editor::notes_row(&self.notes, false, cx))
             .into_any_element()
     }
 
@@ -356,7 +356,7 @@ impl Preview {
             &self.appearance,
             if editing {
                 vec![
-                    details::choose_icon(Button::new("choose-icon")).into_any_element(),
+                    details::choose_icon(default_button("choose-icon")).into_any_element(),
                     icon_button("image-file", "image", "ui.image_file").into_any_element(),
                     icon_button("image-url", "link", "ui.image_url").into_any_element(),
                 ]
@@ -556,10 +556,10 @@ impl Preview {
 }
 
 impl Render for Preview {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         match self.kind {
             DatabasePreview::EditorCard => {
-                self.card(true, EntryTab::Overview, self.editor_body(window, cx), cx)
+                self.card(true, EntryTab::Overview, self.editor_body(cx), cx)
             }
             DatabasePreview::EntryCard => {
                 self.card(false, EntryTab::Overview, self.read_body(cx), cx)

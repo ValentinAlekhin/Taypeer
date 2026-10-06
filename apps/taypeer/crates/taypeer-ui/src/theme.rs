@@ -46,6 +46,10 @@ pub fn apply(dark: bool, font_size: u8, window: &mut Window, cx: &mut App) {
     theme.button = color("panel");
     theme.button_foreground = color("foreground");
     theme.button_hover = color("selection");
+    theme.button_secondary = color("chrome");
+    theme.button_secondary_foreground = color("foreground");
+    theme.button_secondary_hover = color("selection");
+    theme.button_secondary_active = color("selection");
     theme.button_primary = color("primary");
     theme.button_primary_foreground = color("on_primary");
     theme.colors.list = color("background");

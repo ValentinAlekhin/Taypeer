@@ -2,7 +2,6 @@
 use super::{style::*, workspace::WorkspaceStore};
 use gpui_kit::{
     component::{
-        button::*,
         menu::{DropdownMenu, PopupMenuItem},
         *,
     },
@@ -99,7 +98,7 @@ pub(super) fn show(
                             }),
                     )
                     .child(
-                        Button::new("close-history")
+                        default_button("close-history")
                             .label(tr("back"))
                             .on_click(|_, window, cx| window.close_dialog(cx)),
                     ),

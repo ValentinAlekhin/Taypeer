@@ -490,7 +490,7 @@ impl<H: SettingsHost> SettingsView<H> {
                     .child(settings_section("ui.touch_id", 1.25))
                     .child(row(
                         "ui.biometric",
-                        Button::new("biometric")
+                        default_button("biometric")
                             .disabled(true)
                             .label(tr("ui.touch_id_unavailable")),
                         cx,

@@ -282,7 +282,7 @@ impl Render for MetadataForm {
             self.input > 0 && require_name(self.name.read(cx).value().as_str()).is_err();
         let icon = self.icon.clone().map(|selected| {
             let selected = crate::ui_state::icon_name(&selected);
-            icon_choice(Button::new("group-icon"), &selected, cx)
+            icon_choice(default_button("group-icon"), &selected)
                 .on_click(cx.listener(|this, _, window, cx| {
                     let form = cx.entity().downgrade();
                     taypeer_ui::icons::choose(
@@ -388,13 +388,10 @@ fn metadata_fields(
         })
         .into_any_element()
 }
-fn icon_choice(button: Button, selected: &str, cx: &App) -> Button {
+fn icon_choice(button: Button, selected: &str) -> Button {
     button
         .w(rems(13.5))
         .px(rems(0.625))
-        .bg(cx.theme().button)
-        .border_color(cx.theme().border)
-        .text_color(cx.theme().foreground)
         .icon(icon(selected))
         .accessibility_label(tr("ui.choose_icon"))
         .child(
@@ -422,7 +419,7 @@ pub fn metadata_preview(window: &mut Window, cx: &mut App) -> AnyView {
                     &self.name,
                     &self.description,
                     false,
-                    Some(icon_choice(Button::new("group-icon"), "folder", cx).into_any_element()),
+                    Some(icon_choice(default_button("group-icon"), "folder").into_any_element()),
                     cx,
                 ))
                 .child(
@@ -465,7 +462,7 @@ pub(in crate::ui) fn show(
             .child(form.clone())
             .footer(
                 h_flex().justify_end().child(
-                    Button::new("close-metadata")
+                    default_button("close-metadata")
                         .label(tr("close"))
                         .on_click(move |_, _, cx| {
                             close.update(cx, |form, cx| {

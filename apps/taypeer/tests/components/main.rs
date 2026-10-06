@@ -206,9 +206,11 @@ fn catalog() -> Result<Catalog> {
                         .any(|role| case.design.anchors.get(*role).is_none_or(String::is_empty))))
             || (case.kind != Kind::EditorRow
                 && case.kind != Kind::Panel
-                && !case.design.node.ends_with(match case.state {
-                    State::Rest => "/ rest",
-                    State::Focus => "/ focus",
+                && !case.design.node.ends_with(match (case.kind, case.state) {
+                    // Row controls intentionally retain the same paint in focus.
+                    (Kind::RowField, _) => "/ rest",
+                    (_, State::Rest) => "/ rest",
+                    (_, State::Focus) => "/ focus",
                 }))
         {
             return Err("invalid component identity, dimensions or design target".into());

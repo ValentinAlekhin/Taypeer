@@ -17,6 +17,13 @@ pub fn icon(name: &str) -> Icon {
         .path(SharedString::from(format!("ui-icons/{name}.svg")))
         .size(rems(1.))
 }
+/// Build a default product command with the shared chrome surface and border.
+/// The native Kit button retains its input, focus and accessibility behavior.
+pub fn default_button(id: impl Into<ElementId>) -> Button {
+    // Kit's Default uses the input surface as its border. Secondary uses the
+    // border role and keeps native state paint; its colors are mapped in theme.
+    Button::new(id).secondary().border_1()
+}
 /// Build a quiet command button with localized tooltip and accessibility label.
 pub fn icon_button(id: impl Into<ElementId>, name: &str, label: &str) -> Button {
     Button::new(id)
@@ -105,7 +112,11 @@ impl RenderOnce for ProductField {
             })
             .rounded(rems(0.25))
             .refine_style(&self.style);
-        focus_control(self.state.focus_handle(cx), input, window, cx)
+        if self.standalone {
+            focus_control(self.state.focus_handle(cx), input, window, cx)
+        } else {
+            div().relative().w_full().child(input).into_any_element()
+        }
     }
 }
 
@@ -156,7 +167,7 @@ pub fn field(state: &Entity<InputState>, label: &str) -> ProductField {
         standalone: true,
     }
 }
-/// Configure an editor-row field without standalone form paint.
+/// Configure a row field without form paint or a focus outline.
 pub fn row_field(state: &Entity<InputState>, label: &str) -> ProductField {
     let mut field = field(state, label).pl_0();
     field.standalone = false;
@@ -329,7 +340,7 @@ pub fn dialog_actions() -> AnyElement {
         .justify_end()
         .gap_2()
         .child(
-            Button::new("dialog-cancel")
+            default_button("dialog-cancel")
                 .label(tr("cancel"))
                 .on_click(|_, window, cx| window.dispatch_action(Box::new(dialog::Cancel), cx)),
         )
