@@ -15,6 +15,8 @@ use gpui_kit::{
 };
 use std::collections::BTreeSet;
 
+mod dnd;
+
 pub(super) struct GroupPresentation {
     pub label: SharedString,
     pub count: usize,
@@ -33,6 +35,7 @@ pub(super) fn group_row(
         .h(rems(2.))
         .px_2()
         .text_size(rems(12. / 16.))
+        .aria_selected(group.selected)
         .selected(group.selected)
         .child(
             h_flex()
@@ -72,7 +75,9 @@ pub(super) fn frame(cx: &App) -> gpui_kit::base::ObservedElement<Stateful<Div>> 
         .border_r_1()
         .border_color(cx.theme().border)
 }
-pub(super) fn tree_viewport(content: impl IntoElement) -> AnyElement {
+pub(super) fn tree_viewport(
+    content: impl IntoElement,
+) -> gpui_kit::base::ObservedElement<Stateful<Div>> {
     div()
         .id("sidebar-tree")
         .test_support()
@@ -80,7 +85,6 @@ pub(super) fn tree_viewport(content: impl IntoElement) -> AnyElement {
         .min_h_0()
         .p_2()
         .child(content)
-        .into_any_element()
 }
 pub(super) fn navigation(cx: &App) -> gpui_kit::base::ObservedElement<Stateful<Div>> {
     v_flex()
@@ -204,6 +208,9 @@ impl Sidebar {
                 self.tree
                     .update(cx, |tree, cx| tree.set_selected_index(index, cx));
             }
+        } else if self.tree.read(cx).selected_index().is_some() {
+            self.tree
+                .update(cx, |tree, cx| tree.set_selected_index(None, cx));
         }
     }
 }
@@ -308,110 +315,133 @@ impl Render for Sidebar {
                     ),
                 cx,
             ))
-            .child(tree_viewport(if empty_tree {
-                v_flex()
-                    .p_3()
-                    .gap_3()
-                    .child(tr("empty_groups"))
-                    .child(
-                        default_button("empty-add-group")
-                            .label(tr("add_group"))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                forms::group(this.store.clone(), None, None, window, cx)
-                            })),
-                    )
-                    .into_any_element()
-            } else {
-                Tree::new(&self.tree, move |_ix, entry, selected, _, cx| {
-                    let target = Some(GroupId::new(entry.item().id.as_str()));
-                    let store_click = store.clone();
-                    let select_tree = tree.clone();
-                    let toggle_sidebar = sidebar.clone();
-                    let toggle_id = entry.item().id.to_string();
-                    let state = store.read(cx);
-                    let group = state
-                        .state()
-                        .database
-                        .as_ref()
-                        .and_then(|db| state.catalog().read(cx).database(db))
-                        .and_then(|db| db.groups.iter().find(|g| Some(g.id.clone()) == target));
-                    let count = group.map_or(0, |g| g.entry_count);
-                    group_row(
-                        SharedString::from(format!(
-                            "group-node-{}-{}",
-                            state.state().database.as_ref().map_or("", |id| id.as_str()),
-                            entry.item().id
-                        )),
-                        GroupPresentation {
-                            label: entry.item().label.clone(),
-                            count,
-                            depth: entry.depth(),
-                            selected,
-                        },
-                        super::images::stored_icon(
-                            group.map_or("folder", |g| g.icon.as_str()),
-                            group.and_then(|g| g.icon_blob.as_ref()),
-                            cx,
-                        ),
-                        div()
-                            .id(SharedString::from(format!(
-                                "expand-group-{}-{}",
+            .child(dnd::viewport(
+                if empty_tree {
+                    v_flex()
+                        .p_3()
+                        .gap_3()
+                        .child(tr("empty_groups"))
+                        .child(
+                            default_button("empty-add-group")
+                                .label(tr("add_group"))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    forms::group(this.store.clone(), None, None, window, cx)
+                                })),
+                        )
+                        .into_any_element()
+                } else {
+                    let root = dnd::root(&store);
+                    let content = Tree::new(&self.tree, move |_ix, entry, selected, _, cx| {
+                        let group_id = GroupId::new(entry.item().id.as_str());
+                        let target = Some(group_id.clone());
+                        let store_click = store.clone();
+                        let select_tree = tree.clone();
+                        let click_sidebar = sidebar.downgrade();
+                        let toggle_sidebar = sidebar.clone();
+                        let toggle_id = entry.item().id.to_string();
+                        let state = store.read(cx);
+                        let group = state
+                            .state()
+                            .database
+                            .as_ref()
+                            .and_then(|db| state.catalog().read(cx).database(db))
+                            .and_then(|db| db.groups.iter().find(|g| Some(g.id.clone()) == target));
+                        let count = group.map_or(0, |g| g.entry_count);
+                        let row = group_row(
+                            SharedString::from(format!(
+                                "group-node-{}-{}",
                                 state.state().database.as_ref().map_or("", |id| id.as_str()),
                                 entry.item().id
-                            )))
-                            .w_4()
-                            .flex_shrink_0()
+                            )),
+                            GroupPresentation {
+                                label: entry.item().label.clone(),
+                                count,
+                                depth: entry.depth(),
+                                selected,
+                            },
+                            super::images::stored_icon(
+                                group.map_or("folder", |g| g.icon.as_str()),
+                                group.and_then(|g| g.icon_blob.as_ref()),
+                                cx,
+                            ),
+                            div()
+                                .id(SharedString::from(format!(
+                                    "expand-group-{}-{}",
+                                    state.state().database.as_ref().map_or("", |id| id.as_str()),
+                                    entry.item().id
+                                )))
+                                .test_support()
+                                .w_4()
+                                .flex_shrink_0()
+                                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                                .when(entry.is_folder(), |el| {
+                                    el.on_click(move |_, _, cx| {
+                                        cx.stop_propagation();
+                                        toggle_sidebar.update(cx, |sidebar, cx| {
+                                            if !sidebar.expanded.remove(&toggle_id) {
+                                                sidebar.expanded.insert(toggle_id.clone());
+                                            }
+                                            sidebar.source = None;
+                                            sidebar.sync(cx);
+                                            cx.notify();
+                                        });
+                                    })
+                                    .child(icon(
+                                        if entry.is_expanded() {
+                                            "chevron-down"
+                                        } else {
+                                            "chevron-right"
+                                        },
+                                    ))
+                                }),
+                            cx,
+                        );
+                        dnd::row(row, &group_id, &store, &sidebar, cx)
                             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                            .when(entry.is_folder(), |el| {
-                                el.on_click(move |_, _, cx| {
-                                    cx.stop_propagation();
-                                    toggle_sidebar.update(cx, |sidebar, cx| {
-                                        if !sidebar.expanded.remove(&toggle_id) {
-                                            sidebar.expanded.insert(toggle_id.clone());
-                                        }
-                                        sidebar.source = None;
-                                        sidebar.sync(cx);
-                                        cx.notify();
+                            .on_click(move |_, window, cx| {
+                                cx.stop_propagation();
+                                if let Some(group) = &target {
+                                    store_click.update(cx, |store, cx| {
+                                        store.navigate(
+                                            Destination::Group(group.clone()),
+                                            window,
+                                            cx,
+                                        )
                                     });
-                                })
-                                .child(icon(
-                                    if entry.is_expanded() {
-                                        "chevron-down"
-                                    } else {
-                                        "chevron-right"
-                                    },
-                                ))
-                            }),
-                        cx,
-                    )
-                    .on_mouse_down(MouseButton::Left, move |_, window, cx| {
-                        cx.stop_propagation();
-                        select_tree.update(cx, |tree, cx| tree.focus(window, cx));
-                        if let Some(group) = &target {
-                            store_click.update(cx, |store, cx| {
-                                store.navigate(Destination::Group(group.clone()), window, cx)
-                            });
-                        }
+                                    // Project accepted navigation before tree events
+                                    // can observe the previous selection.
+                                    if let Some(sidebar) = click_sidebar.upgrade() {
+                                        sidebar.update(cx, |sidebar, cx| sidebar.sync(cx));
+                                    }
+                                    select_tree.update(cx, |tree, cx| tree.focus(window, cx));
+                                }
+                            })
                     })
-                })
-                .context_menu(move |_, entry, menu, _, _| {
-                    let id = Some(GroupId::new(entry.item().id.as_str()));
-                    let edit = context_store.clone();
-                    let child = context_store.clone();
-                    let child_id = id.clone();
-                    menu.item(PopupMenuItem::new(tr("edit_group")).on_click(
-                        move |_, window, cx| {
-                            forms::group(edit.clone(), id.clone(), None, window, cx)
-                        },
-                    ))
-                    .item(
-                        PopupMenuItem::new(tr("add_child")).on_click(move |_, window, cx| {
-                            forms::group(child.clone(), None, child_id.clone(), window, cx)
-                        }),
-                    )
-                })
-                .into_any_element()
-            }))
+                    .context_menu(move |_, entry, menu, _, _| {
+                        let id = Some(GroupId::new(entry.item().id.as_str()));
+                        let edit = context_store.clone();
+                        let child = context_store.clone();
+                        let child_id = id.clone();
+                        menu.item(PopupMenuItem::new(tr("edit_group")).on_click(
+                            move |_, window, cx| {
+                                forms::group(edit.clone(), id.clone(), None, window, cx)
+                            },
+                        ))
+                        .item(
+                            PopupMenuItem::new(tr("add_child")).on_click(move |_, window, cx| {
+                                forms::group(child.clone(), None, child_id.clone(), window, cx)
+                            }),
+                        )
+                    })
+                    .into_any_element();
+                    v_flex()
+                        .size_full()
+                        .child(div().flex_1().min_h_0().child(content))
+                        .child(root)
+                        .into_any_element()
+                },
+                &self.store,
+            ))
             .child(
                 navigation(cx)
                     .child(

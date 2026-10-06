@@ -540,7 +540,15 @@ impl Render for AppView {
                         el.child(style::icon("database"))
                             .child(style::file_size(file_bytes))
                     })
-                    .when_some(notice, |el, notice| el.child(tr(notice)))
+                    .when_some(notice, |el, notice| {
+                        el.child(
+                            div()
+                                .id("workspace-notice")
+                                .test_support()
+                                .aria_label(tr(notice))
+                                .child(tr(notice)),
+                        )
+                    })
                     .when(store.can_undo(), |el| {
                         el.child(
                             button::Button::new("undo-trash")

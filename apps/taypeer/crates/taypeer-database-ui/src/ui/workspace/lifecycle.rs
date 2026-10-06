@@ -1,6 +1,55 @@
-//! Immediate trash and its exact captured Undo selection.
+//! Confirmed group moves, immediate trash and its exact captured Undo selection.
 use super::*;
 impl WorkspaceStore {
+    pub(super) fn move_group(
+        &mut self,
+        database: DatabaseId,
+        epoch: u64,
+        group: GroupId,
+        parent: Option<GroupId>,
+        position: taypeer_services::SiblingPosition,
+        cx: &mut Context<Self>,
+    ) {
+        if self.state.database.as_ref() != Some(&database)
+            || self.secret_epoch != epoch
+            || !self.writable(cx)
+        {
+            return;
+        }
+        let Some(connection) = self.connection().cloned() else {
+            return;
+        };
+        let Ok(operation) = taypeer_services::new_operation_id() else {
+            self.set_notice("ui.operation_failed", cx);
+            return;
+        };
+        self.saving = true;
+        self.notice = None;
+        self.watch_operation(
+            connection.command::<Vec<taypeer_services::ObjectId>>(Command::MoveGroup {
+                request: taypeer_services::GroupMove {
+                    group,
+                    parent,
+                    position,
+                    review: None,
+                    name: None,
+                },
+                operation,
+            }),
+            move |store, result, _, cx| {
+                store.saving = false;
+                if !connection.control.is_open() || store.secret_epoch != epoch {
+                    return;
+                }
+                match result {
+                    Ok(_) => store.refresh(cx),
+                    Err(error) => store.notice = Some(error_key(&error)),
+                }
+                cx.notify();
+            },
+        );
+        cx.notify();
+    }
     pub(in crate::ui) fn trash_target(
         &mut self,
         target: taypeer_services::ObjectId,

@@ -780,6 +780,16 @@ impl WorkspaceStore {
                 self.state.query.clear();
                 self.state.bookmark = None;
             }
+            Destination::MoveGroup {
+                database,
+                epoch,
+                group,
+                parent,
+                position,
+            } => {
+                self.move_group(database, epoch, group, parent, position, cx);
+                return;
+            }
             Destination::Entry(db, id) => {
                 self.state
                     .select_entry(db.clone(), id.clone(), self.catalog.read(cx));
@@ -879,6 +889,9 @@ impl WorkspaceStore {
     }
     fn hide_database(&mut self, db: &DatabaseId, window: &mut Window, cx: &mut Context<Self>) {
         let active = self.state.database.as_ref() == Some(db);
+        if active {
+            cx.stop_active_drag(window);
+        }
         self.state.lock(db);
         super::images::Images::clear(db, cx);
         if self

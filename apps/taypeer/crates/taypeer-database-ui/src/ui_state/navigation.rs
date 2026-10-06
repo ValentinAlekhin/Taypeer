@@ -100,6 +100,19 @@ pub enum Destination {
     Database(DatabaseId),
     /// Select a group by identity.
     Group(GroupId),
+    /// Flush current input, then move a group within the captured database session.
+    MoveGroup {
+        /// Database owning both source and destination.
+        database: DatabaseId,
+        /// Reject a gesture captured before access was revoked.
+        epoch: u64,
+        /// Group being moved.
+        group: GroupId,
+        /// Destination parent; None is the visible top level.
+        parent: Option<GroupId>,
+        /// Position resolved by the document service.
+        position: taypeer_services::SiblingPosition,
+    },
     /// Select an entry within its owning database.
     Entry(DatabaseId, EntryId),
     /// Clear the entry selection.

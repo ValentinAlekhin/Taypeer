@@ -1184,13 +1184,21 @@ mod desktop {
         use super::*;
         include!("ui/card_behavior.rs");
     }
+    mod group_dnd {
+        use super::*;
+        include!("ui/group_dnd.rs");
+    }
 
     pub fn run() {
         let filters: Vec<_> = std::env::args()
             .skip(1)
             .filter(|arg| !arg.starts_with("--"))
             .collect();
-        let scenarios: [(&str, fn()); 20] = [
+        let scenarios: [(&str, fn()); 21] = [
+            (
+                "group_drag_changes_order_and_parent_durably",
+                group_dnd::group_drag_changes_order_and_parent_durably,
+            ),
             (
                 "generator_modes_insert_and_persist_the_generated_value",
                 generator_behavior::generator_modes_insert_and_persist_the_generated_value,
