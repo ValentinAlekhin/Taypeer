@@ -78,6 +78,80 @@ Production Nix-пакет отдельно собирается в CI и про�
 [справочнику GitHub](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
 Сборка GUI в CI не означает его интерактивного запуска или визуальной приёмки.
 
+## Изолированный рендер компонентов
+
+Инструмент для визуальной работы агента находится в
+[taypeer-ui-testing](../.agents/skills/taypeer-ui-testing/SKILL.md).
+Он рендерит настоящие общие компоненты из `taypeer-ui` через внеэкранный Metal,
+без `AppView`, runtime-сессии, worker, БД и видимого окна. Основной результат —
+PNG для просмотра агентом и JSON с метриками; в продуктовый UI инструмент не входит.
+
+Из корня репозитория, на машине владельца через RTK:
+
+```sh
+python3 .agents/skills/taypeer-ui-testing/scripts/compare-components.py --list
+python3 .agents/skills/taypeer-ui-testing/scripts/compare-components.py --case input-row-rest
+python3 .agents/skills/taypeer-ui-testing/scripts/compare-components.py
+```
+
+Требуются macOS с Metal, OpenPencil CLI **0.14.0** и Python с Pillow **12.1.1**
+из [существующих требований](../wireframes/requirements.txt). Установка CLI:
+`bun add -g @open-pencil/cli@0.14.0`. Рендер внутри ограниченного sandbox может
+потребовать доступа к службам macOS; видимые окна при этом не создаются.
+Linux в текущей закреплённой версии GPUI не имеет headless renderer:
+workspace-проверка явно сообщает пропуск, запрос PNG завершается ошибкой.
+
+[Каталог](../apps/taypeer/crates/taypeer-ui/tests/components/cases.json)
+содержит `input-row-rest`, `input-standalone-rest` и `input-standalone-focus`.
+Все вызывают существующий `style::field`; различия вариантов макета не рисуются
+специально для теста. Текст публичный, тема и Inter загружаются из продуктовых ресурсов.
+Для нового типа компонента добавить его реальный builder в retained preview и
+сопоставление со своим узлом FIG. API приложения ради стенда не расширяется.
+
+Скрипт читает сохранённый `wireframes/taypeer.fig` и находит узел по уникальным
+именам страницы и компонента. Отсутствие, неоднозначность, другой текст или размер
+завершают запуск ошибкой. Сейчас сравнение FIG задано для тёмной темы и базовых
+16 px. Референсы — поля без вращения, эффектов и выходящих за рамку дочерних элементов;
+для иной геометрии нужен явный адаптер экспорта. FIG и продуктовые стили скрипт не меняет.
+
+В `artifacts/component-checks/<case>/` сохраняются `actual.png`, исходный `design.png`,
+`reference.png`, `overlay.png`, `diff.png` и общий `comparison.png`. Агент открывает
+`comparison.png`, читает `artifacts/component-checks/report.json`, затем повторяет
+тот же случай после исправления. `--case` можно повторить; `--output` задаёт каталог.
+JSON перечисляет только случаи текущего запуска; оставшиеся PNG прежних запусков
+не являются его результатом. Ошибка экспорта не заменяет предыдущий отчёт.
+
+Сравнение сохраняет родной масштаб **2×**. Общий отступ **4 логических px** удерживает
+рамку фокуса целиком; центрированная обводка FIG учитывается при размещении экспорта.
+Прозрачный FIG компонуется на фоне родителя макета. Изображения не масштабируются
+и не маскируются. JSON содержит хеши FIG/каталога, версии, геометрию, долю изменённых
+пикселей, среднюю и максимальную разницу RGB. GPUI использует встроенный Inter 4.1;
+Inter референса разрешает OpenPencil CLI, совпадение файлов шрифта не подтверждено.
+
+По умолчанию расхождения — диагностика с exit 0. Для заданного критерия добавить,
+например, `--pixel-tolerance 8 --max-changed-percent 1`: превышение даёт exit 1,
+ошибка подготовки/экспорта — exit 2. Порог не принимается автоматически за визуальную
+приёмку. Текущие поля расходятся с FIG по палитре, отступам и размеру текста;
+у сфокусированного `style::field` рамка отсутствует, поскольку закреплённый Kit
+проверяет одновременно `bordered` и `focus_bordered`. Стенд показывает это расхождение.
+
+Только GPUI-рендер, включая другие темы и масштабы:
+
+```sh
+cargo test -p taypeer-ui --features component-rendering --test components --locked -- --output artifacts/component-render --case input-row-rest --theme light --font-size 18
+cargo test -p taypeer-ui --features component-rendering --test components --locked
+```
+
+Без `--output` target проверяет все выбранные случаи × light/dark × 14/16/18,
+активное тестовое окно, видимость, фокус, семейство Inter, размер и повторяемость PNG. Это 18 сочетаний
+для текущего каталога. `harness = false` сохраняет главный поток, необходимый AppKit.
+Матрица входит в workspace tests с `--all-features` в `scripts/check.sh`; OpenPencil
+и Pillow для общей Rust-проверки не требуются. Рендер-компоненты проверяют вид,
+а действия и надёжный результат операции по-прежнему проходят настоящие AppView-сценарии.
+
+Проверка метрик, несовпадения размеров и сохранения внешней рамки:
+`python3 -m unittest discover -s .agents/skills/taypeer-ui-testing/scripts -p 'test_compare_components.py'`.
+
 ## Первый демонстрационный срез
 
 Сервисный срез проверяется без окна через `--smoke-test` с feature `ui-test-support`; [запуск](demo.md).

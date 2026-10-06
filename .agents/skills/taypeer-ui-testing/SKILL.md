@@ -1,6 +1,6 @@
 ---
 name: taypeer-ui-testing
-description: Develop and verify Taypeer macOS UI behavior with readable Rust scenarios against the real AppView and runtime using GPUI Kit test support. Use for UI behavior changes and regressions; native macOS integration still requires device checks.
+description: Verify Taypeer desktop component appearance against OpenPencil with isolated GPUI captures, and UI behavior with real AppView/runtime Rust scenarios. Use for visual changes and UI regressions; native integration requires device checks.
 ---
 
 # Taypeer UI testing
@@ -9,6 +9,36 @@ Use the repository architecture and Rust skills. Read [testing documentation](..
 for commands, supported configurations and remaining acceptance gaps, then inspect
 [the session](../../../apps/taypeer/src/desktop/testing.rs) and
 [scenarios](../../../apps/taypeer/tests/ui.rs).
+
+## Component appearance
+
+For visual iteration, run the [bundled comparison script](scripts/compare-components.py)
+from the repository root, respecting its RTK instructions:
+
+```sh
+python3 .agents/skills/taypeer-ui-testing/scripts/compare-components.py --list
+python3 .agents/skills/taypeer-ui-testing/scripts/compare-components.py --case input-row-rest
+```
+
+Open the resulting `artifacts/component-checks/<case>/comparison.png` with the
+image viewing tool, then read `report.json`. Inspect alignment, typography, colors
+and state paint; metrics alone do not explain the cause. After a relevant fix,
+rerun the same case and inspect its new image. Output is agent diagnostics, not
+a product screen or evidence of matching design acceptance.
+
+The [catalog](../../../apps/taypeer/crates/taypeer-ui/tests/components/cases.json)
+currently covers fields at rest and focus. Add a retained preview using the real
+product builder and a uniquely named FIG target when another component is needed;
+do not reproduce its paint in the test. An absent or ambiguous reference is an error.
+Preserve capture scale, padding and reference geometry; do not resize screenshots,
+mask mismatches or change the design to make a comparison pass.
+
+The comparison is informational by default. Use an explicit pixel tolerance and
+changed-pixel threshold when a task defines one. macOS Metal, OpenPencil CLI 0.14.0
+and Pillow are required; commands, supported references and render-only variants
+are in [testing](../../../docs/testing.md#изолированный-рендер-компонентов).
+
+## Behavioral scenarios
 
 Before experimenting, state the expected user-visible behavior and durable outcome.
 Build a short Rust scenario, run it, investigate failures and retain the finished

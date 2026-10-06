@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "id": "input-row-rest",
+      "state": "rest",
+      "text": "GitHub",
+      "width": 232,
+      "height": 32,
+      "design": {
+        "page": "04 · Компоненты",
+        "node": "Input / row / Строка записи / rest"
+      }
+    },
+    {
+      "id": "input-standalone-rest",
+      "state": "rest",
+      "text": "Рабочая",
+      "width": 232,
+      "height": 32,
+      "design": {
+        "page": "04 · Компоненты",
+        "node": "Input / standalone / Название / rest"
+      }
+    },
+    {
+      "id": "input-standalone-focus",
+      "state": "focus",
+      "text": "Рабочая",
+      "width": 232,
+      "height": 32,
+      "design": {
+        "page": "04 · Компоненты",
+        "node": "Input / standalone / Фокус / focus"
+      }
+    }
+  ]
+}

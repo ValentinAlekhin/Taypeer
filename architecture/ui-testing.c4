@@ -14,11 +14,29 @@ model {
   uiTests -> testPlatform 'Explicit isolated test configuration'
   testPlatform -> taypeer.secretWorker 'Separate test worker; real cryptography and persistence'
   uiTests -> taypeer.sync 'Two profiles; direct local protocol without public relay'
+  componentChecks = app 'Component visual checks' {
+    #partial
+    technology 'GPUI offscreen Metal; OpenPencil CLI'
+    description 'Render isolated product components with public fixtures and bundled fonts; compare pixels with named FIG nodes. No AppView or worker sessions.'
+    metadata { source '.agents/skills/taypeer-ui-testing/scripts/compare-components.py'; contract 'docs/testing.md'; evidence 'apps/taypeer/crates/taypeer-ui/tests/components/main.rs' }
+  }
+  designReference = external 'OpenPencil mockups' {
+    #external
+    description 'Saved editable FIG; component targets resolved by unique page and node names.'
+    metadata { source 'wireframes/taypeer.fig'; contract 'wireframes/README.md' }
+  }
+  componentChecks -> taypeer.desktop.presentation 'Real shared components, theme and assets'
+  componentChecks -> designReference 'Read-only export of the reference'
 }
 views 'macOS UI' {
   view uiTesting {
     title 'Headless UI testing boundaries'
     include uiTests, testPlatform, taypeer.desktop.ui, taypeer.secretWorker, taypeer.sync
+    autoLayout LeftRight
+  }
+  view componentTesting {
+    title 'Isolated component visual checks'
+    include componentChecks, designReference, taypeer.desktop.presentation
     autoLayout LeftRight
   }
 }
