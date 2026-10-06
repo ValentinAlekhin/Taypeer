@@ -1,7 +1,8 @@
 // Build through scripts/design.py using assets/lucide-base.fig.
 // Explicit geometry keeps the editable FIG stable across OpenPencil round trips.
-const P={bg:'#0D0D0D',panel:'#111111',chrome:'#181818',raised:'#202020',selected:'#292929',border:'#303030',fg:'#E6E6E6',muted:'#A0A0A0',dim:'#747474',primary:'#D6D6D6',onPrimary:'#111111',danger:'#EE9292',warning:'#D0B57D',success:'#8BB694'};
-const LIGHT_PALETTE = {bg:'#F7F7F8',panel:'#FFFFFF',chrome:'#F1F1F3',raised:'#EBEBEF',selected:'#E6E6EA',border:'#DCDCE0',fg:'#242426',muted:'#6C6C73',dim:'#929298',primary:'#315FAF',onPrimary:'#FFFFFF',danger:'#B42318',warning:'#8B6508',success:'#247744'};
+// Both palettes are injected from resources/theme.toml by scripts/design.py.
+const P=DESIGN_PALETTES.dark;
+const LIGHT_PALETTE=DESIGN_PALETTES.light;
 const rgb=h=>({r:parseInt(h.slice(1,3),16)/255,g:parseInt(h.slice(3,5),16)/255,b:parseInt(h.slice(5,7),16)/255});
 const paint=c=>[{type:'SOLID',color:rgb(P[c]||c)}];
 const sourceIcons=figma.root.findAll(n=>n.type==='COMPONENT'&&n.name.startsWith('Icon / lucide:'));
@@ -23,7 +24,7 @@ function rule(p,x,y,w,h=1){return box(p,'Separator',x,y,w,h,'border');}
 function icon(p,key,x,y,c='muted'){key=key==='settings'?'sliders-horizontal':key;const n=icons[key].createInstance();p.appendChild(n);n.x=x;n.y=y;n.name='Icon / '+key;if(c!=='muted')for(const v of n.findAll(v=>v.type==='VECTOR')){v.strokes=paint(c);v.strokeWeight=1.4;v.strokeCap='ROUND';v.strokeJoin='ROUND';}return n;}
 function button(p,s,x,y,w=100,kind='default',mobile=false,ico){const h=mobile?44:32;const n=box(p,'Button / '+kind+' / '+s,x,y,w,h,kind==='primary'?'primary':kind==='ghost'?'':kind==='disabled'?'panel':'chrome',4,kind==='default');if(ico)icon(n,ico,10,(h-16)/2);text(n,s,ico?34:10,(h-18)/2,w-(ico?40:20),13,kind==='primary'?'onPrimary':kind==='danger'?'danger':kind==='disabled'?'dim':'fg',500,18);return n;}
 function ib(p,key,x,y,m=false){const n=box(p,'Icon button / '+key,x,y,m?44:32,m?44:32,'',4);icon(n,key,m?14:8,m?14:8);return n;}
-const UI={toolbar:44,tab:38,row:44,label:144,gap:16,inset:24,value:184};
+const UI={title:34,toolbar:44,tab:38,row:44,label:144,gap:16,inset:24,value:184,inspector:520};
 function inputFrame(p,name,x,y,w,h=32,variant='standalone',state='rest'){
  const n=box(p,'Input / '+variant+' / '+name+' / '+state,x,y,w,h,variant==='row'?'':'chrome',4);
  if(state==='focus'||state==='error'){n.strokes=paint(state==='focus'?'fg':'danger');n.strokeWeight=state==='focus'?2:1;}
@@ -41,9 +42,12 @@ function field(p,label,value,x,y,w=360,{error=false,secret=false,m=false,select=
 }
 function entryHeader(p,w,edit=false,m=false){
  const h=m?56:UI.toolbar,sz=m?44:32,pad=m?16:UI.inset,yy=(h-sz)/2;
- text(p,'GitHub',pad,(h-20)/2,w-pad-112,18,'fg',500);
- if(edit){text(p,'Сохранено',w-pad-120,yy+6,120,12,'muted');}
- else ib(p,'pencil',w-pad-sz,yy,m).name='Icon button / Редактировать запись';
+ const title=text(p,'GitHub',pad,(h-20)/2,w-(m?pad+112:edit?232:128),18,'fg',500);title.name='Entry title';
+ if(edit){
+  text(p,'Сохранено',m?w-pad-120:w-200,yy+6,m?120:96,12,'muted');
+  if(!m)ib(p,'arrow-left',w-96,yy).name='Icon button / Назад из редактора';
+ }else ib(p,'pencil',m?w-pad-sz:w-96,yy,m).name='Icon button / Редактировать запись';
+ if(!m)ib(p,'ellipsis',w-56,yy).name='Icon button / Действия записи';
  rule(p,0,h,w).name='Toolbar boundary';
  return h;
 }
@@ -51,41 +55,58 @@ function toggle(p,s,x,y,w,on=true,m=false){text(p,s,x,y,w-52,13);const b=box(p,'
 function radio(p,s,x,y,w,selected=false){const n=box(p,'Radio / '+s,x,y,w,36,'',0);const e=figma.createEllipse();n.appendChild(e);e.x=0;e.y=8;e.resize(16,16);fill(e,'bg');e.strokes=paint(selected?'fg':'muted');e.strokeWeight=1;if(selected){const a=figma.createEllipse();n.appendChild(a);a.x=4;a.y=12;a.resize(8,8);fill(a,'fg');}text(n,s,28,7,w-28);}
 const counts={};const boards=[];
 function board(page,name,w,h){const p=pages[page];figma.currentPage=p;const i=counts[page]||0;counts[page]=i+1;const cols=page.includes('Android')?4:page.includes('Диалоги')?3:2;const cw=page.includes('Android')?470:w+80,ch=page.includes('Диалоги')?570:h+80;const n=box(p,name,(i%cols)*cw,Math.floor(i/cols)*ch,w,h,'bg',8,true);n.clipsContent=true;boards.push({name,id:n.id,page});return n;}
-function shell(name,{m=false,w=1320,h=820,empty=false}={}){
-const p=board(m?'02 · Android':'01 · macOS',name,m?w===1320?390:w:w,m?844:h);const W=p.width,H=p.height,isWelcome=["/ welcome","/ receive","/ settings-locked"].some(s=>name.endsWith(s));
-box(p,'TitleBar',0,0,W,m?88:44,'chrome');
+function shell(name,{m=false,w=1320,h=820,empty=false,destination='01 · macOS'}={}){
+const p=board(m?'02 · Android':destination,name,m?w===1320?390:w:w,m?844:h);const W=p.width,H=p.height,isWelcome=["/ welcome","/ receive","/ settings-locked"].some(s=>name.endsWith(s));
+box(p,'TitleBar',0,0,W,m?88:UI.title,'chrome');
 if(m){text(p,'9:41',16,8,100,11);text(p,'Wi-Fi · 100%',W-108,8,100,11,'muted');icon(p,'file-key-2',16,51);text(p,'Рабочая',44,49,W-144,14,'fg',500);ib(p,'chevron-down',W-94,36,true);ib(p,'settings',W-48,36,true);}
-else{['#EA6B66','#D6B86C','#80B981'].forEach((c,i)=>{const e=figma.createEllipse();p.appendChild(e);e.x=16+i*19;e.y=16;e.resize(11,11);fill(e,c);});icon(p,'file-key-2',W/2-74,14);text(p,isWelcome?'Taypeer':'Рабочая.taypeer',W/2-50,12,156,13,'fg',500);if(!isWelcome)ib(p,'chevron-down',W/2+110,6);ib(p,'settings',W-40,6);}
-rule(p,0,m?88:44,W);
+else{['#EA6B66','#D6B86C','#80B981'].forEach((c,i)=>{const e=figma.createEllipse();p.appendChild(e);e.x=16+i*19;e.y=12;e.resize(11,11);fill(e,c);});icon(p,'file-key-2',W/2-74,9);text(p,isWelcome?'Taypeer':'Рабочая.taypeer',W/2-50,7,156,13,'fg',500);if(!isWelcome)ib(p,'chevron-down',W/2+110,1);ib(p,'settings',W-40,1);}
+rule(p,0,m?88:UI.title,W);
 if(!m){box(p,'StatusBar',0,H-28,W,28,'panel');rule(p,0,H-28,W);if(!isWelcome){icon(p,'database',12,H-22);text(p,'2,4 МиБ',36,H-22,140,11,'muted');text(p,'Синхронизировано',W-206,H-22,166,11,'muted').textAlignHorizontal='RIGHT';icon(p,'refresh-cw',W-28,H-22);}}
 else{box(p,'Home indicator',W/2-48,H-10,96,3,'muted',2);}return p;}
-function sidebar(p,empty=false,active='Работа'){const n=box(p,'Sidebar / groups',0,45,224,747,'panel');ib(n,'folder-plus',180,6);ib(n,'ellipsis',140,6);rule(n,0,UI.toolbar,224).name='Toolbar boundary';if(empty){text(n,'Нет групп',16,67,180,13,'muted');button(n,'Добавить группу…',16,99,190);}else{[['Работа',0,'6'],['Сервисы',1,'2'],['Инфраструктура',1,'2'],['Личное',0,'3'],['Архив',0,'0']].forEach(([s,level,count],i)=>{const y=52+i*34;box(n,'Tree row / '+s,8,y,208,32,s===active?'selected':'',4);icon(n,level?'chevron-right':'chevron-down',16+level*16,y+8);icon(n,'folder',40+level*16,y+8);text(n,s,64+level*16,y+7,level?117:138,12,'fg',s===active?500:400);text(n,count,194,y+7,20,11,'muted');});}rule(n,0,575,224);[['file','Без группы'],['trash-2','Корзина'],['monitor','Устройства'],['history','Черновики']].forEach(([key,s],i)=>{icon(n,key,16,594+i*36);text(n,s,44,592+i*36,164,13,'muted');});rule(p,224,45,1,747);}
+function sidebar(p,empty=false,active='Работа'){const n=box(p,'Sidebar / groups',0,UI.title+1,224,p.height-UI.title-29,'panel');ib(n,'folder-plus',180,6);ib(n,'ellipsis',140,6);rule(n,0,UI.toolbar,224).name='Toolbar boundary';if(empty){text(n,'Нет групп',16,67,180,13,'muted');button(n,'Добавить группу…',16,99,190);}else{[['Работа',0,'6'],['Сервисы',1,'2'],['Инфраструктура',1,'2'],['Личное',0,'3'],['Архив',0,'0']].forEach(([s,level,count],i)=>{const y=52+i*34;box(n,'Tree row / '+s,8,y,208,32,s===active?'selected':'',4);icon(n,level?'chevron-right':'chevron-down',16+level*16,y+8);icon(n,'folder',40+level*16,y+8);text(n,s,64+level*16,y+7,level?117:138,12,'fg',s===active?500:400);text(n,count,194,y+7,20,11,'muted');});}rule(n,0,n.height-172,224);[['file','Без группы'],['trash-2','Корзина'],['monitor','Устройства'],['history','Черновики']].forEach(([key,s],i)=>{icon(n,key,16,n.height-153+i*36);text(n,s,44,n.height-155+i*36,164,13,'muted');});rule(p,224,UI.title+1,1,n.height);}
 const entries=[['Cloudflare','admin@studio.dev'],['Figma','valentin@studio.dev'],['GitHub','valentin'],['Linear','valentin'],['Notion','valentin@studio.dev'],['Vercel','valentin']];
-function collectionPane(p,search=false,selected=true,empty=false){
- const w=selected?480:p.width-225,n=box(p,'Table / entries',225,45,w,747);
- const f=inputFrame(n,'Search',12,6,w-92);icon(f,'search',8,8);text(f,search?'git':'Поиск',32,6,w-304,13,search?'fg':'muted');text(f,search?'Все базы':'Эта база',w-198,6,78,12,'muted');icon(f,'chevron-down',w-116,8);
- const add=ib(n,'file-plus-2',w-76,6);add.name='Icon button / Создать запись';ib(n,'ellipsis',w-40,6);rule(n,0,UI.toolbar,w).name='Toolbar boundary';
- const cols=w>600?[44,304,664]:[44,164,320],ends=[cols[1]-16,cols[2]-16,w],widths=cols.map((x,i)=>ends[i]-x-12);
- ['Название','Логин','База / группа'].forEach((s,i)=>{
-  text(n,s,cols[i],55,ends[i]-cols[i]-32,12,i===0?'fg':'muted',500);
-  const sort=ib(n,i===0?'arrow-up':'chevrons-up-down',ends[i]-32,47);sort.name='Sort / '+s+' / '+(i===0?'ascending':'inactive');
-  if(i<2)rule(n,ends[i],UI.toolbar+1,1,UI.tab-1).name='Column header separator';
+// Keep the editable mockup aligned with the product Entries/DataTable builder.
+// Fixed column widths overflow a clipped viewport rather than shrinking or hiding columns.
+function collectionPane(p,search=false,selected=true,empty=false,{font=16,side=224,detail=UI.inspector}={}){
+ const x=side+1,w=selected?p.width-x-detail-1:p.width-x,h=p.height-UI.title-29,n=box(p,'Table / entries',x,UI.title+1,w,h,'panel');
+ const scopeWidth=136,fontScale=font/16;
+ const searchWidth=w-16-12-64-scopeWidth;
+ const f=inputFrame(n,'Search',8,6,searchWidth);icon(f,'search',10,8);text(f,search?'git':'Поиск',36,6,searchWidth-64,14,search?'fg':'muted');if(search)ib(f,'x',searchWidth-32,0).name='Icon button / Очистить поиск';
+ const scope=button(n,search?'Все открытые':'Эта база',searchWidth+12,6,scopeWidth,'ghost');icon(scope,'chevron-down',scopeWidth-24,8);scope.name='Search scope / '+(search?'all-unlocked':'current');scope.children.find(n=>n.type==='TEXT').resize(scopeWidth-40,18);
+ ib(n,'file-plus-2',w-76,6).name='Icon button / Создать запись';ib(n,'ellipsis',w-40,6).name='Icon button / Колонки';rule(n,0,UI.toolbar,w).name='Toolbar boundary';
+ const viewport=box(n,'Entry table / scroll viewport',0,UI.toolbar,w,h-UI.toolbar-32,'panel');viewport.clipsContent=true;
+ const columns=[['Название',200*fontScale],['Логин',180*fontScale],['База / группа',240*fontScale]];
+ const contentWidth=Math.max(w,columns.reduce((sum,c)=>sum+c[1],0)+12*fontScale);
+ const content=box(viewport,'Entry table / scroll content',0,0,contentWidth,viewport.height,'panel');
+ box(content,'Table header',0,0,contentWidth,32,'chrome');
+ let xx=0;columns.forEach(([label,width],i)=>{
+  text(content,label,xx+12*fontScale,6,width-48*fontScale,font,'muted');
+  const sort=ib(content,i===0?'arrow-up':'chevrons-up-down',xx+width-32,0);sort.name='Sort / '+label+' / '+(i===0?'ascending':'inactive');
+  rule(content,xx+width-1,0,1,32).name='Column header separator';xx+=width;
+ });rule(content,0,31,contentWidth);
+ const rows=empty?[]:search?[['GitHub','valentin','Рабочая / Работа'],['GitLab','personal@mail.dev','Личная / Сервисы']]:entries.map(([title,user])=>[title,user,'Рабочая / Работа']);
+ rows.forEach((values,i)=>{
+  const y=32+i*32,r=box(content,'Entry row / '+values[0],0,y,contentWidth,32,'panel');
+  let x=0;values.forEach((value,j)=>{const width=columns[j][1];if(j===0)icon(r,'key-round',x+12*fontScale,8);text(r,value,x+(j===0?36:12)*fontScale,6,width-(j===0?48:24)*fontScale,j===0?font:font*0.75,j===0?'fg':'muted');rule(r,x+width-1,0,1,32);x+=width;});
+  rule(r,0,31,contentWidth);
+  if(selected&&values[0]==='GitHub'){const overlay=box(r,'Table selection / translucent',0,0,contentWidth,32,'selected');overlay.fills=overlay.fills.map(paint=>({...paint,opacity:0.2}));overlay.strokes=paint('selected');overlay.strokeWeight=1;}
  });
- rule(n,0,UI.toolbar+UI.tab,w);
- const rows=empty?[]:search?[['GitHub','valentin','Рабочая / Работа'],['GitLab','personal@mail.dev','Личная / Сервисы']]:entries.map(([s,v])=>[s,v,'Рабочая / Работа']);
- rows.forEach((values,i)=>{const y=83+i*36;box(n,'Entry row / '+values[0],0,y,w,36,selected&&values[0]==='GitHub'?'selected':i%2?'panel':'bg');icon(n,'key-round',16,y+10);values.forEach((v,j)=>text(n,v,cols[j],y+9,widths[j],j===0?13:11,j===0?'fg':'muted',j===0?500:400));rule(n,0,y+35,w);});
- if(empty)text(n,'Нет записей',16,108,w-32,13,'muted');text(n,search?'2 записи · 2 базы':empty?'0 записей':'6 записей',16,721,w-32,11,'muted');if(selected)rule(p,705,45,1,747);
+ if(empty)text(content,'Записи не найдены',12,Math.round(content.height/2),contentWidth-24,font,'muted').textAlignHorizontal='CENTER';
+ text(n,'Записи: '+rows.length,12,h-24,w-24,12,'muted');
+ if(contentWidth>w){rule(viewport,0,viewport.height-4,w,3);box(viewport,'Horizontal scrollbar thumb',0,viewport.height-4,Math.max(40,w*w/contentWidth),3,'muted',2);}
+ if(selected)rule(p,x+w,UI.title+1,1,h);
+ return n;
 }
 function tabs(p,x,y,w,active='Обзор',m=false){const labels=['Обзор','Дополнительно','Вид','Свойства','История'];const widths=m?[66,120,50,92,78]:[70,134,60,100,90];let dx=0;rule(p,x,y+UI.tab-1,w);for(let i=0;i<labels.length;i++){if(dx>=w)break;const s=labels[i];text(p,s,x+dx+8,y+10,Math.min(widths[i]-10,w-dx-8),m?12:13,s===active?'fg':'muted',s===active?500:400);if(s===active)box(p,'Selected tab / '+s,x+dx,y+UI.tab-2,Math.min(widths[i],w-dx),2,'muted');dx+=widths[i];}}
-function detail(p,{m=false,edit=false,advanced=false}={}){
- const x=m?0:706,y=m?89:45,w=m?p.width:p.width-706,n=box(p,edit?'Editor':'Entry detail',x,y,w,m?737:747),inset=m?16:UI.inset;
+function detail(p,{m=false,edit=false,advanced=false,width=UI.inspector}={}){
+ const x=m?0:p.width-width,y=m?89:UI.title+1,w=m?p.width:width,n=box(p,edit?'Editor':'Entry detail',x,y,w,m?737:p.height-UI.title-29),inset=m?16:UI.inset;
  const h=entryHeader(n,w,edit,m);tabs(n,0,h+1,w,advanced?'Дополнительно':'Обзор',m);const top=m?h+UI.tab+17:h+UI.tab+1;
  if(advanced){
   text(n,'Атрибуты',inset,top,w-60,13,'fg',500);
   [['Recovery code','••••••••••••'],['Организация','Studio']].forEach(([a,b],i)=>{text(n,a,inset,top+42+i*72,w-80,12,'muted');text(n,b,inset,top+66+i*72,w-80,13);ib(n,'copy',w-60,top+54+i*72,m);rule(n,inset,top+102+i*72,w-inset*2);});
   text(n,'Вложения',inset,top+204,w-60,13,'fg',500);icon(n,'file',inset,top+249);text(n,'recovery-codes.txt',inset+28,top+247,w-100,13);text(n,'20 КиБ',inset+28,top+273,180,12,'muted');ib(n,'download',w-60,top+242,m);text(n,'2,4 / 100 МиБ',inset,top+326,w-50,11,'muted');return n;
  }
- const values=[['Название','GitHub'],['Логин','valentin'],['Пароль','••••••••••••••••'],['URL','https://github.com'],['Теги','работа, разработка'],['Заметки','Основной рабочий аккаунт'],['Срок действия','Бессрочно']];
+ const values=[['Название','GitHub'],['Логин','valentin'],['Пароль','••••••••••••••••'],['URL','https://github.com'],['Теги','работа, разработка'],['Срок действия','Бессрочно'],['Заметки','Основной рабочий аккаунт']];
  values.forEach(([label,val],i)=>{
   const yy=top+i*(m?72:UI.row),special=label==='Пароль'||label==='URL',sz=m?44:32,right=w-inset-sz;
   if(!m)box(n,'Description row / '+label,0,yy,w,UI.row,i%2?'panel':'bg');
@@ -98,15 +119,15 @@ function detail(p,{m=false,edit=false,advanced=false}={}){
    if(special)ib(n,label==='Пароль'?'dice-5':'download',right,yy+(m?12:6),m).name=label==='Пароль'?'Icon button / Генератор пароля…':'Icon button / Загрузить favicon по URL';
   }else{
    text(n,val,m?inset:UI.value,yy+(m?24:12),m?w-132:w-UI.value-inset-80,13);
-   if(i>0&&i<4)ib(n,'copy',right,yy+(m?12:6),m).name='Icon button / Копировать '+label;
-   if(label==='Пароль')ib(n,'eye',right-sz-8,yy+(m?12:6),m).name='Icon button / Показать пароль';
+   if(i>0&&i<4){const a=ib(n,'copy',right,yy+(m?12:6),m);a.name='Icon button / Копировать '+label;if(!m)a.visible=false;}
+   if(label==='Пароль'){const a=ib(n,'eye',right-sz-8,yy+(m?12:6),m);a.name='Icon button / Показать пароль';if(!m)a.visible=false;}
   }
   rule(n,m?inset:0,yy+(m?63:UI.row-1),m?w-inset*2:w);
  });return n;
 }
 function workspace(kind='main',w=1320){const p=shell('macOS / '+kind,{w});sidebar(p,kind==='empty');const selected=!['empty','search','no-selection'].includes(kind);collectionPane(p,kind==='search',selected,kind==='empty');if(selected)detail(p,{edit:kind==='edit',advanced:kind==='advanced'});return p;}
 workspace();workspace('empty');workspace('edit');workspace('no-selection');workspace('search');
-function utility(name,title){const p=shell('macOS / '+name);sidebar(p,false,"");text(p,title,249,57,720,18,'fg',500);rule(p,225,45+UI.toolbar,1095).name='Toolbar boundary';return p;}
+function utility(name,title,{full=false}={}){const p=shell('macOS / '+name);if(!full)sidebar(p,false,"");text(p,title,full?24:249,UI.title+13,full?p.width-48:720,18,'fg',500);rule(p,full?0:225,UI.title+1+UI.toolbar,full?p.width:1095).name='Toolbar boundary';return p;}
 const welcome=shell('macOS / welcome');text(welcome,'Taypeer',440,216,440,24,'fg',500);button(welcome,'Открыть базу…',440,264,156,'default',false,'folder');button(welcome,'Создать…',608,264,130,'default',false,'plus');text(welcome,'Недавние',440,344,440,12,'muted');[['Рабочая.taypeer','Внутренняя копия'],['Личная.taypeer','Внутренняя копия']].forEach(([s,d],i)=>{rule(welcome,440,376+i*60,440);icon(welcome,'database',448,395+i*60);text(welcome,s,480,389+i*60,320,14);text(welcome,d,480,411+i*60,320,11,'muted');});button(welcome,'Получить базу…',440,532,168);
 const unlock=shell('macOS / unlock');icon(unlock,'lock-keyhole',452,226);text(unlock,'Рабочая.taypeer',480,222,400,20,'fg',500);field(unlock,'Мастер-пароль','••••••••••••',452,282,416,{secret:true,error:true});text(unlock,'Неверный пароль',612,326,256,12,'danger');button(unlock,'Touch ID',452,386,120,'default',false,'fingerprint');button(unlock,'Разблокировать',690,386,178,'primary');
 const devices=utility('devices','Устройства');button(devices,'Пригласить…',1124,51,164,'default',false,'plus');['Устройство','Статус','Роль'].forEach((s,i)=>text(devices,s,[256,752,974][i],134,[480,210,190][i],12,'muted'));[['MacBook Pro','Это устройство','Управляющий'],['Pixel 9','В сети','Участник'],['Mac mini','Не в сети · 2 ч','Участник']].forEach(([a,b,c],i)=>{const y=166+i*48;rule(devices,256,y,1032);icon(devices,i===1?'smartphone':'monitor',256,y+16);text(devices,a,284,y+14,440,13);text(devices,b,752,y+14,200,13,'muted');text(devices,c,974,y+14,200,13,'muted');ib(devices,'ellipsis',1256,y+7);});rule(devices,256,340,1032);text(devices,'Синхронизация',256,384,800,16,'fg',500);text(devices,'Все изменения переданы · 09:41',256,426,700,13,'muted');button(devices,'Синхронизировать',1100,414,188,'default',false,'refresh-cw');
@@ -133,59 +154,66 @@ const error=dialog('save-error','Не удалось сохранить',276);te
 // Isolated inspectors keep their own header so the shared edit scope remains visible.
 function tabSlice(active,edit=false){const p=board('05 · Вкладки записи','Tabs / '+active,614,560);entryHeader(p,614,edit);tabs(p,0,UI.toolbar+1,614,active);return p;}
 function attributesBody(p,top,edit=false){
- const w=614; text(p,'Атрибуты',24,top+12,360,14,'fg',500);
- if(edit)ib(p,'plus',558,top+6).name='Icon button / Добавить атрибут…';
- const head=top+44;
- ['Ключ','Значение','Защита'].forEach((s,i)=>text(p,s,[24,184,490][i],head+9,[144,290,68][i],12,'muted'));
- rule(p,0,head+37,w);
+ const w=614; text(p,'Атрибуты',24,top+16,360,16,'fg',500);
+ if(edit)ib(p,'plus',558,top+10).name='Icon button / Добавить атрибут…';
+ const head=top+52;
  [['Recovery code','••••••••••••',true],['Организация','Studio',false]].forEach(([key,val,secret],i)=>{
-  const y=head+38+i*UI.row;box(p,'Attribute row / '+key,0,y,w,UI.row,i%2?'panel':'bg');
+  const y=head+i*UI.row,n=box(p,'Attribute row / '+key,0,y,w,UI.row,'bg');
+  text(n,key,24,12,144,13,'muted');
+  text(n,val,184,12,edit?262:406,13).name='Attribute value / '+key;
   if(edit){
-   const k=inputFrame(p,'Attribute key',24,y+6,144,32,'row');text(k,key,0,6,144,12);
-   const v=inputFrame(p,'Attribute value',184,y+6,290,32,'row');text(v,val,0,6,242,13);if(secret)ib(v,'eye',258,0).name='Icon button / Показать атрибут';
-   const c=box(p,'Checkbox / Защищённый атрибут',506,y+14,16,16,secret?'selected':'bg',3,true);if(secret)icon(c,'check',0,0);
-   ib(p,'ellipsis',558,y+6).name='Icon button / Действия атрибута';
+   if(secret)ib(n,'eye',454,6).name='Icon button / Показать атрибут / '+key;
+   const c=box(n,'Checkbox / Защищённый атрибут / '+key,494,14,16,16,secret?'selected':'bg',3,true);if(secret)icon(c,'check',0,0);
+   ib(n,'pencil',518,6).name='Icon button / Изменить атрибут / '+key;
+   ib(n,'x',558,6).name='Icon button / Удалить атрибут / '+key;
   }else{
-   text(p,key,24,y+12,144,12,'muted');text(p,val,184,y+12,242,13);
-   if(secret){ib(p,'eye',442,y+6).name='Icon button / Показать атрибут';icon(p,'shield-check',506,y+14);}
-   ib(p,'copy',558,y+6).name='Icon button / Копировать атрибут';
+   if(secret){const a=ib(n,'eye',518,6);a.name='Icon button / Показать атрибут / '+key;a.visible=false;}
+   const a=ib(n,'copy',558,6);a.name='Icon button / Копировать атрибут / '+key;a.visible=false;
   }
-  rule(p,0,y+UI.row-1,w);
+  rule(n,0,UI.row-1,w);
  });
- const attachment=head+38+2*UI.row+24;
- text(p,'Вложения',24,attachment+12,360,14,'fg',500);
- if(edit)ib(p,'file-plus-2',558,attachment+6).name='Icon button / Добавить вложение…';
- const y=attachment+44;icon(p,'file',24,y+14);text(p,'recovery-codes.txt',52,y+12,340,13);text(p,'20 КиБ',414,y+12,84,12,'muted').textAlignHorizontal='RIGHT';ib(p,'download',514,y+6).name='Icon button / Скачать вложение';
- if(edit)ib(p,'ellipsis',558,y+6).name='Icon button / Действия вложения';
- rule(p,0,y+43,w);text(p,'2,4 / 100 МиБ',24,y+60,360,12,'muted');
+ const attachment=head+2*UI.row;
+ text(p,'Вложения',24,attachment+16,360,16,'fg',500);
+ if(edit)ib(p,'file-plus-2',558,attachment+10).name='Icon button / Добавить вложение…';
+ const y=attachment+52,n=box(p,'Attachment row / recovery-codes.txt',0,y,w,UI.row,'bg');
+ icon(n,'file',24,14);text(n,'recovery-codes.txt',48,12,edit?390:502,13);
+ if(edit){
+  text(n,'20 KiB',446,12,64,12,'muted').textAlignHorizontal='RIGHT';
+  ib(n,'pencil',518,6).name='Icon button / Переименовать вложение';
+  ib(n,'x',558,6).name='Icon button / Удалить вложение';
+  const hint=box(p,'Attachments hint',0,y+UI.row,w,64,'bg');
+  text(hint,'Вложения сохраняются вместе с записью.',24,24,w-48,12,'muted');
+ }else ib(n,'download',558,6).name='Icon button / Скачать вложение';
+ rule(n,0,UI.row-1,w);
 }
 function appearanceBody(p,top,edit=false){
- const w=614;icon(p,'key-round',24,top+16);text(p,'GitHub',52,top+14,450,16,'fg',500);
- const y0=top+56;
- [['Иконка','Lucide · key-round'],['URL иконки','https://github.com/favicon.ico'],['Цвет текста','По умолчанию'],['Цвет фона','По умолчанию']].forEach(([label,val],i)=>{
-  const y=y0+i*48;text(p,label,24,y+6,144,13,'muted');
+ const w=614;
+ [['Иконка','key-round'],['Цвет текста','—'],['Цвет фона','—']].forEach(([label,val],i)=>{
+  const y=top+i*UI.row,n=box(p,'Appearance row / '+label,0,y,w,UI.row,'bg');
+  text(n,label,24,12,144,13,'muted');
   if(edit){
-   if(i===0){button(p,'Выбрать…',184,y,132);button(p,'Из файла…',328,y,132);}
-   else if(i===1){const f=inputFrame(p,'Image URL',184,y,366);text(f,val,10,6,346,12);ib(p,'download',558,y).name='Icon button / Загрузить иконку по URL';}
-   else{const f=inputFrame(p,'ColorPicker / '+label,184,y,406);box(f,'Color swatch',10,8,16,16,i===2?'fg':'bg',3,true);text(f,val,38,6,322,13);icon(f,'chevron-down',378,8);}
+   if(i===0){icon(n,'key-round',184,14);button(n,'Выбрать иконку',208,6,160);ib(n,'image',376,6).name='Icon button / Изображение из файла';ib(n,'link',416,6).name='Icon button / Изображение по URL';}
+   else{const f=inputFrame(n,'ColorPicker / '+label,184,6,160);text(f,val,12,6,112,13);icon(f,'chevron-down',132,8);ib(n,'x',352,6).name='Icon button / Сбросить '+label;}
   }else{
-   if(i>1)box(p,'Color swatch',184,y+8,16,16,i===2?'fg':'bg',3,true);
-   text(p,val,i>1?212:184,y+6,i>1?338:406,i===1?12:13);
-   rule(p,0,y+43,w);
+   if(i===0)icon(n,'key-round',184,14);else text(n,val,184,12,406,13);
   }
+  rule(n,0,UI.row-1,w);
  });
- if(edit)button(p,'Сбросить оформление',184,y0+4*48+8,226);
+ const previewTop=top+3*UI.row;
+ text(p,'Предпросмотр',24,previewTop+16,566,16,'fg',500);
+ const preview=box(p,'Appearance preview',24,previewTop+52,566,52,'bg',4);
+ icon(preview,'key-round',16,18);text(preview,'GitHub',40,16,510,16);
 }
 const attributes=tabSlice('Дополнительно',true);attributesBody(attributes,83,true);
 const appearance=tabSlice('Вид',true);appearanceBody(appearance,83,true);
 const properties=tabSlice('Свойства');
-[['Создана','12 августа 2026, 10:40'],['Изменена','7 сентября 2026, 09:12'],['Доступ','Сегодня, 09:41'],['ID','e2194a38-679e-49f0-8fc2-a087bc8a9124']].forEach(([a,b],i)=>{
- const y=83+i*UI.row;box(properties,'Read-only property / '+a,0,y,614,UI.row,i%2?'panel':'bg');text(properties,a,24,y+12,144,13,'muted');text(properties,b,184,y+12,354,a==='ID'?11:13);ib(properties,'copy',558,y+6).name='Icon button / Копировать '+a;rule(properties,0,y+UI.row-1,614);
+[['Создание','2026-08-12 10:40:00.000'],['Изменение','2026-09-07 09:12:00.000'],['ID','e2194a38-679e-49f0-8fc2-a087bc8a9124']].forEach(([a,b],i)=>{
+ const y=83+i*UI.row;box(properties,'Read-only property / '+a,0,y,614,UI.row,i%2?'panel':'bg');text(properties,a,24,y+12,144,13,'muted');text(properties,b,184,y+12,354,13);const copy=ib(properties,'copy',558,y+6);copy.name='Icon button / Копировать '+a;copy.visible=false;rule(properties,0,y+UI.row-1,614);
 });
-const history=tabSlice('История');text(history,'3 версии',24,95,300,14,'fg',500);ib(history,'ellipsis',558,89).name='DropdownMenu / История / Очистить историю…';
-['Дата','Устройство'].forEach((s,i)=>text(history,s,[24,248][i],136,[208,342][i],12,'muted'));rule(history,0,165,614);
-[['6 сентября, 18:32','MacBook Pro'],['2 сентября, 10:14','Pixel 9'],['12 августа, 10:40','MacBook Pro']].forEach(([date,device],i)=>{const y=166+i*UI.row;box(history,'History version / '+date,0,y,614,UI.row,i===0?'selected':i%2?'panel':'bg');text(history,date,24,y+12,208,13);text(history,device,248,y+12,342,13,'muted');rule(history,0,y+UI.row-1,614);});
-button(history,'Сравнить…',210,322,132);button(history,'Восстановить версию…',354,322,236);
+const history=tabSlice('История');text(history,'История',24,101,300,14,'fg',500);ib(history,'ellipsis',558,95).name='DropdownMenu / История / Очистить историю…';
+['Сохранено','Название'].forEach((s,i)=>text(history,s,[24,248][i],149,[208,342][i],12,'muted'));rule(history,0,176,614);
+[['2026-09-06 18:32:00.000','GitHub'],['2026-09-02 10:14:00.000','GitHub'],['2026-08-12 10:40:00.000','GitHub']].forEach(([date,title],i)=>{const y=177+i*UI.row;box(history,'History version / '+date,0,y,614,UI.row,i===0?'selected':i%2?'panel':'bg');text(history,date,24,y+12,208,13,'muted');text(history,title,248,y+12,342,13,'muted');rule(history,0,y+UI.row-1,614);});
+button(history,'Просмотр',24,325,85);button(history,'Сравнить',117,325,96);button(history,'Восстановить',221,325,126);
 // Design-system page: assets, field variants and compact read-only tab examples.
 figma.currentPage=library;const kit=board('04 · Компоненты','System / components',1320,1536);text(kit,'Taypeer / GPUI',24,24,1000,24,'fg',500);text(kit,'Нейтральная тёмная тема · Lucide · medium / compact',24,64,1000,14,'muted');
 let k=0;for(const [s,n] of Object.entries(icons)){kit.appendChild(n);const x=24+(k%9)*140,y=136+Math.floor(k/9)*76;n.x=x;n.y=y;text(kit,s,x,y+26,132,11,'muted');k++;}

@@ -9,12 +9,6 @@ publish.workspace = true
 component-rendering = ["gpui-kit/test-support"]
 ui-test-support = ["taypeer-desktop-platform/ui-test-support", "taypeer-runtime-client/ui-test-support", "gpui-kit/test-support"]
 
-[[test]]
-name = "components"
-path = "tests/components/main.rs"
-harness = false
-required-features = ["component-rendering"]
-
 [dependencies]
 toml.workspace = true
 taypeer-desktop-platform.workspace = true

@@ -8,12 +8,19 @@ rust-version.workspace = true
 publish.workspace = true
 
 [features]
+component-rendering = ["taypeer-ui/component-rendering", "taypeer-database-ui/component-rendering", "taypeer-settings-ui/component-rendering", "taypeer-sync-ui/component-rendering", "gpui-kit/test-support"]
 ui-test-support = ["taypeer-database-ui/ui-test-support", "taypeer-sync-ui/ui-test-support", "taypeer-settings-ui/ui-test-support", "taypeer-runtime-client/ui-test-support", "taypeer-desktop-platform/ui-test-support", "taypeer-ui/ui-test-support", "gpui-kit/test-support", "taypeer-runtime/ui-test-support"]
 
 [[bin]]
 name = "taypeer-ui-worker"
 path = "src/bin/ui-worker.rs"
 required-features = ["ui-test-support"]
+
+[[test]]
+name = "components"
+path = "tests/components/main.rs"
+harness = false
+required-features = ["component-rendering"]
 
 [[test]]
 name = "ui"
@@ -43,3 +50,5 @@ workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true
+serde.workspace = true
+image.workspace = true

@@ -33,8 +33,8 @@ reported separately. Metrics alone do not explain the cause. After a relevant fi
 rerun the same case and inspect its new image. Output is agent diagnostics, not
 a product screen or evidence of matching design acceptance.
 
-The [catalog](../../../apps/taypeer/crates/taypeer-ui/tests/components/cases.json)
-covers fields at rest and focus, plus complete editor title/URL rows. Use a full row
+The [catalog](../../../apps/taypeer/tests/components/cases.json)
+covers fields at rest and focus, complete editor title/URL rows and retained panels from feature owners. Use a full row
 for parent spacing and action placement; bare field cases measure only the field's
 internal layout. Add a retained preview using the real product builder and a
 uniquely named FIG target when another component is needed;
@@ -78,5 +78,5 @@ tree is not a screenshot. Report unavailable rendering explicitly. Do not weaken
 assertion, replace an expected result with the observed failure, or ignore a scenario
 to make a run green. Fix the cause or report the precise unresolved limitation.
 
-Use Peekaboo for native windows, actual desktop input, IME, Keychain and macOS
+Follow the user’s explicit exclusions for native integration checks. Use Peekaboo for native windows, actual desktop input, IME, Keychain and macOS
 integration. These checks complement Rust scenarios and are not part of their replay.

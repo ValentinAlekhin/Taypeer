@@ -24,6 +24,7 @@ cargo check-all
 cargo lint
 cargo test --workspace --exclude taypeer --all-features --locked
 cargo test -p taypeer --lib --all-features --locked
+cargo test -p taypeer --features component-rendering --test components --locked
 if [ "$(uname -s)" = Darwin ] || [ "$(uname -s)" = Linux ]; then
     cargo test -p taypeer --features ui-test-support --test ui --locked -- --test-threads=1
 fi

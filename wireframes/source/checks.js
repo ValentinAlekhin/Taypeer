@@ -2,7 +2,7 @@
 // Only a scroll track may exceed its explicitly clipped viewport. Its children
 // still undergo the regular bounds check; arbitrary clipping is not an escape.
 function scrollTrack(n) {
- return n.parent?.clipsContent && ((n.name==='Android / scroll content' && ['Android / scroll viewport','Android / drawer viewport'].includes(n.parent.name) && n.x===0 && n.width===n.parent.width && n.y<=0 && n.y+n.height>=n.parent.height) || (n.name==='Android / tab content' && n.parent.name==='Android / tabs viewport' && n.y===0 && n.height===n.parent.height));
+ return n.parent?.clipsContent && ((n.name==='Android / scroll content' && ['Android / scroll viewport','Android / drawer viewport'].includes(n.parent.name) && n.x===0 && n.width===n.parent.width && n.y<=0 && n.y+n.height>=n.parent.height) || (n.name==='Android / tab content' && n.parent.name==='Android / tabs viewport' && n.y===0 && n.height===n.parent.height) || (n.name==='Entry table / scroll content' && n.parent.name==='Entry table / scroll viewport' && n.x===0 && n.y===0 && n.width>=n.parent.width && n.height===n.parent.height));
 }
 const overflow=figma.root.findAll(n=>n.parent && !scrollTrack(n) && !['PAGE','CANVAS','DOCUMENT'].includes(n.parent.type) && !['VECTOR','INSTANCE'].includes(n.type) && !['INSTANCE','COMPONENT'].includes(n.parent.type) && (n.x < -1 || n.y < -1 || n.x+n.width>n.parent.width+1 || n.y+n.height>n.parent.height+1)).map(n=>({name:n.name,parent:n.parent.name,x:n.x,y:n.y,w:n.width,h:n.height,pw:n.parent.width,ph:n.parent.height}));
 const tiny=figma.root.findAll(n=>n.type==='TEXT'&&n.characters.length>4&&n.width<28).map(n=>({name:n.name,width:n.width}));
@@ -25,16 +25,19 @@ for(const name of ['macOS / main','macOS / edit']){
   return {label,...pos(text,p)};
  });
  const table=b.children.find(n=>n.name==='Table / entries');
- const names=table.children.filter(n=>n.name.startsWith('Entry row / ')).map(n=>n.name.slice(12));
+ const names=table.findAll(n=>n.name.startsWith('Entry row / ')).map(n=>n.name.slice(12));
  if(names.join('|')!=='Cloudflare|Figma|GitHub|Linear|Notion|Vercel')errors.push(name+': default sort order');
- const selected=table.children.find(n=>n.name==='Entry row / GitHub');
- if(Math.abs(selected.fills[0].color.r-41/255)>0.001)errors.push(name+': selected entry lost');
+ const selected=table.findAll(n=>n.name==='Entry row / GitHub')[0];
+ const overlay=selected.children.find(n=>n.name==='Table selection / translucent');
+ if(!overlay||Math.abs(overlay.fills[0].opacity-0.2)>0.001)errors.push(name+': selected entry lost');
+ if(b.children.find(n=>n.name==='TitleBar').height!==34||p.width!==520)errors.push(name+': stale window chrome or initial card width');
+ if(!table.findAll(n=>n.name==='Table header'&&n.height===32).length||table.findAll(n=>n.name.startsWith('Entry row / ')&&n.height!==32).length)errors.push(name+': table differs from product DataTable density');
 }
 if(JSON.stringify(measurements['macOS / main / values'])!==JSON.stringify(measurements['macOS / edit / values']))errors.push('view/edit value positions differ');
 for(const b of boards.filter(n=>n.name.startsWith('macOS / '))){
  const t=b.children.find(n=>n.name==='Table / entries');if(!t)continue;
- if(t.children.filter(n=>n.name==='Column header separator').length!==2)errors.push(b.name+': missing header separators');
- if(t.children.filter(n=>n.name.startsWith('Sort / ')).length!==3)errors.push(b.name+': missing sort controls');
+ if(t.findAll(n=>n.name==='Column header separator').length!==3)errors.push(b.name+': missing header separators');
+ if(t.findAll(n=>n.name.startsWith('Sort / ')).length!==3)errors.push(b.name+': missing sort controls');
 }
 for(const n of figma.root.findAll(n=>n.name.startsWith('Input / '))){
  if(n.name.includes(' / row / ')&&n.fills.length)errors.push(n.name+': unexpected row fill');
@@ -42,6 +45,8 @@ for(const n of figma.root.findAll(n=>n.name.startsWith('Input / '))){
  if(n.name.endsWith(' / rest')&&n.strokes.length)errors.push(n.name+': resting border');
 }
 if(board('macOS / settings').findAll(n=>n.type==='TEXT'&&n.characters==='Сохранить').length)errors.push('settings: obsolete save action');
+for(const name of ['macOS / settings','macOS / settings-database'])if(board(name).findAll(n=>n.name==='Sidebar / groups').length)errors.push(name+': settings must use the full working area');
+if(board('macOS / main').findAll(n=>n.name.startsWith('Icon button / Копировать ')&&n.visible).length)errors.push('entry view: copy actions must remain hidden at rest');
 // Safety-relevant visual contracts for the v1 desktop scenarios.
 const required = ['macOS / trash','macOS / pending','macOS / history-compare','macOS / receive',
  'macOS / settings-database','macOS / settings-locked','macOS / new-entry',

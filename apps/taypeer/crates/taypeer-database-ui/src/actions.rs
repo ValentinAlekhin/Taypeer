@@ -14,7 +14,21 @@ actions!(
         /// Focus the active database search input.
         FocusSearch,
         /// Activate the keyboard-selected table entry.
-        EntryEnter
+        EntryEnter,
+        /// Clear the username through an explicit draft update.
+        ClearUsername,
+        /// Clear the protected password, rather than replacing it with empty text.
+        ClearPassword,
+        /// Clear the URL through an explicit draft update.
+        ClearUrl,
+        /// Clear the entry tags through an explicit draft update.
+        ClearTags,
+        /// Clear the entry notes through an explicit draft update.
+        ClearNotes,
+        /// Remove the expiry date through an explicit draft update.
+        ClearExpiry,
+        /// Reveal or conceal the active editor password without replacing typed input.
+        ToggleEditorPassword
     ]
 );
 

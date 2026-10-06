@@ -1,4 +1,4 @@
-use super::{Case, Kind, Options, Result, State};
+use super::{Case, Kind, Options, Preview, Result, State};
 use gpui_kit::{
     component::{ActiveTheme, Root, input::InputState},
     prelude::*,
@@ -17,27 +17,28 @@ struct FieldPreview {
     kind: Kind,
     label: String,
     width: f32,
+    panel: Option<AnyView>,
+    height: f32,
 }
 
 impl Render for FieldPreview {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let component = if self.kind == Kind::EditorRow {
+        let component = if let Some(panel) = &self.panel {
+            div()
+                .h(px(self.height))
+                .child(panel.clone())
+                .into_any_element()
+        } else if self.kind == Kind::EditorRow {
             let mut control = style::input_control(
                 &self.label,
                 clipboard::secret_field(
-                    style::row_field(&self.input, &self.label),
+                    style::entry_field(&self.input, &self.label),
                     &self.input,
                     false,
                 ),
             );
             if self.label == "url" {
-                control = control
-                    .child(style::icon_button("favicon", "download", "ui.favicon"))
-                    .child(style::icon_button(
-                        "clear-field-preview",
-                        "x",
-                        "ui.clear_value",
-                    ));
+                control = control.child(style::icon_button("favicon", "download", "ui.favicon"));
             }
             style::input_row(&self.label, self.input.focus_handle(cx), control, cx)
         } else {
@@ -48,9 +49,14 @@ impl Render for FieldPreview {
             };
             field.into_any_element()
         };
+        let surface = if self.kind == Kind::EditorRow && self.label == "url" {
+            cx.theme().button
+        } else {
+            cx.theme().background
+        };
         div()
             .p(px(f32::from(CAPTURE_PADDING)))
-            .bg(cx.theme().background)
+            .bg(surface)
             .text_color(cx.theme().foreground)
             .child(
                 div()
@@ -99,6 +105,18 @@ fn measure_layout(
     window: &Window,
     cx: &App,
 ) -> BTreeMap<String, Rect> {
+    if case.kind == Kind::Panel {
+        let mut anchors = BTreeMap::from([(
+            "component".into(),
+            Rect::from_bounds(window.find("component").bounds()),
+        )]);
+        for (role, id) in &case.observations {
+            let item = window.find(id.clone());
+            assert!(item.visible(), "{}: visible anchor {}", case.id, role);
+            anchors.insert(role.clone(), Rect::from_bounds(item.bounds()));
+        }
+        return anchors;
+    }
     let field = window.find(format!("field-{}", case.label));
     assert!(window.is_window_active(), "{}: active test window", case.id);
     assert!(field.visible(), "{}: input must be visible", case.id);
@@ -129,12 +147,10 @@ fn measure_layout(
             Rect::from_bounds(window.find(format!("label-{}", case.label)).bounds()),
         );
         if case.label == "url" {
-            for (role, id) in [
-                ("action.favicon", "favicon"),
-                ("action.clear", "clear-field-preview"),
-            ] {
-                anchors.insert(role.into(), Rect::from_bounds(window.find(id).bounds()));
-            }
+            anchors.insert(
+                "action.favicon".into(),
+                Rect::from_bounds(window.find("favicon").bounds()),
+            );
         }
     }
     anchors
@@ -145,6 +161,7 @@ fn render<'a>(
     dark: bool,
     font_size: u8,
     output: Option<&std::path::Path>,
+    override_width: Option<u32>,
 ) -> Result<Capture<'a>> {
     let mut cx = HeadlessAppContext::with_platform(
         gpui_kit::platform::current_platform(true).text_system(),
@@ -157,10 +174,13 @@ fn render<'a>(
         Ok(())
     })?;
     let factor = f32::from(font_size) / 16.;
-    let width = case.width as f32 * factor + f32::from(CAPTURE_PADDING) * 2.;
+    let logical_width = override_width.unwrap_or(case.width) as f32 * factor;
+    // Allocate whole device pixels at the native 2× scale. Product layout
+    // retains its original logical width; only unused capture space is rounded.
+    let width = ((logical_width + f32::from(CAPTURE_PADDING) * 2.) * 2.).ceil() / 2.;
     // Height is not constrained to the mockup. Measure the retained layout in a
     // roomy viewport, then crop only unused viewport space, preserving overflow.
-    let height = 1024.;
+    let height = ((case.height as f32 * factor + 8.).max(1024.) * 2.).ceil() / 2.;
     let mut retained_input = None;
     let window = cx.open_window(size(px(width), px(height)), |window, cx| {
         theme::apply(dark, font_size, window, cx);
@@ -169,11 +189,16 @@ fn render<'a>(
         window.activate_window();
         let input = style::input(&case.text, false, window, cx);
         retained_input = Some(input.clone());
+        let panel = case
+            .preview
+            .map(|preview| create_panel(preview, window, cx));
         let preview = cx.new(|_| FieldPreview {
             input,
             kind: case.kind,
             label: case.label.clone(),
-            width: case.width as f32 * factor,
+            width: logical_width,
+            panel,
+            height: case.height as f32 * factor,
         });
         cx.new(|cx| Root::new(preview, window, cx))
     })?;
@@ -199,10 +224,12 @@ fn render<'a>(
         )
     })?;
     let image = cx.capture_screenshot(window.into())?;
-    // Metal rounds fractional logical extents up to whole device pixels.
+    // The viewport was allocated in whole native device pixels.
     assert_eq!(
         image.dimensions(),
-        ((width * 2.).ceil() as u32, (height * 2.).ceil() as u32)
+        ((width * 2.) as u32, (height * 2.) as u32),
+        "{}: native viewport dimensions at font {font_size}",
+        case.id
     );
     assert!(
         image.pixels().any(|pixel| pixel != image.get_pixel(0, 0)),
@@ -255,12 +282,20 @@ fn render<'a>(
 }
 
 pub(super) fn run(cases: &[&Case], options: &Options) -> Result<()> {
-    rust_i18n::set_locale("ru");
+    rust_i18n::set_locale(&options.locale);
     if let Some(output) = &options.output {
         std::fs::create_dir_all(output)?;
         let captures = cases
             .iter()
-            .map(|case| render(case, options.dark, options.font_size, Some(output)))
+            .map(|case| {
+                render(
+                    case,
+                    options.dark,
+                    options.font_size,
+                    Some(output),
+                    options.width,
+                )
+            })
             .collect::<Result<Vec<_>>>()?;
         std::fs::write(
             output.join("captures.json"),
@@ -272,17 +307,78 @@ pub(super) fn run(cases: &[&Case], options: &Options) -> Result<()> {
             output.display()
         );
     } else {
-        for dark in [false, true] {
-            for font_size in [14, 16, 18] {
-                for case in cases {
-                    render(case, dark, font_size, None)?;
+        for locale in ["en", "ru"] {
+            rust_i18n::set_locale(locale);
+            for dark in [false, true] {
+                for font_size in [14, 16, 18] {
+                    for case in cases {
+                        let widths = if let Some(width) = options.width {
+                            vec![width]
+                        } else if case.preview.is_some_and(Preview::is_entry_panel) {
+                            vec![380, 520, 614]
+                        } else {
+                            vec![case.width]
+                        };
+                        for width in widths {
+                            render(case, dark, font_size, None, Some(width))?;
+                        }
+                    }
+                    println!(
+                        "Component rendering: {locale}, {}, {font_size}px passed",
+                        if dark { "dark" } else { "light" }
+                    );
                 }
             }
         }
         println!(
-            "Component rendering: {} cases × 2 themes × 3 font sizes passed",
+            "Component rendering: {} cases × 2 locales × 2 themes × 3 font sizes passed; entry panels at 380/520/614",
             cases.len()
         );
     }
     Ok(())
+}
+
+fn create_panel(preview: Preview, window: &mut Window, cx: &mut App) -> AnyView {
+    use taypeer_database_ui::component_previews::{self, DatabasePreview};
+    use taypeer_sync_ui::{SyncPreviewCase, sync_preview};
+    use taypeer_ui::forms::{self, FormPreviewCase};
+    match preview {
+        Preview::Settings => taypeer_settings_ui::settings_preview(window, cx),
+        Preview::Devices => sync_preview(SyncPreviewCase::Devices, window, cx),
+        Preview::EditorCard => component_previews::create(DatabasePreview::EditorCard, window, cx),
+        Preview::EntryCard => component_previews::create(DatabasePreview::EntryCard, window, cx),
+        Preview::Sidebar => component_previews::create(DatabasePreview::Sidebar, window, cx),
+        Preview::History => component_previews::create(DatabasePreview::History, window, cx),
+        Preview::GeneratorPassword => taypeer_database_ui::generator_preview(
+            taypeer_database_ui::GeneratorPreviewCase::Password,
+            window,
+            cx,
+        ),
+        Preview::GeneratorPassphrase => taypeer_database_ui::generator_preview(
+            taypeer_database_ui::GeneratorPreviewCase::Passphrase,
+            window,
+            cx,
+        ),
+        Preview::DatabaseForm => forms::form_preview(FormPreviewCase::Database, window, cx),
+        Preview::DatabaseError => forms::form_preview(FormPreviewCase::DatabaseError, window, cx),
+        Preview::GroupForm => taypeer_database_ui::metadata_preview(window, cx),
+        Preview::Invitation => sync_preview(SyncPreviewCase::Invitation, window, cx),
+        Preview::Receive => sync_preview(SyncPreviewCase::Receive, window, cx),
+        Preview::AdvancedView => {
+            component_previews::create(DatabasePreview::AdvancedView, window, cx)
+        }
+        Preview::AdvancedEdit => {
+            component_previews::create(DatabasePreview::AdvancedEdit, window, cx)
+        }
+        Preview::AppearanceView => {
+            component_previews::create(DatabasePreview::AppearanceView, window, cx)
+        }
+        Preview::AppearanceEdit => {
+            component_previews::create(DatabasePreview::AppearanceEdit, window, cx)
+        }
+        Preview::Properties => component_previews::create(DatabasePreview::Properties, window, cx),
+        Preview::HistorySnapshot => {
+            component_previews::create(DatabasePreview::HistorySnapshot, window, cx)
+        }
+    }
 }

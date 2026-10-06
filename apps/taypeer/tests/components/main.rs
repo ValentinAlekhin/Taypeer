@@ -21,11 +21,19 @@ struct Case {
     id: String,
     state: State,
     kind: Kind,
+    #[serde(default)]
     label: String,
+    #[serde(default)]
     text: String,
     width: u32,
     height: u32,
     design: Design,
+    #[serde(default)]
+    preview: Option<Preview>,
+    #[serde(default, rename = "background")]
+    _background: Option<[u8; 3]>,
+    #[serde(default)]
+    observations: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Clone, Copy, Deserialize, PartialEq)]
@@ -34,6 +42,49 @@ enum Kind {
     Field,
     RowField,
     EditorRow,
+    Panel,
+}
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum Preview {
+    EditorCard,
+    EntryCard,
+    Sidebar,
+    History,
+    GeneratorPassword,
+    GeneratorPassphrase,
+    DatabaseForm,
+    DatabaseError,
+    GroupForm,
+    Invitation,
+    Receive,
+    AdvancedView,
+    AdvancedEdit,
+    AppearanceView,
+    AppearanceEdit,
+    Properties,
+    HistorySnapshot,
+    Settings,
+    Devices,
+}
+
+#[cfg(target_os = "macos")]
+impl Preview {
+    fn is_entry_panel(self) -> bool {
+        matches!(
+            self,
+            Self::EditorCard
+                | Self::EntryCard
+                | Self::History
+                | Self::AdvancedView
+                | Self::AdvancedEdit
+                | Self::AppearanceView
+                | Self::AppearanceEdit
+                | Self::Properties
+                | Self::HistorySnapshot
+        )
+    }
 }
 
 #[derive(Clone, Copy, Deserialize, PartialEq)]
@@ -60,6 +111,8 @@ struct Options {
     dark: bool,
     font_size: u8,
     list: bool,
+    locale: String,
+    width: Option<u32>,
 }
 
 impl Options {
@@ -70,6 +123,8 @@ impl Options {
             dark: true,
             font_size: 16,
             list: false,
+            locale: "ru".into(),
+            width: None,
         };
         let mut args = std::env::args().skip(1);
         while let Some(arg) = args.next() {
@@ -77,6 +132,19 @@ impl Options {
                 "--list" => options.list = true,
                 "--output" => {
                     options.output = Some(args.next().ok_or("missing --output value")?.into())
+                }
+                "--locale" => {
+                    options.locale = args.next().ok_or("missing locale")?;
+                    if !["en", "ru"].contains(&options.locale.as_str()) {
+                        return Err("locale must be en or ru".into());
+                    }
+                }
+                "--width" => {
+                    let width = args.next().ok_or("missing width")?.parse()?;
+                    if !(1..=4096).contains(&width) {
+                        return Err("invalid width".into());
+                    }
+                    options.width = Some(width);
                 }
                 "--case" => options
                     .cases
@@ -96,6 +164,15 @@ impl Options {
                 }
                 _ => return Err(format!("unknown component renderer argument: {arg}").into()),
             }
+        }
+        if let Some(path) = &options.output
+            && path.is_relative()
+        {
+            options.output = Some(
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("../..")
+                    .join(path),
+            );
         }
         Ok(options)
     }
@@ -119,7 +196,8 @@ fn catalog() -> Result<Catalog> {
             || case.text.contains(['\n', '\0'])
             || case.design.page.is_empty()
             || case.design.node.is_empty()
-            || !["name", "url"].contains(&case.label.as_str())
+            || (case.kind != Kind::Panel && !["name", "url"].contains(&case.label.as_str()))
+            || (case.kind == Kind::Panel) != case.preview.is_some()
             || case.design.ancestors.iter().any(String::is_empty)
             || (case.kind == Kind::EditorRow
                 && (case.design.ancestors.is_empty()
@@ -127,6 +205,7 @@ fn catalog() -> Result<Catalog> {
                         .iter()
                         .any(|role| case.design.anchors.get(*role).is_none_or(String::is_empty))))
             || (case.kind != Kind::EditorRow
+                && case.kind != Kind::Panel
                 && !case.design.node.ends_with(match case.state {
                     State::Rest => "/ rest",
                     State::Focus => "/ focus",

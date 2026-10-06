@@ -1,7 +1,11 @@
 //! Descriptive history comes from confirmed service revisions, never reconstructed from inputs.
 use super::{style::*, workspace::WorkspaceStore};
 use gpui_kit::{
-    component::{button::*, *},
+    component::{
+        button::*,
+        menu::{DropdownMenu, PopupMenuItem},
+        *,
+    },
     *,
 };
 
@@ -11,32 +15,38 @@ pub(super) struct Row {
     pub name: String,
     pub description: Option<String>,
 }
-fn version_row(row: &Row) -> impl IntoElement {
+fn version_row(row: &Row, cx: &App) -> impl IntoElement {
     let description = row.description.clone().unwrap_or_default();
-    v_flex()
-        .gap_1()
-        .child(stamp(row.saved))
-        .child(
-            div()
-                .id(SharedString::from(format!(
-                    "metadata-history-name-{}",
-                    row.id.as_str()
-                )))
-                .test_support()
-                .aria_label(row.name.clone())
-                .child(row.name.clone()),
-        )
-        .child(
-            div()
-                .id(SharedString::from(format!(
-                    "metadata-history-description-{}",
-                    row.id.as_str()
-                )))
-                .test_support()
-                .aria_label(description.clone())
-                .text_sm()
-                .child(description),
-        )
+    super::history::version(
+        SharedString::from(format!("metadata-history-version-{}", row.id.as_str())),
+        row.saved,
+        v_flex()
+            .gap_1()
+            .child(
+                div()
+                    .id(SharedString::from(format!(
+                        "metadata-history-name-{}",
+                        row.id.as_str()
+                    )))
+                    .test_support()
+                    .aria_label(row.name.clone())
+                    .child(row.name.clone()),
+            )
+            .child(
+                div()
+                    .id(SharedString::from(format!(
+                        "metadata-history-description-{}",
+                        row.id.as_str()
+                    )))
+                    .test_support()
+                    .aria_label(description.clone())
+                    .text_size(rems(13. / 16.))
+                    .child(description),
+            ),
+        false,
+        false,
+        cx,
+    )
 }
 pub(super) fn show(
     store: WeakEntity<WorkspaceStore>,
@@ -47,7 +57,7 @@ pub(super) fn show(
 ) {
     let revisions: Vec<_> = rows.iter().map(|row| row.id.clone()).collect();
     let rows = std::rc::Rc::new(rows);
-    window.open_dialog(cx, move |dialog, window, _| {
+    window.open_dialog(cx, move |dialog, window, cx| {
         let clear_store = store.clone();
         let clear_group = group.clone();
         let revisions = revisions.clone();
@@ -60,24 +70,31 @@ pub(super) fn show(
             .width(window.rem_size() * 38.75)
             .child(
                 v_flex()
-                    .gap_3()
-                    .children(rows.iter().rev().map(version_row)),
+                    .child(super::history::column_header(cx))
+                    .children(rows.iter().rev().map(|row| version_row(row, cx))),
             )
             .footer(
                 h_flex()
                     .justify_end()
                     .gap_2()
                     .child(
-                        Button::new("clear-metadata-history")
-                            .label(tr("ui.clear_history"))
-                            .disabled(revisions.is_empty())
-                            .on_click(move |_, window, cx| {
-                                confirm_purge(
-                                    clear_store.clone(),
-                                    clear_group.clone(),
-                                    revisions.clone(),
-                                    window,
-                                    cx,
+                        icon_button("metadata-history-menu", "ellipsis", "ui.entry_actions")
+                            .dropdown_menu(move |menu, _, _| {
+                                let store = clear_store.clone();
+                                let group = clear_group.clone();
+                                let revisions = revisions.clone();
+                                menu.item(
+                                    PopupMenuItem::new(tr("ui.clear_history"))
+                                        .disabled(revisions.is_empty())
+                                        .on_click(move |_, window, cx| {
+                                            confirm_purge(
+                                                store.clone(),
+                                                group.clone(),
+                                                revisions.clone(),
+                                                window,
+                                                cx,
+                                            )
+                                        }),
                                 )
                             }),
                     )

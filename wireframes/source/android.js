@@ -7,7 +7,8 @@ function buildAndroidV1() {
   const kit=board(STATES,'Android states / components',1260,1040);
   text(kit,'Android · компоненты телефона',24,24,1200,26,'fg',500,40);
   text(kit,'Lucide 20 · линия 1,75 · область действия 48 × 48 dp · текст 16 / подписи 14',24,74,1200,16);
-  Object.entries(icons).forEach(([key,original],i)=>{
+  // Desktop image commands do not expand the accepted mobile icon composition.
+  Object.entries(icons).filter(([key])=>!['image','link'].includes(key)).forEach(([key,original],i)=>{
     const n=original.clone();kit.appendChild(n);mobileIcons[key]=n;n.name='Mobile icon / '+key;
     n.resize(20,20);n.x=32+i%12*100;n.y=134+Math.floor(i/12)*96;
     for(const v of n.findAll(c=>c.type==='VECTOR')) {

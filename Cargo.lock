@@ -9132,7 +9132,9 @@ name = "taypeer"
 version = "0.1.0"
 dependencies = [
  "gpui-kit",
+ "image",
  "rust-i18n 3.1.5",
+ "serde",
  "serde_json",
  "taypeer-database-ui",
  "taypeer-desktop-platform",

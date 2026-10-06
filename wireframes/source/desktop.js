@@ -136,38 +136,39 @@ function buildDesktopV1() {
     status(p, 'Получено · требуется вход'); return p;
   });
   replace('macOS / settings', () => {
-    const p = utility('settings', 'Настройки');
-    text(p, 'Устройство', 249, 100, 128, 13, 'fg', 500); text(p, 'База данных', 401, 100, 144, 13, 'muted');
-    rule(p, 225, 127, 1095); box(p, 'Selected tab / Устройство', 225, 126, 152, 2, 'muted');
-    field(p, 'Имя устройства', 'MacBook Pro', 249, 152, 800);
-    field(p, 'Язык', 'Русский', 249, 200, 800, {select:true});
-    field(p, 'Тема', 'Системная', 249, 248, 800, {select:true});
-    field(p, 'Автоблокировка', 'Через 5 минут', 249, 296, 800, {select:true});
-    field(p, 'Очистка буфера', 'Через 30 секунд', 249, 344, 800, {select:true});
-    heading(p, 'Touch ID · Рабочая.taypeer', 249, 412, 800);
-    toggle(p, 'Разблокировать эту БД на этом Mac', 249, 456, 800, true);
-    heading(p, 'Соединение', 249, 516, 800);
-    field(p, 'Relay', 'Общие relay', 249, 560, 800, {select:true});
-    caption(p, 'Relay пересылает трафик, пока оба устройства доступны.\nЛокальная работа не требует сети.', 409, 610, 640);
+    const p = utility('settings', 'Настройки', {full:true});
+    text(p, 'Устройство', 24, 100, 128, 13, 'fg', 500); text(p, 'База данных', 176, 100, 144, 13, 'muted');
+    rule(p, 0, 127, 1320); box(p, 'Selected tab / Устройство', 0, 126, 152, 2, 'muted');
+    field(p, 'Имя устройства', 'MacBook Pro', 24, 152, 800);
+    field(p, 'Язык', 'Русский', 24, 200, 800, {select:true});
+    field(p, 'Тема', 'Системная', 24, 248, 800, {select:true});
+    field(p, 'Размер текста', '16', 24, 296, 800, {select:true});
+    field(p, 'Автоблокировка', 'Через 5 минут', 24, 344, 800, {select:true});
+    field(p, 'Очистка буфера', 'Через 30 секунд', 24, 392, 800, {select:true});
+    heading(p, 'Touch ID · Рабочая.taypeer', 24, 460, 800);
+    toggle(p, 'Разблокировать эту БД на этом Mac', 24, 504, 800, true);
+    heading(p, 'Соединение', 24, 564, 800);
+    field(p, 'Relay', 'Общие relay', 24, 608, 800, {select:true});
+    caption(p, 'Relay пересылает трафик, пока оба устройства доступны.\nЛокальная работа не требует сети.', 184, 658, 640);
     return p;
   });
-  const dbSettings = utility('settings-database', 'Настройки');
-  text(dbSettings, 'Устройство', 249, 100, 128, 13, 'muted'); text(dbSettings, 'База данных', 401, 100, 144, 13, 'fg', 500);
-  rule(dbSettings, 225, 127, 1095); box(dbSettings, 'Selected tab / База данных', 377, 126, 176, 2, 'muted');
-  heading(dbSettings, 'Рабочая.taypeer', 249, 152, 800);
-  caption(dbSettings, 'MacBook Pro · это управляющее устройство', 249, 184, 800);
-  field(dbSettings, 'Название', 'Рабочая', 249, 230, 800);
-  multiline(dbSettings, 'Описание', 'Личные проекты и рабочие сервисы', 249, 278, 800, 64);
-  caption(dbSettings, 'Сохранено', 881, 358, 168);
-  rule(dbSettings, 249, 410, 1015);
-  heading(dbSettings, 'Защита и общие лимиты', 249, 434, 850);
-  button(dbSettings, 'Изменить мастер-пароль…', 249, 478, 256);
-  button(dbSettings, 'Параметры защиты…', 521, 478, 224);
-  field(dbSettings, 'Одно вложение', '10 МиБ', 249, 536, 800);
-  field(dbSettings, 'Все вложения', '100 МиБ', 249, 584, 800);
-  caption(dbSettings, 'Максимум: 100 МиБ на файл и 1 ГиБ на БД.', 409, 626, 640, 'muted', 24);
-  button(dbSettings, 'Применить лимиты…', 825, 670, 224, 'primary');
-  caption(dbSettings, 'Формат обновляется автоматически управляющим устройством.', 249, 728, 1000);
+  const dbSettings = utility('settings-database', 'Настройки', {full:true});
+  text(dbSettings, 'Устройство', 24, 100, 128, 13, 'muted'); text(dbSettings, 'База данных', 176, 100, 144, 13, 'fg', 500);
+  rule(dbSettings, 0, 127, 1320); box(dbSettings, 'Selected tab / База данных', 152, 126, 176, 2, 'muted');
+  heading(dbSettings, 'Рабочая.taypeer', 24, 152, 800);
+  caption(dbSettings, 'MacBook Pro · это управляющее устройство', 24, 184, 800);
+  field(dbSettings, 'Название', 'Рабочая', 24, 230, 800);
+  multiline(dbSettings, 'Описание', 'Личные проекты и рабочие сервисы', 24, 278, 800, 64);
+  caption(dbSettings, 'Сохранено', 656, 358, 168);
+  rule(dbSettings, 24, 410, 1272);
+  heading(dbSettings, 'Защита и общие лимиты', 24, 434, 850);
+  button(dbSettings, 'Изменить мастер-пароль…', 24, 478, 256);
+  button(dbSettings, 'Параметры защиты…', 296, 478, 224);
+  field(dbSettings, 'Одно вложение', '10 МиБ', 24, 536, 800);
+  field(dbSettings, 'Все вложения', '100 МиБ', 24, 584, 800);
+  caption(dbSettings, 'Максимум: 100 МиБ на файл и 1 ГиБ на БД.', 184, 626, 640, 'muted', 24);
+  button(dbSettings, 'Применить лимиты…', 600, 670, 224, 'primary');
+  caption(dbSettings, 'Формат обновляется автоматически управляющим устройством.', 24, 728, 1000);
   const publicSettings = shell('macOS / settings-locked');
   // No database contents are available behind pre-unlock settings.
   const headerTexts = words(publicSettings).filter(n => n.characters === 'Рабочая.taypeer');
@@ -184,8 +185,36 @@ function buildDesktopV1() {
   buildTrustScenarios();
   buildTransferScenarios();
   buildComponentSheets();
+  // Utility bodies retain their spacing below the shorter native titlebar.
+  // StatusBar and its hairline stay pinned to the bottom of the window.
+  for(const p of pages['01 · macOS'].children)if(p.children?.some(n=>n.name==='Toolbar boundary')) {
+    for(const n of p.children)if((n.y>=80&&n.y<p.height-28)||(n.name.startsWith('Button / ')&&n.y===51))n.y-=10;
+  }
+  // Named content regions retain the screen geometry and expose stable targets
+  // for captures of the real product form/panel builders.
+  function contentRegion(source,name,x,y,w,h) {
+    const p=art(source);
+    const nodes=p.children.filter(n=>n.x>=x&&n.y>=y&&n.x+n.width<=x+w&&n.y+n.height<=y+h);
+    const region=box(p,name,x,y,w,h,'');
+    for(const node of nodes){const xx=node.x-x,yy=node.y-y;region.appendChild(node);node.x=xx;node.y=yy;}
+    return region;
+  }
+  contentRegion('Dialog / create','Database form',0,76,720,472);
+  contentRegion('Dialog / group','Group form',0,80,680,248);
+  contentRegion('Dialog / invite','Invitation content',24,88,696,244);
+  // The generator already has no title or dialog chrome; its full builder
+  // includes the close/use footer and the 24 px internal inset.
+  contentRegion('Dialog / generator','Generator content',0,0,560,440);
+  contentRegion('Dialog / passphrase','Passphrase content',0,0,744,438);
+  contentRegion('macOS / receive','Receive content',352,152,640,400);
+  contentRegion('macOS / settings','Settings content',0,35,1320,757);
+  contentRegion('macOS / settings-database','Settings database content',0,35,1320,757);
   buildReviewVariants();
   buildFlowMap();
+  // Desktop commands do not append an ellipsis; readable layer names stay stable.
+  for(const p of Object.values(pages))if(!p.name.includes('Android')) {
+    for(const n of p.findAll(n=>n.type==='TEXT')) n.characters=n.characters.replace(/…(?=$|\n)/g,'');
+  }
   arrangePages();
 
   // Scenario builders follow; their local helpers stay inside this module.
@@ -211,12 +240,12 @@ function buildDesktopV1() {
     });
     const group = modal('group', 'Создать группу', 430);
     field(group, 'Название', 'Сервисы', 24, 80, 632);
-    multiline(group, 'Описание', 'Сервисы для работы', 24, 128, 632, 72);
-    field(group, 'Родитель', 'Работа', 24, 216, 632, {select:true});
-    text(group, 'Значок', 24, 270, 144, 13, 'muted');
-    button(group, 'Выбрать значок…', 184, 264, 216, 'default', false, 'folder');
-    button(group, 'Загрузить по URL…', 416, 264, 240);
-    footer(group, 'Подтвердить');
+    multiline(group, 'Описание', 'Сервисы для работы', 24, 124, 632, 72);
+    text(group, 'Иконка', 24, 202, 144, 13, 'muted');
+    button(group, 'Выбрать иконку', 184, 196, 216, 'default', false, 'folder');
+    caption(group,'Изменения сохраняются автоматически',24,240,632);
+    group.findAll(n=>n.name==='Icon button / Закрыть диалог').forEach(n=>n.remove());
+    rule(group,0,350,680);button(group,'Закрыть',520,366,136);
     const move = modal('move-entry', 'Переместить запись', 476);
     caption(move, 'GitHub · Рабочая / Работа', 24, 72, 632);
     table(move, 'destination', 24, 124, 632, [['Группа назначения',632]], [['Работа'],['    Сервисы'],['    Инфраструктура'],['Личное']], {selected:3});
@@ -251,7 +280,7 @@ function buildDesktopV1() {
 
     const comparison = utility('history-compare', 'История · GitHub');
     button(comparison, 'К записи', 1156, 51, 132);
-    caption(comparison, '6 сентября, 18:32 · MacBook Pro', 249, 120, 1039);
+    caption(comparison, '6 сентября, 18:32', 249, 120, 1039);
     table(comparison, 'revision comparison', 249, 168, 1039, [['Поле',184],['Выбранная версия',424],['Текущая версия',431]], [
       ['Название','GitHub','GitHub'],['Логин','valentin','valentin.dev'],
       ['URL','https://github.com','https://github.com'],['Теги','работа','работа, разработка']
@@ -267,16 +296,20 @@ function buildDesktopV1() {
     caption(comparison, 'recovery-codes.txt · 20 КиБ', 873, 550, 391);
     button(comparison, 'Просмотреть версию…', 249, 620, 256);
     button(comparison, 'Восстановить версию…', 1008, 700, 280, 'primary');
-    confirm('restore-revision', 'Восстановить версию GitHub?', '6 сентября, 18:32 · MacBook Pro', 'Восстановить', {detail:'Выбранные данные станут новой текущей версией.\nПрежние сохранённые версии останутся в истории.'});
+    confirm('restore-revision', 'Восстановить версию GitHub?', '6 сентября, 18:32', 'Восстановить', {detail:'Выбранные данные станут новой текущей версией.\nПрежние сохранённые версии останутся в истории.'});
     confirm('clear-history', 'Очистить историю GitHub?', 'Будут очищены 3 сохранённые версии.', 'Очистить историю', {danger:true, detail:'Текущая запись сохранится. Альтернативные значения\nвыбранных версий перестанут быть доступны.\nКопии на других устройствах могут сохраниться.', h:370});
-    const revision=art('macOS / main').children.find(n=>n.name==='Entry detail').clone();
+    // Rebuild the chosen-width inspector instead of resizing a 520 px clone.
+    // The transient host has no product artboard or persistence identity.
+    const host=figma.createFrame();host.resize(614,713);
+    const revision=detail(host,{width:614});
     page('05 · Вкладки записи').appendChild(revision);revision.name='Tabs / saved-revision';revision.x=0;revision.y=0;revision.resize(614,650);
+    host.remove();
     boards.push({id:revision.id,name:revision.name,page:'05 · Вкладки записи'});
     revision.findAll(n=>n.name==='Icon button / Редактировать запись').forEach(n=>n.remove());
-    words(revision).filter(n=>n.characters==='GitHub'&&n.y<44).forEach(n=>{n.characters='GitHub · 6 сентября';n.resize(470,26);});
-    caption(revision,'Сохранённая версия · MacBook Pro · 18:32',24,436,566);
-    button(revision,'К истории',24,560,176);
-    button(revision,'Восстановить версию…',296,560,294,'primary');
+    revision.children.filter(n=>n.y>=45).forEach(n=>n.y+=32);
+    revision.children.find(n=>n.name==='Entry title').resize(526,26);
+    const current=button(revision,'Текущая запись',0,45,614,'ghost');
+    current.children.find(n=>n.type==='TEXT').textAlignHorizontal='CENTER';
 
     const attribute = modal('attribute', 'Добавить атрибут', 358);
     field(attribute, 'Ключ', 'Recovery code', 24, 80, 632);
@@ -289,7 +322,7 @@ function buildDesktopV1() {
     footer(rename, 'Переименовать');
     const pick = modal('icon-picker', 'Выбрать значок', 500);
     const search = inputFrame(pick, 'Icon search', 24, 76, 632); icon(search, 'search', 10, 8); text(search, 'Поиск Lucide', 38, 6, 576, 13, 'muted');
-    const iconNames = Object.keys(icons);
+    const iconNames = Object.keys(icons).filter(key=>!['image','link'].includes(key));
     iconNames.forEach((name,i) => {
       const x = 24 + i % 10 * 62, y = 136 + Math.floor(i / 10) * 54;
       box(pick, 'Icon option / ' + name, x, y, 48, 44, name === 'key-round' ? 'selected' : 'panel', 4);
@@ -318,17 +351,22 @@ function buildDesktopV1() {
     replace('macOS / devices', () => {
       const p = utility('devices', 'Устройства');
       button(p, 'Поделиться…', 1100, 51, 188, 'default', false, 'plus');
-      table(p, 'devices', 249, 122, 1039, [['Устройство',280],['Доступность',200],['Роль',220],['Обмен',339]], [
-        ['MacBook Pro','Это устройство','Управляющее','Изменения применены'],
-        ['Pixel 9','В сети','Доверенное','Получено · ждёт входа'],
-        ['Mac mini','Не в сети · 2 ч','Доверенное','Ожидание устройства']
-      ],{selected:1});
+      const devices=table(p, 'devices', 249, 122, 1039, [['Устройство',280],['Доступность',200],['Роль',220],['Обмен',339]], [
+        ['MacBook Pro','Этот Mac','Управляющее','Подтверждённого обмена ещё нет'],
+        ['Устройство · 000000000001','Неизвестно','Доверенное','Подтверждённого обмена ещё нет'],
+        ['Устройство · 000000000002','Неизвестно','Доверенное','Подтверждённого обмена ещё нет']
+      ],{selected:-1});
+      // A remote action is already available in the public projection; unknown
+      // presence is not evidence of an online device or a confirmed exchange.
+      words(devices).filter(n=>n.characters==='Подтверждённого обмена ещё нет').forEach((n,i)=>{
+        if(i){n.y=38+i*48+4;n.resize(168,40);button(devices,'Синхронизировать',879,38+i*48+8,148,'ghost');}
+      });
       button(p, 'Действия устройства…', 249, 344, 252);
       heading(p, 'Синхронизация', 249, 422, 960);
-      caption(p, 'Pixel 9 · прямое соединение', 249, 466, 960);
-      notice(p, 'receive and apply', 'Изменения получены на Pixel 9.\nДля применения разблокируйте БД на этом устройстве.', 249, 512, 1039, {h:76});
+      caption(p, 'Доступность удалённых устройств неизвестна.', 249, 466, 960);
+      notice(p, 'receive and apply', 'Подтверждённого обмена ещё нет.\nПолучение данных и применение после входа — разные этапы.', 249, 512, 1039, {h:76});
       button(p, 'Синхронизировать', 1064, 628, 224, 'default', false, 'refresh-cw');
-      status(p, 'Получено · ожидается применение');
+      status(p, 'Подтверждённого обмена ещё нет');
       return p;
     });
     replace('Dialog / invite', () => {
@@ -356,9 +394,9 @@ function buildDesktopV1() {
     const receive = shell('macOS / receive');
     heading(receive, 'Получить базу данных', 352, 152, 640);
     caption(receive, 'Приглашение', 352, 200, 640);
-    multiline(receive, 'Код', DEMO_INVITATION.code.match(/.{1,24}/g).join('\n'), 352, 240, 640, 108);
-    button(receive, 'Сканировать QR…', 512, 368, 224);
-    caption(receive, 'Управляющее устройство должно быть в сети\nи подтвердить подключение этого Mac.', 512, 420, 480, 'muted', 56);
+    multiline(receive, 'Код', DEMO_INVITATION.code, 352, 240, 640, 108);
+    field(receive,'Мастер-пароль','',352,368,640,{secret:true});
+    caption(receive, 'Вставьте приглашение управляющего устройства и введите мастер-пароль БД. Выберите новый файл; полученные данные проверяются до допуска устройства.', 512, 420, 480, 'muted', 60);
     button(receive, 'Назад', 352, 520, 128);
     button(receive, 'Подключиться', 792, 520, 200, 'primary');
     const scanner = modal('scan-qr', 'Сканировать приглашение', 464, 600);
@@ -708,49 +746,19 @@ function buildDesktopV1() {
       recolor(duplicate(source,'QA / light-'+name,qaPage));
     }
     function sizePreview(name,w,h,font) {
-      const p=board(qaPage,'QA / '+name,w,h);
-      const side=w===1100?192:224, list=w===1100?426:480, dx=side+list+2, dw=w-dx;
-      box(p,'TitleBar',0,0,w,44,'chrome');text(p,'Рабочая.taypeer',w/2-96,12,232,14,'fg',500);ib(p,'settings',w-40,6);
-      ['#EA6B66','#D6B86C','#80B981'].forEach((c,i)=>box(p,'Window control',16+i*19,16,11,11,c,6));
-      box(p,'Sidebar',0,45,side,h-74,'panel');rule(p,side,45,1,h-74);
-      ib(p,'folder-plus',side-40,51);rule(p,0,89,side);
-      [['Работа',0],['Сервисы',1],['Личное',0]].forEach(([label,depth],i)=>{
-        const y=100+i*40;
-        if(i===0)box(p,'Selected group',8,y,side-16,36,'selected',4);
-        icon(p,'folder',16+depth*16,y+10);text(p,label,40+depth*16,y+7,side-64-depth*16,font,'fg',400,28);
-      });
-      [['trash-2','Корзина'],['monitor','Устройства'],['history','Черновики']].forEach(([key,label],i)=>{
-        icon(p,key,16,h-176+i*40);text(p,label,44,h-180+i*40,side-56,font,'muted',400,30);
-      });
-      const tableX=side+1;
-      const search=inputFrame(p,'Search',tableX+12,51,list-96);icon(search,'search',8,8);text(search,'Поиск',36,3,list-148,font,'muted',400,26);
-      ib(p,'file-plus-2',tableX+list-76,51);ib(p,'ellipsis',tableX+list-40,51);rule(p,tableX,89,list);
-      const columns=w===1100?[['Название',list*0.53],['База / группа',list*0.47]]:[['Название',170],['Логин',124],['База / группа',list-294]];
-      let xx=tableX;
-      columns.forEach(([label,width],i)=>{text(p,label,xx+12,99,width-36,font-1,'muted',500,28);icon(p,i===0?'arrow-up':'chevrons-up-down',xx+width-24,102);if(i)rule(p,xx,90,1,37);xx+=width;});
-      rule(p,tableX,127,list);
-      [['Cloudflare','admin'],['Figma','valentin'],['GitHub','valentin'],['Linear','valentin']].forEach(([title,user],i)=>{
-        const y=128+i*44;box(p,'Entry / '+title,tableX,y,list,44,i===2?'selected':i%2?'panel':'bg');
-        let x=tableX;const values=w===1100?[title,'Рабочая / Работа']:[title,user,'Работа'];
-        values.forEach((value,j)=>{text(p,value,x+12,y+10,columns[j][1]-24,j?font-2:font,j?'muted':'fg',400,28);x+=columns[j][1];});rule(p,tableX,y+43,list);
-      });
-      rule(p,dx-1,45,1,h-74);heading(p,'GitHub',dx+24,55,dw-144);caption(p,'Сохранено',w-136,57,112);rule(p,dx,89,dw);
-      const tabLabels=['Обзор','Дополнительно','Вид','Свойства','История'];
-      const widths=font>=18?[76,176,58,134,122]:[68,132,54,108,92];let tx=dx;
-      tabLabels.forEach((label,i)=>{text(p,label,tx+6,99,widths[i]-8,font-1,i===0?'fg':'muted',400,28);tx+=widths[i];});
-      rule(p,dx,127,dw);box(p,'Selected tab',dx,126,widths[0],2,'muted');
-      const values=[['Название','GitHub'],['Логин','valentin'],['Пароль','••••••••••'],['URL','https://github.com'],['Теги','работа'],['Заметки','Рабочий аккаунт'],['Срок действия','Бессрочно']];
-      values.forEach(([label,value],i)=>{
-        const y=128+i*48;box(p,'Description row / '+label,dx,y,dw,48,i%2?'panel':'bg');
-        text(p,label,dx+24,y+10,144,font-1,'muted',400,28);
-        const control=inputFrame(p,label,dx+184,y+5,dw-208,38,'row');text(control,value,0,7,control.width-42,font,'fg',400,28);
-        if(i===2)ib(control,'dice-5',control.width-34,3);if(i===6)icon(control,'chevron-down',control.width-24,12);
-        rule(p,dx,y+47,dw);
-      });
-      box(p,'StatusBar',0,h-28,w,28,'panel');rule(p,0,h-28,w);text(p,'2,4 МиБ',16,h-22,160,11,'muted');text(p,'Синхронизировано',w-250,h-22,210,11,'muted').textAlignHorizontal='RIGHT';icon(p,'refresh-cw',w-28,h-22);
+      const p=shell('QA / '+name,{w,h,destination:qaPage});
+      sidebar(p);
+      collectionPane(p,false,true,false,{font});
+      const inspector=detail(p,{edit:true});
+      // Increased-text control variants reflow the actual shared card grid.
+      const factor=font/16;
+      for(const node of inspector.findAll(n=>n.type==='TEXT')) {
+        node.fontSize=node.fontSize*factor;
+        node.resize(node.width,Math.max(node.height,Math.ceil(node.fontSize*1.4)));
+      }
       return p;
     }
-    sizePreview('minimum-1100-720',1100,720,14);
+    sizePreview('minimum-1100-720',1100,720,16);
     sizePreview('font-16',1320,820,16);
     sizePreview('font-18',1320,820,18);
   }

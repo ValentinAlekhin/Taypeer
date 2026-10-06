@@ -119,6 +119,24 @@ mod desktop {
         });
         app.pump();
     }
+    fn observed_input(
+        window: &gpui_kit::Window,
+        id: &'static str,
+    ) -> gpui_kit::base::test_support::ElementSnapshot {
+        let wrapper = window.find(id);
+        if wrapper.value().is_some() {
+            return wrapper;
+        }
+        gpui_kit::base::test_support::snapshots(window)
+            .into_iter()
+            .find(|element| {
+                element.path().starts_with(wrapper.path())
+                    && element.visible()
+                    && element.value().is_some()
+            })
+            .unwrap_or(wrapper)
+    }
+
     fn fill_nowait(app: &mut Session, id: &'static str, value: &str) {
         wait_for_stable_control(app, id);
         app.step(id);
@@ -138,9 +156,13 @@ mod desktop {
             } else {
                 window.input(value, cx);
             }
-            assert_eq!(window.find(id).focused(), Some(true));
+            assert_eq!(observed_input(window, id).focused(), Some(true));
             if !id.contains("password") {
-                assert_eq!(window.find(id).value(), Some(value), "public input: {id}");
+                assert_eq!(
+                    observed_input(window, id).value(),
+                    Some(value),
+                    "public input: {id}"
+                );
             }
         });
         app.pump();
@@ -381,7 +403,7 @@ mod desktop {
     fn locking_automatically_resumes_the_encrypted_draft() {
         let directory = tempfile::tempdir().unwrap();
         let mut app = start(directory.path(), "lock");
-        create(&mut app, &directory.path().join("PUBLIC.taypeer"));
+        let path = create(&mut app, &directory.path().join("PUBLIC.taypeer"));
         create_entry(&mut app);
         click(&mut app, "edit-entry");
         app.wait("edit ready", |window, _| {
@@ -389,15 +411,12 @@ mod desktop {
         });
         fill(&mut app, "field-name", "PUBLIC draft");
         fill(&mut app, "field-ui.expires", "unfinished");
-        click(&mut app, "load-password");
-        app.update(|window, cx| window.within("field-password").click("toggle-mask", cx));
+        click(&mut app, "editor-password-eye");
         app.wait("protected value revealed", |window, _| {
             window
                 .try_find("field-password")
                 .is_some_and(|e| e.value() == Some("PUBLIC secret"))
         });
-        // Enqueue another real reveal response, but do not poll it before revoking access.
-        app.update(|window, cx| window.click("load-password", cx));
         let controls = app.worker_controls();
         assert_eq!(controls.len(), 1);
         app.system_lock();
@@ -418,10 +437,62 @@ mod desktop {
                 .try_find("field-name")
                 .is_some_and(|e| e.value() == Some("PUBLIC draft"))
         });
+        app.update(|window, _| {
+            assert!(
+                window.find("field-password").value().is_none(),
+                "resuming a draft must keep the protected value hidden"
+            );
+        });
+        // A fresh editor's eye requests Keep from the service. Revoke before
+        // polling that real response, then resume the encrypted draft again.
+        app.update(|window, cx| window.click("editor-password-eye", cx));
+        let controls = app.worker_controls();
+        assert_eq!(controls.len(), 1);
+        app.system_lock();
+        app.wait("pending reveal revoked", |window, _| {
+            window.try_find("unlock").is_some() && window.try_find("field-password").is_none()
+        });
+        for control in controls {
+            assert!(!control.is_open());
+            assert!(control.wait_closed().unwrap().error.is_none());
+        }
+        app.system_active();
+        unlock(&mut app);
+        app.wait("draft restored after pending reveal", |window, _| {
+            window
+                .try_find("field-name")
+                .is_some_and(|e| e.value() == Some("PUBLIC draft"))
+        });
+        app.update(|window, _| {
+            assert!(
+                window.find("field-password").value().is_none(),
+                "a revoked reveal must not repopulate the resumed input"
+            );
+        });
+        click(&mut app, "editor-password-eye");
+        app.wait(
+            "protected password retained in resumed draft",
+            |window, _| {
+                window
+                    .try_find("field-password")
+                    .is_some_and(|e| e.value() == Some("PUBLIC secret"))
+            },
+        );
         fill(&mut app, "field-ui.expires", "");
         click(&mut app, "close-editor");
         app.wait("restored draft saved", |window, _| {
             title_cell(window).is_some_and(|e| e.label() == Some("PUBLIC draft"))
+        });
+        drop(app);
+        let mut app = start(directory.path(), "lock-password-reopened");
+        open(&mut app, &path);
+        click_title(&mut app);
+        click(&mut app, "edit-entry");
+        click(&mut app, "editor-password-eye");
+        app.wait("protected password retained durably", |window, _| {
+            window
+                .try_find("field-password")
+                .is_some_and(|e| e.value() == Some("PUBLIC secret"))
         });
     }
 
@@ -442,9 +513,17 @@ mod desktop {
         a.wait("invitation created", |window, _| {
             window.try_find("copy-invitation").is_some()
         });
+        assert_eq!(
+            a.capture_checkpoint("invitation-forbidden").unwrap_err(),
+            "PNG forbidden for sensitive UI or closed window"
+        );
         click(&mut a, "copy-invitation");
         a.transfer_clipboard_to(&mut b);
         click(&mut b, "welcome-receive");
+        assert_eq!(
+            b.capture_checkpoint("receive-forbidden").unwrap_err(),
+            "PNG forbidden for sensitive UI or closed window"
+        );
         fill(&mut b, "invitation-password", PASSWORD);
         click(&mut b, "invitation-code");
         b.update(|window, cx| {
@@ -895,11 +974,9 @@ mod desktop {
         resumed.wait(
             "metadata form resumes without a restore prompt",
             |window, _| {
-                window
-                    .try_find("field-ui.description")
-                    .is_some_and(|field| {
-                        field.value() == Some("PUBLIC unfinished group description")
-                    })
+                window.try_find("field-ui.description").is_some()
+                    && observed_input(window, "field-ui.description").value()
+                        == Some("PUBLIC unfinished group description")
             },
         );
         fill_nowait(&mut resumed, "field-name", "PUBLIC resumed group");
@@ -964,7 +1041,13 @@ mod desktop {
         let mut app = start(directory.path(), "trash-undo");
         let path = create(&mut app, &directory.path().join("PUBLIC.taypeer"));
         create_entry(&mut app);
-        click(&mut app, "trash-entry");
+        click(&mut app, "entry-menu");
+        app.update(|window, cx| {
+            // The last command is Delete; exercise the real menu keyboard handler.
+            window.press("up", cx);
+            window.press("enter", cx);
+        });
+        app.pump();
         app.wait(
             "trash takes effect without a confirmation dialog",
             |window, _| {
@@ -1065,12 +1148,51 @@ mod desktop {
         assert_eq!(std::fs::read(&source).unwrap(), original);
     }
 
+    mod visual_capture {
+        use super::*;
+        include!("ui/visual_capture.rs");
+    }
+    mod settings_behavior {
+        include!("ui/settings_behavior.rs");
+    }
+    mod generator_behavior {
+        include!("ui/generator_behavior.rs");
+    }
+    mod card_behavior {
+        use super::*;
+        include!("ui/card_behavior.rs");
+    }
+
     pub fn run() {
         let filters: Vec<_> = std::env::args()
             .skip(1)
             .filter(|arg| !arg.starts_with("--"))
             .collect();
-        let scenarios: [(&str, fn()); 14] = [
+        let scenarios: [(&str, fn()); 20] = [
+            (
+                "generator_modes_insert_and_persist_the_generated_value",
+                generator_behavior::generator_modes_insert_and_persist_the_generated_value,
+            ),
+            (
+                "capture_guards_and_supported_viewports",
+                visual_capture::capture_guards_and_supported_viewports,
+            ),
+            (
+                "editor_password_commands_preserve_keep_clear_and_typed_input",
+                card_behavior::editor_password_commands_preserve_keep_clear_and_typed_input,
+            ),
+            (
+                "labels_focus_fields_without_moving_values",
+                card_behavior::labels_focus_fields_without_moving_values,
+            ),
+            (
+                "visual_workspace_checkpoints",
+                card_behavior::visual_workspace_checkpoints,
+            ),
+            (
+                "inline_settings_apply_and_keep_invalid_input",
+                settings_behavior::inline_settings_apply_and_keep_invalid_input,
+            ),
             (
                 "opening_external_source_preserves_it_and_uses_the_catalog",
                 opening_external_source_preserves_it_and_uses_the_catalog,

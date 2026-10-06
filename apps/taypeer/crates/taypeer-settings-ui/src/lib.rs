@@ -11,6 +11,11 @@ pub mod host;
 mod view;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 pub use view::SettingsView;
+#[cfg(all(
+    feature = "component-rendering",
+    any(target_os = "macos", target_os = "linux")
+))]
+pub use view::settings_preview;
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 pub mod state;

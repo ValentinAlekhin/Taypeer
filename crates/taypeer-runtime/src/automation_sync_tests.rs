@@ -546,8 +546,14 @@ fn application_retries_storage_failure_without_another_network_event() {
         std::fs::write(&marker, b"PUBLIC test fault").unwrap();
         f.deliver(0, object);
         wait(|| {
-            matches!(worker.application_progress(),
-            Some(Err(RuntimeError::Service(taypeer_services::ServiceError::Storage(error)))) if error == expected)
+            let progress = worker.application_progress();
+            matches!(&progress,
+                Some(Err(RuntimeError::Service(taypeer_services::ServiceError::Storage(error)))) if error == &expected)
+                // An uncertain commit is already durable. Automatic reconciliation
+                // may supersede its transient error before this polling observer.
+                || (expected == taypeer_storage::Error::CommitUncertain
+                    && matches!(progress, Some(Ok(_)))
+                    && groups(&mut worker).len() == 1)
         });
         std::fs::remove_file(marker).unwrap();
         wait(|| groups(&mut worker).len() == 1);

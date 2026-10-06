@@ -21,6 +21,20 @@ pub struct Session {
 impl Session {
     /// Start using explicit isolated paths; callers retain ownership of their temporary directory.
     pub fn new(directory: &Path, worker: &Path, scenario: &'static str) -> Self {
+        Self::with_viewport(directory, worker, scenario, size(px(1320.), px(820.)))
+    }
+
+    /// Create an isolated real AppView at an explicit logical viewport.
+    pub fn with_viewport(
+        directory: &Path,
+        worker: &Path,
+        scenario: &'static str,
+        viewport: Size<Pixels>,
+    ) -> Self {
+        assert!(
+            viewport.width >= px(1100.) && viewport.height >= px(720.),
+            "supported desktop viewport"
+        );
         use std::sync::atomic::{AtomicUsize, Ordering};
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         assert!(
@@ -69,7 +83,9 @@ impl Session {
         });
         let mut view_handle = None;
         let window = cx
-            .open_window(size(px(1320.), px(820.)), |window, cx| {
+            .open_window(viewport, |window, cx| {
+                // Simulate the lifecycle event so retained inputs emit focus/blur.
+                window.activate_window();
                 let view = cx.new(|cx| ui::AppView::new(window, cx));
                 view_handle = Some(view.downgrade());
                 cx.new(|cx| Root::new(view, window, cx))
@@ -192,12 +208,44 @@ impl Session {
         });
     }
 
-    fn save_png(&mut self) {
-        if !self.png {
-            return;
+    /// Capture a named safe checkpoint. Forbidden states and unavailable Metal fail explicitly.
+    /// Names must identify steps, never input values or protected content.
+    pub fn capture_checkpoint(
+        &mut self,
+        name: &'static str,
+    ) -> Result<std::path::PathBuf, &'static str> {
+        if name.is_empty()
+            || !name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        {
+            return Err("invalid checkpoint name");
         }
-        let allowed = self
+        self.pump();
+        if !self.capture_allowed() {
+            return Err("PNG forbidden for sensitive UI or closed window");
+        }
+        if !self.png {
+            return Err("PNG renderer not requested; set TAYPEER_UI_PNG=1");
+        }
+        let path = self.artifact.with_extension(format!("{name}.png"));
+        std::fs::create_dir_all(path.parent().ok_or("artifact directory unavailable")?)
+            .map_err(|_| "artifact directory unavailable")?;
+        let image = self
             .cx
+            .capture_screenshot(self.window)
+            .map_err(|_| "offscreen rendering unavailable")?;
+        image.save(&path).map_err(|_| "PNG output unavailable")?;
+        Ok(path)
+    }
+
+    /// Whether this isolated session was created with offscreen PNG rendering.
+    pub fn captures_enabled(&self) -> bool {
+        self.png
+    }
+
+    fn capture_allowed(&mut self) -> bool {
+        self.cx
             .update_window(self.window, |_, window, cx| {
                 self.view
                     .upgrade()
@@ -206,7 +254,14 @@ impl Session {
                         .iter()
                         .all(|id| window.try_find(*id).is_none())
             })
-            .unwrap_or(false);
+            .unwrap_or(false)
+    }
+
+    fn save_png(&mut self) {
+        if !self.png {
+            return;
+        }
+        let allowed = self.capture_allowed();
         if !allowed {
             eprintln!("PNG withheld: sensitive UI or closed window; use safe text diagnostics");
             return;

@@ -1,0 +1,459 @@
+{
+  "schema_version": 2,
+  "cases": [
+    {
+      "id": "input-row-rest",
+      "state": "rest",
+      "text": "GitHub",
+      "width": 232,
+      "height": 32,
+      "design": {
+        "page": "04 · Компоненты",
+        "node": "Input / row / Строка записи / rest"
+      },
+      "kind": "row-field",
+      "label": "name"
+    },
+    {
+      "id": "input-standalone-rest",
+      "state": "rest",
+      "text": "Рабочая",
+      "width": 232,
+      "height": 32,
+      "design": {
+        "page": "04 · Компоненты",
+        "node": "Input / standalone / Название / rest"
+      },
+      "kind": "field",
+      "label": "name"
+    },
+    {
+      "id": "input-standalone-focus",
+      "state": "focus",
+      "text": "Рабочая",
+      "width": 232,
+      "height": 32,
+      "design": {
+        "page": "04 · Компоненты",
+        "node": "Input / standalone / Фокус / focus"
+      },
+      "kind": "field",
+      "label": "name"
+    },
+    {
+      "id": "entry-row-title-rest",
+      "kind": "editor-row",
+      "label": "name",
+      "state": "rest",
+      "text": "GitHub",
+      "width": 520,
+      "height": 44,
+      "design": {
+        "page": "01 · macOS",
+        "ancestors": [
+          "macOS / edit",
+          "Editor"
+        ],
+        "node": "Description row / Название",
+        "anchors": {
+          "label": "Название",
+          "field": "Input / row / Название / rest",
+          "text": "GitHub"
+        }
+      }
+    },
+    {
+      "id": "entry-row-url-rest",
+      "kind": "editor-row",
+      "label": "url",
+      "state": "rest",
+      "text": "https://github.com",
+      "width": 520,
+      "height": 44,
+      "design": {
+        "page": "01 · macOS",
+        "ancestors": [
+          "macOS / edit",
+          "Editor"
+        ],
+        "node": "Description row / URL",
+        "anchors": {
+          "label": "URL",
+          "field": "Input / row / URL / rest",
+          "text": "https://github.com",
+          "action.favicon": "Icon button / Загрузить favicon по URL"
+        }
+      }
+    },
+    {
+      "id": "editor-card",
+      "kind": "panel",
+      "preview": "editor-card",
+      "state": "rest",
+      "width": 520,
+      "height": 757,
+      "background": [
+        13,
+        13,
+        13
+      ],
+      "design": {
+        "page": "01 · macOS",
+        "ancestors": [
+          "macOS / edit"
+        ],
+        "node": "Editor",
+        "anchors": {
+          "header.title": "Entry title",
+          "action.menu": "Icon button / Действия записи",
+          "action.primary": "Icon button / Назад из редактора"
+        }
+      },
+      "observations": {
+        "header.title": "entry-header-title",
+        "action.menu": "entry-menu",
+        "action.primary": "close-editor"
+      }
+    },
+    {
+      "id": "entry-card",
+      "kind": "panel",
+      "preview": "entry-card",
+      "state": "rest",
+      "width": 520,
+      "height": 757,
+      "background": [
+        13,
+        13,
+        13
+      ],
+      "design": {
+        "page": "01 · macOS",
+        "ancestors": [
+          "macOS / main"
+        ],
+        "node": "Entry detail",
+        "anchors": {
+          "header.title": "Entry title",
+          "action.menu": "Icon button / Действия записи",
+          "action.primary": "Icon button / Редактировать запись"
+        }
+      },
+      "observations": {
+        "header.title": "entry-header-title",
+        "action.menu": "entry-menu",
+        "action.primary": "edit-entry"
+      }
+    },
+    {
+      "id": "sidebar",
+      "kind": "panel",
+      "preview": "sidebar",
+      "state": "rest",
+      "width": 224,
+      "height": 757,
+      "background": [
+        13,
+        13,
+        13
+      ],
+      "design": {
+        "page": "01 · macOS",
+        "ancestors": [
+          "macOS / main"
+        ],
+        "node": "Sidebar / groups"
+      }
+    },
+    {
+      "id": "history-panel",
+      "kind": "panel",
+      "preview": "history",
+      "state": "rest",
+      "width": 614,
+      "height": 560,
+      "background": [
+        13,
+        13,
+        13
+      ],
+      "design": {
+        "page": "05 · Вкладки записи",
+        "ancestors": [],
+        "node": "Tabs / История"
+      }
+    },
+    {
+      "id": "generator-password",
+      "kind": "panel",
+      "preview": "generator-password",
+      "state": "rest",
+      "width": 560,
+      "height": 440,
+      "background": [
+        13,
+        13,
+        13
+      ],
+      "design": {
+        "page": "03 · Диалоги",
+        "ancestors": [
+          "Dialog / generator"
+        ],
+        "node": "Generator content"
+      }
+    },
+    {
+      "id": "database-form",
+      "kind": "panel",
+      "preview": "database-form",
+      "state": "rest",
+      "width": 720,
+      "height": 472,
+      "background": [
+        13,
+        13,
+        13
+      ],
+      "design": {
+        "page": "03 · Диалоги",
+        "ancestors": [
+          "Dialog / create"
+        ],
+        "node": "Database form"
+      }
+    },
+    {
+      "id": "group-form",
+      "kind": "panel",
+      "preview": "group-form",
+      "state": "rest",
+      "width": 680,
+      "height": 248,
+      "background": [
+        13,
+        13,
+        13
+      ],
+      "design": {
+        "page": "03 · Диалоги",
+        "ancestors": [
+          "Dialog / group"
+        ],
+        "node": "Group form"
+      }
+    },
+    {
+      "id": "invitation-panel",
+      "kind": "panel",
+      "preview": "invitation",
+      "state": "rest",
+      "width": 696,
+      "height": 244,
+      "background": [
+        13,
+        13,
+        13
+      ],
+      "design": {
+        "page": "03 · Диалоги",
+        "ancestors": [
+          "Dialog / invite"
+        ],
+        "node": "Invitation content"
+      }
+    },
+    {
+      "id": "receive-panel",
+      "kind": "panel",
+      "preview": "receive",
+      "state": "rest",
+      "width": 640,
+      "height": 400,
+      "background": [
+        13,
+        13,
+        13
+      ],
+      "design": {
+        "page": "01 · macOS",
+        "ancestors": [
+          "macOS / receive"
+        ],
+        "node": "Receive content"
+      }
+    },
+    {
+      "id": "advanced-edit",
+      "kind": "panel",
+      "preview": "advanced-edit",
+      "state": "rest",
+      "width": 614,
+      "height": 560,
+      "background": [
+        13,
+        13,
+        13
+      ],
+      "design": {
+        "page": "05 · Вкладки записи",
+        "ancestors": [],
+        "node": "Tabs / Дополнительно"
+      }
+    },
+    {
+      "id": "appearance-edit",
+      "kind": "panel",
+      "preview": "appearance-edit",
+      "state": "rest",
+      "width": 614,
+      "height": 560,
+      "background": [
+        13,
+        13,
+        13
+      ],
+      "design": {
+        "page": "05 · Вкладки записи",
+        "ancestors": [],
+        "node": "Tabs / Вид"
+      }
+    },
+    {
+      "id": "properties",
+      "kind": "panel",
+      "preview": "properties",
+      "state": "rest",
+      "width": 614,
+      "height": 560,
+      "background": [
+        13,
+        13,
+        13
+      ],
+      "design": {
+        "page": "05 · Вкладки записи",
+        "ancestors": [],
+        "node": "Tabs / Свойства"
+      }
+    },
+    {
+      "id": "advanced-view",
+      "kind": "panel",
+      "preview": "advanced-view",
+      "state": "rest",
+      "width": 614,
+      "height": 500,
+      "background": [
+        13,
+        13,
+        13
+      ],
+      "design": {
+        "page": "04 · Компоненты",
+        "ancestors": [
+          "System / components"
+        ],
+        "node": "Component / Дополнительно / просмотр"
+      }
+    },
+    {
+      "id": "appearance-view",
+      "kind": "panel",
+      "preview": "appearance-view",
+      "state": "rest",
+      "width": 614,
+      "height": 500,
+      "background": [
+        13,
+        13,
+        13
+      ],
+      "design": {
+        "page": "04 · Компоненты",
+        "ancestors": [
+          "System / components"
+        ],
+        "node": "Component / Вид / просмотр"
+      }
+    },
+    {
+      "id": "settings-panel",
+      "kind": "panel",
+      "preview": "settings",
+      "state": "rest",
+      "width": 1320,
+      "height": 757,
+      "background": [
+        13,
+        13,
+        13
+      ],
+      "design": {
+        "page": "01 · macOS",
+        "ancestors": [
+          "macOS / settings"
+        ],
+        "node": "Settings content"
+      }
+    },
+    {
+      "id": "history-snapshot",
+      "kind": "panel",
+      "preview": "history-snapshot",
+      "state": "rest",
+      "width": 614,
+      "height": 650,
+      "background": [
+        13,
+        13,
+        13
+      ],
+      "design": {
+        "page": "05 · Вкладки записи",
+        "ancestors": [],
+        "node": "Tabs / saved-revision"
+      }
+    },
+    {
+      "id": "devices-table",
+      "kind": "panel",
+      "preview": "devices",
+      "state": "rest",
+      "width": 1039,
+      "height": 182,
+      "background": [
+        13,
+        13,
+        13
+      ],
+      "design": {
+        "page": "01 · macOS",
+        "ancestors": [
+          "macOS / devices"
+        ],
+        "node": "Table / devices"
+      }
+    },
+    {
+      "id": "generator-passphrase",
+      "kind": "panel",
+      "preview": "generator-passphrase",
+      "state": "rest",
+      "width": 744,
+      "height": 438,
+      "background": [
+        13,
+        13,
+        13
+      ],
+      "design": {
+        "page": "03 · Диалоги",
+        "ancestors": [
+          "Dialog / passphrase"
+        ],
+        "node": "Passphrase content"
+      }
+    }
+  ]
+}

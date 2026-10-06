@@ -46,6 +46,28 @@ fn ui_icon(name: &str) -> gpui_kit::Result<Option<std::borrow::Cow<'static, [u8]
     if let Some(svg) = EXTRAS.get(name) {
         return Ok(Some(Cow::Owned(svg.as_bytes().to_vec())));
     }
+    // Action icons belong to presentation, independently of the entry-icon domain.
+    let local = match name {
+        "download" => Some(include_str!("../../../../../resources/lucide/download.svg")),
+        "fingerprint" => Some(include_str!(
+            "../../../../../resources/lucide/fingerprint.svg"
+        )),
+        "lock-keyhole" => Some(include_str!(
+            "../../../../../resources/lucide/lock-keyhole.svg"
+        )),
+        "trash" | "trash-2" => Some(include_str!("../../../../../resources/lucide/trash-2.svg")),
+        "refresh-cw" => Some(include_str!(
+            "../../../../../resources/lucide/refresh-cw.svg"
+        )),
+        "lock" => Some(include_str!("../../../../../resources/lucide/lock.svg")),
+        _ => None,
+    };
+    if let Some(svg) = local {
+        return Ok(Some(Cow::Owned(
+            svg.replace("stroke-width=\"2\"", "stroke-width=\"1.4\"")
+                .into_bytes(),
+        )));
+    }
     if name == "x" {
         return Ok(Some(Cow::Borrowed(br#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="m18 6-12 12M6 6l12 12"/></svg>"#)));
     }
@@ -60,4 +82,34 @@ fn ui_icon(name: &str) -> gpui_kit::Result<Option<std::borrow::Cow<'static, [u8]
                 .into_bytes(),
         )
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn action_icons_resolve_to_embedded_vectors() {
+        for name in [
+            "image",
+            "link",
+            "download",
+            "fingerprint",
+            "lock-keyhole",
+            "trash",
+            "trash-2",
+            "refresh-cw",
+            "lock",
+        ] {
+            let svg = ProductAssets
+                .load(&format!("ui-icons/{name}.svg"))
+                .expect("embedded action icon")
+                .expect("visible action icon");
+            assert!(
+                std::str::from_utf8(&svg)
+                    .expect("SVG text")
+                    .contains("<svg")
+            );
+        }
+    }
 }

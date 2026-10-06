@@ -17,7 +17,7 @@ except ModuleNotFoundError:
     sys.exit(2)
 
 ROOT = Path(__file__).resolve().parents[4]
-CATALOG = ROOT / "apps/taypeer/crates/taypeer-ui/tests/components/cases.json"
+CATALOG = ROOT / "apps/taypeer/tests/components/cases.json"
 OPENPENCIL_VERSION = "0.14.0"
 
 
@@ -89,7 +89,27 @@ def resolve_designs(fig, cases):
         const color = paints[0].color;
         background = [color.r, color.g, color.b].map(v => Math.round(v * 255));
       }
+      if (!background && c.kind === 'panel') background = c.background;
       if (!background) throw new Error(c.id + ': missing reference background');
+      if (c.kind === 'panel') {
+        const anchors = {component:rect(n,origin)};
+        for (const [role,name] of Object.entries(c.design.anchors ?? {}))
+          anchors[role] = rect(unique(n.findAll(t=>t.name===name), c.id+'/'+role), origin);
+        const bounds = {left:origin.x,top:origin.y,right:origin.x+n.width,bottom:origin.y+n.height};
+        for (const child of [n,...n.findAll(t=>t.visible!==false)]) {
+          if ((child.rotation??0)!==0 || (child.effects??[]).length)
+            throw new Error(c.id+': panel effects/rotation require an explicit export adapter');
+          const b = child.absoluteBoundingBox;
+          const stroke = Math.max(0,...(child.strokes??[]).filter(s=>s.visible!==false).map(s=>s.align==='OUTSIDE'?s.weight:s.align==='CENTER'?s.weight/2:0));
+          if (b && stroke) {
+            bounds.left=Math.min(bounds.left,b.x-stroke); bounds.top=Math.min(bounds.top,b.y-stroke);
+            bounds.right=Math.max(bounds.right,b.x+b.width+stroke); bounds.bottom=Math.max(bounds.bottom,b.y+b.height+stroke);
+          }
+        }
+        const paint_outsets = {left:origin.x-bounds.left,top:origin.y-bounds.top,
+          right:bounds.right-origin.x-n.width,bottom:bounds.bottom-origin.y-n.height};
+        return {case_id:c.id,id:n.id,page:pages[0].name,name:n.name,width:n.width,height:n.height,background,outset:0,paint_outsets,anchors};
+      }
       const texts = n.findAll(t => t.type === 'TEXT').map(t => t.characters);
       if (texts.length !== 1 || texts[0] !== c.text)
         throw new Error(c.id + ': fixture text differs from the design');
@@ -152,13 +172,14 @@ def save_comparison(directory, actual_path, raw_reference_path, design, capture,
     if actual.getchannel("A").getextrema() != (255, 255):
         raise ValueError("GPUI capture must be opaque")
     scale, padding, outset = capture["scale"], capture["padding"], design["outset"]
-    if outset > padding:
+    edges = design.get("paint_outsets", dict.fromkeys(("left", "top", "right", "bottom"), outset))
+    if any(value < 0 or not math.isfinite(value) or value > padding for value in edges.values()):
         raise ValueError("reference stroke exceeds the shared capture padding")
-    offset = (padding - outset) * scale
-    expected = ((design["width"] + 2 * outset) * scale,
-                (design["height"] + 2 * outset) * scale)
-    if offset != int(offset) or raw.size != expected:
-        raise ValueError("export dimensions differ from declared bounds; no resizing allowed")
+    offset = ((padding - edges["left"]) * scale, (padding - edges["top"]) * scale)
+    expected = ((design["width"] + edges["left"] + edges["right"]) * scale,
+                (design["height"] + edges["top"] + edges["bottom"]) * scale)
+    if any(value != int(value) for value in offset) or raw.size != expected:
+        raise ValueError("{}: export dimensions {} differ from declared {}; no resizing allowed".format(design.get("case_id", "reference"), raw.size, expected))
     declared = (capture.get("width", actual.width), capture.get("height", actual.height))
     if actual.size != declared:
         raise ValueError("capture metadata differs from actual PNG dimensions")
@@ -166,7 +187,7 @@ def save_comparison(directory, actual_path, raw_reference_path, design, capture,
                       math.ceil((design["height"] + 2 * padding) * scale))
     canvas_size = (max(actual.width, reference_size[0]), max(actual.height, reference_size[1]))
     reference = Image.new("RGBA", canvas_size, tuple(design["background"]) + (255,))
-    reference.alpha_composite(raw, (int(offset), int(offset)))
+    reference.alpha_composite(raw, tuple(map(int, offset)))
     if actual.size != canvas_size:
         canvas = Image.new("RGBA", canvas_size, actual.getpixel((0, 0)))
         canvas.alpha_composite(actual)
@@ -208,7 +229,8 @@ def crop_reference(path, design, scale):
 
 
 def validate_anchors(anchors):
-    for role in ("component", "field", "text"):
+    required = ("component", "field", "text") if "field" in anchors or "text" in anchors else ("component",)
+    for role in required:
         if role not in anchors:
             raise ValueError(f"missing required layout anchor: {role}")
     for role, rect in anchors.items():
@@ -222,6 +244,8 @@ def validate_anchors(anchors):
 def layout_values(anchors):
     """Measure boxes and spaces, not glyph ink or inferred CSS declarations."""
     validate_anchors(anchors)
+    if "field" not in anchors and "text" not in anchors:
+        return {f"{role}.{coordinate}": value for role, rect in sorted(anchors.items()) for coordinate, value in rect.items()}
     component, field, text = (anchors[k] for k in ("component", "field", "text"))
     right = lambda r: r["x"] + r["width"]
     bottom = lambda r: r["y"] + r["height"]
@@ -381,7 +405,7 @@ def run():
     # leaves the preceding report intact; the JSON lists only this run's cases.
     with tempfile.TemporaryDirectory(prefix="component-checks-", dir=output.parent) as staging:
         work = Path(staging)
-        render_args = ["cargo", "test", "-p", "taypeer-ui", "--features", "component-rendering",
+        render_args = ["cargo", "test", "-p", "taypeer", "--features", "component-rendering",
                        "--test", "components", "--locked", "--", "--output", str(work / "rendered")]
         for case in cases:
             render_args.extend(["--case", case["id"]])

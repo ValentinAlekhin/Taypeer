@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [features]
+component-rendering = ["taypeer-ui/component-rendering", "gpui-kit/test-support"]
 ui-test-support = ["taypeer-ui/ui-test-support", "taypeer-runtime-client/ui-test-support", "gpui-kit/test-support"]
 
 [dependencies]

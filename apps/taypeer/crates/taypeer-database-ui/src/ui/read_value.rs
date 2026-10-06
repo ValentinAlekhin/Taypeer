@@ -1,13 +1,62 @@
 //! Selectable, read-only values scoped to the displayed entry.
-use super::{clipboard, style::tr, workspace::WorkspaceStore};
+use super::{clipboard, workspace::WorkspaceStore};
 use crate::ui_state::{DatabaseId, EntryId};
 use gpui_kit::{
-    component::input::{Copy, Cut, Textarea, TextareaState},
+    component::{
+        input::{Copy, Cut, TextareaState},
+        *,
+    },
+    prelude::FluentBuilder,
     *,
 };
 
 pub(super) struct ReadValue {
     input: Entity<TextareaState>,
+}
+pub(super) fn frame(
+    id: impl Into<ElementId>,
+    value: impl IntoElement,
+    secret: bool,
+    actions: Option<AnyElement>,
+    cx: &App,
+) -> AnyElement {
+    h_flex()
+        .id(id)
+        .test_support()
+        .group("entry-value")
+        .gap_2()
+        .min_w_0()
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .when(secret, |el| {
+                    el.font_family(cx.theme().mono_font_family.clone())
+                })
+                .child(value),
+        )
+        .when_some(actions, |el, actions| {
+            el.child(
+                h_flex()
+                    .gap_2()
+                    .invisible()
+                    .group_hover("entry-value", |style| style.visible())
+                    .child(actions),
+            )
+        })
+        .into_any_element()
+}
+pub(super) fn control(
+    input: &Entity<TextareaState>,
+    id: SharedString,
+    value: String,
+) -> gpui_kit::base::ObservedElement<Stateful<Div>> {
+    div()
+        .id(id)
+        .test_support()
+        .aria_label(value)
+        .w_full()
+        .child(super::row_textarea::control(input, "value", true, false))
 }
 
 impl ReadValue {
@@ -41,18 +90,7 @@ impl ReadValue {
         identity: Option<(DatabaseId, EntryId)>,
     ) -> AnyElement {
         let input = self.input.clone();
-        div()
-            .id(id)
-            .test_support()
-            .aria_label(value)
-            .w_full()
-            .child(
-                Textarea::new(&self.input)
-                    .readonly(true)
-                    .appearance(false)
-                    .bordered(false)
-                    .aria_label(tr("value")),
-            )
+        control(&self.input, id, value)
             .capture_action(move |_: &Copy, _, cx| {
                 let current = store.read(cx);
                 let valid = identity.as_ref().is_some_and(|(db, entry)| {

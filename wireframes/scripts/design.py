@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import tomllib
 import urllib.request
 from datetime import datetime, timezone
 
@@ -18,6 +19,27 @@ FIG = ROOT / 'taypeer.fig'
 CANDIDATE = BUILD / 'taypeer.fig'
 STATE = ROOT / 'source' / 'published.json'
 MANIFEST = BUILD / 'candidate.json'
+PALETTE = ROOT.parent / 'resources' / 'theme.toml'
+DESIGN_ROLES = {
+    'bg': 'background', 'panel': 'panel', 'chrome': 'chrome', 'raised': 'raised',
+    'selected': 'selection', 'border': 'border', 'fg': 'foreground', 'muted': 'muted',
+    'dim': 'disabled', 'primary': 'primary', 'onPrimary': 'on_primary',
+    'danger': 'danger', 'warning': 'warning', 'success': 'success', 'focus': 'focus',
+}
+
+
+def design_palettes(path=PALETTE):
+    """Map the shared product roles to the established editable FIG variable names."""
+    data = tomllib.loads(path.read_text())
+    palettes = {}
+    for mode in ['dark', 'light']:
+        roles = data.get(mode, {})
+        if set(roles) != set(DESIGN_ROLES.values()):
+            raise ValueError(f'{mode}: shared palette roles differ from the design contract')
+        if any(type(value) is not int or not 0 <= value <= 0xffffff for value in roles.values()):
+            raise ValueError(f'{mode}: shared palette requires 24-bit RGB values')
+        palettes[mode] = {name: f'#{roles[role]:06X}' for name, role in DESIGN_ROLES.items()}
+    return palettes
 
 
 def run_cli(*args, input=None):
@@ -97,7 +119,8 @@ def input_hash():
              'assets/lucide-base.fig', 'assets/lucide-extra.json',
              'assets/demo-invitation.json',
              'scripts/design.py', 'scripts/verify.py']
-    return json_hash({name: file_hash(ROOT / name) for name in paths})
+    return json_hash({**{name: file_hash(ROOT / name) for name in paths},
+                      '../resources/theme.toml': file_hash(PALETTE)})
 
 
 def build():
@@ -107,7 +130,8 @@ def build():
     inputs = input_hash()
     icons = json.loads((ROOT / 'assets/lucide-extra.json').read_text())
     invitation = json.loads((ROOT / 'assets/demo-invitation.json').read_text())
-    code = ('const EXTRA_ICONS = ' + json.dumps(icons) + ';\n'
+    code = ('const DESIGN_PALETTES = ' + json.dumps(design_palettes()) + ';\n'
+            + 'const EXTRA_ICONS = ' + json.dumps(icons) + ';\n'
             + 'const DEMO_INVITATION = ' + json.dumps(invitation) + ';\n'
             + (ROOT / 'source/compact.js').read_text() + '\n'
             + (ROOT / 'source/desktop.js').read_text() + '\n'

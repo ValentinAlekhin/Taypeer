@@ -34,9 +34,10 @@ impl DatabaseSettings {
         let id = id.clone();
         let policy = database.policy;
         v_flex()
-            .gap_3()
-            .p_6()
+            .pt_4()
+            .pb_4()
             .max_w(rems(58.))
+            .text_size(rems(13. / 16.))
             .child(row(
                 "name",
                 div()
@@ -80,6 +81,7 @@ impl DatabaseSettings {
             .child(
                 h_flex()
                     .px_6()
+                    .py_4()
                     .gap_2()
                     .child(
                         Button::new("database-info")

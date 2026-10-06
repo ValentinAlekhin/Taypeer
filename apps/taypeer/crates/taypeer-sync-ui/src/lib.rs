@@ -7,6 +7,11 @@ pub use relay::configure_relay;
 pub mod host;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod view;
+#[cfg(all(
+    any(target_os = "macos", target_os = "linux"),
+    feature = "component-rendering"
+))]
+pub use view::{SyncPreviewCase, sync_preview};
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 pub use view::{SyncView, share};
 

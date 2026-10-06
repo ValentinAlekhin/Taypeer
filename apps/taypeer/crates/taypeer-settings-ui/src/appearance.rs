@@ -15,6 +15,14 @@ pub struct PreferencesStore {
     _quit: Subscription,
 }
 impl PreferencesStore {
+    #[cfg(feature = "component-rendering")]
+    pub(crate) fn preview(values: Preferences, cx: &mut Context<Self>) -> Self {
+        let mut store = Self::load(None, cx);
+        store.values = values;
+        store.invalid_file = false;
+        store.error = None;
+        store
+    }
     /// Load a small startup snapshot from an explicit path; invalid files remain untouched.
     pub fn load(path: Option<std::path::PathBuf>, cx: &mut Context<Self>) -> Self {
         let (values, invalid_file) = match &path {

@@ -9,6 +9,46 @@ import design
 import verify
 
 
+class SharedPalette(unittest.TestCase):
+    def palette_file(self, directory, change=None):
+        modes = {mode: {role: 0x123456 for role in design.DESIGN_ROLES.values()}
+                 for mode in ['light', 'dark']}
+        if change:
+            change(modes)
+        path = Path(directory)/'theme.toml'
+        path.write_text('\n'.join(f'[{mode}]\n' + '\n'.join(
+            f'{role} = {value}' for role, value in roles.items())
+            for mode, roles in modes.items()))
+        return path
+
+    def test_product_roles_map_to_fig_names(self):
+        with tempfile.TemporaryDirectory() as directory:
+            palettes = design.design_palettes(self.palette_file(directory))
+        self.assertEqual(palettes['dark']['bg'], '#123456')
+        self.assertEqual(palettes['light']['onPrimary'], '#123456')
+        self.assertEqual(set(palettes['dark']), set(design.DESIGN_ROLES))
+
+    def test_incomplete_or_invalid_palette_fails_before_build(self):
+        for change in [lambda modes: modes['dark'].pop('raised'),
+                       lambda modes: modes['light'].update(background=0x1000000)]:
+            with self.subTest(change=change), tempfile.TemporaryDirectory() as directory:
+                with self.assertRaises(ValueError):
+                    design.design_palettes(self.palette_file(directory, change))
+
+    def test_palette_change_invalidates_candidate_freshness(self):
+        with tempfile.TemporaryDirectory() as directory:
+            palette = self.palette_file(directory)
+            candidate, manifest = Path(directory)/'candidate.fig', Path(directory)/'candidate.json'
+            candidate.write_bytes(b'generated')
+            with patch.object(design, 'PALETTE', palette), patch.object(design, 'CANDIDATE', candidate), patch.object(design, 'MANIFEST', manifest):
+                manifest.write_text(json.dumps({'inputs_sha256':design.input_hash(),
+                                                'candidate_sha256':design.file_hash(candidate)}))
+                design.check_candidate()
+                palette.write_text(palette.read_text().replace('1193046', '1193047', 1))
+                with self.assertRaises(RuntimeError):
+                    design.check_candidate()
+
+
 class PublishSafety(unittest.TestCase):
     def setUp(self):
         self.state = dict(current_file='saved', expected_file='saved', current_scene='old',

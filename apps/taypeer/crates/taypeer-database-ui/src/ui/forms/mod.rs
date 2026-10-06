@@ -15,6 +15,8 @@ pub use database::choose_file;
 pub(super) use database::database;
 pub(super) use entry::attribute;
 pub(super) use group::{clone_group, group, trash_group};
+#[cfg(feature = "component-rendering")]
+pub use metadata::metadata_preview;
 
 /// Resolve database and shared-form dirty state before application exit.
 pub fn request_quit(store: Entity<WorkspaceStore>, window: &mut Window, cx: &mut App) {

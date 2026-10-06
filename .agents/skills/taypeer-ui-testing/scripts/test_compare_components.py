@@ -61,6 +61,22 @@ class PixelComparisonTests(unittest.TestCase):
             with self.assertRaises(argparse.ArgumentTypeError):
                 comparison.bounded_float(value)
 
+    def test_asymmetric_child_stroke_keeps_native_pixels_and_origin(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            raw = Image.new("RGBA", (5, 5), "white")
+            actual = Image.new("RGBA", (12, 12), "black")
+            actual.alpha_composite(raw, (3, 4))
+            actual.save(directory / "actual.png")
+            raw.save(directory / "design.png")
+            metrics = comparison.save_comparison(
+                directory, directory / "actual.png", directory / "design.png",
+                {"width": 2, "height": 2, "outset": 0, "background": [0, 0, 0],
+                 "paint_outsets": dict(left=0.5, top=0, right=0, bottom=0.5)},
+                {"scale": 2, "padding": 2}, 0,
+            )
+            self.assertEqual(metrics["changed_percent"], 0)
+
 
 class LayoutComparisonTests(unittest.TestCase):
     @staticmethod
