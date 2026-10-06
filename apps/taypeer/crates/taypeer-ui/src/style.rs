@@ -54,6 +54,19 @@ pub fn field(state: &Entity<InputState>, label: &str) -> Input {
         .focus_bordered(true)
         .h(rems(2.))
 }
+/// Configure an editor-row field without standalone form paint.
+pub fn row_field(state: &Entity<InputState>, label: &str) -> Input {
+    field(state, label).appearance(false)
+}
+
+/// Compose the shrinkable editor input and its trailing actions.
+pub fn input_control(label: &str, value: impl IntoElement) -> Stateful<Div> {
+    h_flex()
+        .id(SharedString::from(format!("control-{label}")))
+        .gap_1()
+        .child(div().flex_1().min_w_0().child(value))
+}
+
 /// Shared underline tabs for entry details and settings.
 pub fn tabs(id: &'static str, labels: &[&'static str], selected: usize, cx: &App) -> tab::TabBar {
     tab::TabBar::new(id)
@@ -71,23 +84,27 @@ pub fn tabs(id: &'static str, labels: &[&'static str], selected: usize, cx: &App
 
 /// A form label focuses its associated control without changing its value.
 pub fn input_row(label: &str, focus: FocusHandle, value: impl IntoElement, cx: &App) -> AnyElement {
-    h_flex()
+    let label_element = div()
+        .id(SharedString::from(format!("label-{label}")))
+        .w(rems(9.))
+        .flex_shrink_0()
+        .text_color(cx.theme().muted_foreground)
+        .child(tr(label))
+        .on_click(move |_, window, cx| focus.focus(window, cx));
+    #[cfg(feature = "component-rendering")]
+    let label_element = label_element.test_support();
+    let row = h_flex()
+        .id(SharedString::from(format!("row-{label}")))
         .min_h(rems(2.75))
         .px(rems(1.5))
         .gap(rems(1.))
         .border_b_1()
         .border_color(cx.theme().border)
-        .child(
-            div()
-                .id(SharedString::from(format!("label-{label}")))
-                .w(rems(9.))
-                .flex_shrink_0()
-                .text_color(cx.theme().muted_foreground)
-                .child(tr(label))
-                .on_click(move |_, window, cx| focus.focus(window, cx)),
-        )
-        .child(div().flex_1().min_w_0().py_1().child(value))
-        .into_any_element()
+        .child(label_element)
+        .child(div().flex_1().min_w_0().py_1().child(value));
+    #[cfg(feature = "component-rendering")]
+    let row = row.test_support();
+    row.into_any_element()
 }
 
 /// Format a database-supplied RGBA value without interpreting it as a theme role.

@@ -17,24 +17,34 @@ from the repository root, respecting its RTK instructions:
 
 ```sh
 python3 .agents/skills/taypeer-ui-testing/scripts/compare-components.py --list
-python3 .agents/skills/taypeer-ui-testing/scripts/compare-components.py --case input-row-rest
+python3 .agents/skills/taypeer-ui-testing/scripts/compare-components.py --case entry-row-title-rest
 ```
 
-Open the resulting `artifacts/component-checks/<case>/comparison.png` with the
-image viewing tool, then read `report.json`. Inspect alignment, typography, colors
-and state paint; metrics alone do not explain the cause. After a relevant fix,
+Pixel-perfect matching is not required. Follow the mockup's composition, spacing,
+sizing, alignment, typography hierarchy, color roles and control states. Small
+antialiasing and rasterization differences are acceptable; systematic spacing or
+alignment drift is not a renderer artifact.
+
+Open `artifacts/component-checks/<case>/layout.png` first and read the logical-pixel
+geometry deltas in `report.json`, then inspect `comparison.png` for typography,
+colors and state paint. The technical capture margin is not layout padding;
+text-area bounds are not tight glyph bounds. Additional or missing actions are
+reported separately. Metrics alone do not explain the cause. After a relevant fix,
 rerun the same case and inspect its new image. Output is agent diagnostics, not
 a product screen or evidence of matching design acceptance.
 
 The [catalog](../../../apps/taypeer/crates/taypeer-ui/tests/components/cases.json)
-currently covers fields at rest and focus. Add a retained preview using the real
-product builder and a uniquely named FIG target when another component is needed;
+covers fields at rest and focus, plus complete editor title/URL rows. Use a full row
+for parent spacing and action placement; bare field cases measure only the field's
+internal layout. Add a retained preview using the real product builder and a
+uniquely named FIG target when another component is needed;
 do not reproduce its paint in the test. An absent or ambiguous reference is an error.
 Preserve capture scale, padding and reference geometry; do not resize screenshots,
 mask mismatches or change the design to make a comparison pass.
 
-The comparison is informational by default. Use an explicit pixel tolerance and
-changed-pixel threshold when a task defines one. macOS Metal, OpenPencil CLI 0.14.0
+The comparison is informational by default; zero pixel difference is not the
+acceptance criterion. Use an explicit pixel tolerance and changed-pixel threshold
+when a task defines one. macOS Metal, OpenPencil CLI 0.14.0
 and Pillow are required; commands, supported references and render-only variants
 are in [testing](../../../docs/testing.md#изолированный-рендер-компонентов).
 

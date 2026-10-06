@@ -17,12 +17,12 @@ model {
   componentChecks = app 'Component visual checks' {
     #partial
     technology 'GPUI offscreen Metal; OpenPencil CLI'
-    description 'Render isolated product components with public fixtures and bundled fonts; compare pixels with named FIG nodes. No AppView or worker sessions.'
+    description 'Render isolated product components with public fixtures and bundled fonts; compare paint and logical layout geometry with named FIG nodes and regions. No AppView or worker sessions.'
     metadata { source '.agents/skills/taypeer-ui-testing/scripts/compare-components.py'; contract 'docs/testing.md'; evidence 'apps/taypeer/crates/taypeer-ui/tests/components/main.rs' }
   }
   designReference = external 'OpenPencil mockups' {
     #external
-    description 'Saved editable FIG; component targets resolved by unique page and node names.'
+    description 'Saved editable FIG; component targets resolved by unique page, ancestor and node names.'
     metadata { source 'wireframes/taypeer.fig'; contract 'wireframes/README.md' }
   }
   componentChecks -> taypeer.desktop.presentation 'Real shared components, theme and assets'

@@ -20,10 +20,20 @@ struct Catalog {
 struct Case {
     id: String,
     state: State,
+    kind: Kind,
+    label: String,
     text: String,
     width: u32,
     height: u32,
     design: Design,
+}
+
+#[derive(Clone, Copy, Deserialize, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+enum Kind {
+    Field,
+    RowField,
+    EditorRow,
 }
 
 #[derive(Clone, Copy, Deserialize, PartialEq)]
@@ -38,6 +48,10 @@ enum State {
 struct Design {
     page: String,
     node: String,
+    #[serde(default)]
+    ancestors: Vec<String>,
+    #[serde(default)]
+    anchors: std::collections::BTreeMap<String, String>,
 }
 
 struct Options {
@@ -89,7 +103,7 @@ impl Options {
 
 fn catalog() -> Result<Catalog> {
     let catalog: Catalog = serde_json::from_str(CATALOG)?;
-    if catalog.schema_version != 1 || catalog.cases.is_empty() {
+    if catalog.schema_version != 2 || catalog.cases.is_empty() {
         return Err("unsupported or empty component catalog".into());
     }
     let mut ids = HashSet::new();
@@ -105,10 +119,18 @@ fn catalog() -> Result<Catalog> {
             || case.text.contains(['\n', '\0'])
             || case.design.page.is_empty()
             || case.design.node.is_empty()
-            || !case.design.node.ends_with(match case.state {
-                State::Rest => "/ rest",
-                State::Focus => "/ focus",
-            })
+            || !["name", "url"].contains(&case.label.as_str())
+            || case.design.ancestors.iter().any(String::is_empty)
+            || (case.kind == Kind::EditorRow
+                && (case.design.ancestors.is_empty()
+                    || ["label", "field", "text"]
+                        .iter()
+                        .any(|role| case.design.anchors.get(*role).is_none_or(String::is_empty))))
+            || (case.kind != Kind::EditorRow
+                && !case.design.node.ends_with(match case.state {
+                    State::Rest => "/ rest",
+                    State::Focus => "/ focus",
+                }))
         {
             return Err("invalid component identity, dimensions or design target".into());
         }

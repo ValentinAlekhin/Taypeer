@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "cases": [
     {
       "id": "input-row-rest",
@@ -10,7 +10,9 @@
       "design": {
         "page": "04 · Компоненты",
         "node": "Input / row / Строка записи / rest"
-      }
+      },
+      "kind": "row-field",
+      "label": "name"
     },
     {
       "id": "input-standalone-rest",
@@ -21,7 +23,9 @@
       "design": {
         "page": "04 · Компоненты",
         "node": "Input / standalone / Название / rest"
-      }
+      },
+      "kind": "field",
+      "label": "name"
     },
     {
       "id": "input-standalone-focus",
@@ -32,6 +36,53 @@
       "design": {
         "page": "04 · Компоненты",
         "node": "Input / standalone / Фокус / focus"
+      },
+      "kind": "field",
+      "label": "name"
+    },
+    {
+      "id": "entry-row-title-rest",
+      "kind": "editor-row",
+      "label": "name",
+      "state": "rest",
+      "text": "GitHub",
+      "width": 614,
+      "height": 44,
+      "design": {
+        "page": "01 · macOS",
+        "ancestors": [
+          "macOS / edit",
+          "Editor"
+        ],
+        "node": "Description row / Название",
+        "anchors": {
+          "label": "Название",
+          "field": "Input / row / Название / rest",
+          "text": "GitHub"
+        }
+      }
+    },
+    {
+      "id": "entry-row-url-rest",
+      "kind": "editor-row",
+      "label": "url",
+      "state": "rest",
+      "text": "https://github.com",
+      "width": 614,
+      "height": 44,
+      "design": {
+        "page": "01 · macOS",
+        "ancestors": [
+          "macOS / edit",
+          "Editor"
+        ],
+        "node": "Description row / URL",
+        "anchors": {
+          "label": "URL",
+          "field": "Input / row / URL / rest",
+          "text": "https://github.com",
+          "action.favicon": "Icon button / Загрузить favicon по URL"
+        }
       }
     }
   ]

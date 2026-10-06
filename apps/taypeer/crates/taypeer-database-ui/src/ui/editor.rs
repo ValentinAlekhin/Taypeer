@@ -120,20 +120,17 @@ impl EditorView {
     fn overview(&self, cx: &mut Context<Self>) -> AnyElement {
         let mut result = v_flex();
         for (entry_field, input) in &self.fields {
-            let mut control = h_flex().gap_1().child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .child(super::clipboard::secret_field(
-                        field(input, entry_field.key())
-                            .disabled(!self.editor.read(cx).editable())
-                            .appearance(false)
-                            .when(*entry_field == EntryField::Password, |input| {
-                                input.mask_toggle()
-                            }),
-                        input,
-                        *entry_field == EntryField::Password,
-                    )),
+            let mut control = input_control(
+                entry_field.key(),
+                super::clipboard::secret_field(
+                    row_field(input, entry_field.key())
+                        .disabled(!self.editor.read(cx).editable())
+                        .when(*entry_field == EntryField::Password, |input| {
+                            input.mask_toggle()
+                        }),
+                    input,
+                    *entry_field == EntryField::Password,
+                ),
             );
             if *entry_field == EntryField::Password {
                 control =

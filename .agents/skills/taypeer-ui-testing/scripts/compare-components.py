@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render isolated product fields and compare with saved OpenPencil nodes."""
+"""Compare isolated product components with FIG paint and logical layout geometry."""
 import argparse
 import hashlib
 import json
@@ -11,7 +11,7 @@ import sys
 import tempfile
 
 try:
-    from PIL import Image, ImageChops, ImageDraw
+    from PIL import Image, ImageChops, ImageDraw, ImageFont
 except ModuleNotFoundError:
     print("component comparison: install Pillow from wireframes/requirements.txt", file=sys.stderr)
     sys.exit(2)
@@ -32,12 +32,52 @@ def command(args, *, stdin=None):
 def resolve_designs(fig, cases):
     # Names survive FIG serialization; reject ambiguity instead of using stale IDs.
     code = "const cases = " + json.dumps(cases, ensure_ascii=False) + ";\n" + """
+    const unique = (nodes, context) => {
+      if (nodes.length !== 1) throw new Error(context + ': expected one design node');
+      return nodes[0];
+    };
+    const rect = (n, origin) => {
+      const b = n.absoluteBoundingBox;
+      if (!b || ![b.x,b.y,b.width,b.height].every(Number.isFinite) || b.width<=0 || b.height<=0)
+        throw new Error('invalid design anchor bounds');
+      return {x:b.x-origin.x,y:b.y-origin.y,width:b.width,height:b.height};
+    };
     return cases.map(c => {
       const pages = figma.root.children.filter(p => p.name === c.design.page);
       if (pages.length !== 1) throw new Error(c.id + ': expected one design page');
-      const nodes = pages[0].findAll(n => n.name === c.design.node);
+      let scope = pages[0];
+      for (const name of c.design.ancestors ?? [])
+        scope = unique(scope.children.filter(n=>n.name===name), c.id + '/' + name);
+      const nodes = scope.findAll(n => n.name === c.design.node);
       if (nodes.length !== 1) throw new Error(c.id + ': expected one design node');
       const n = nodes[0];
+      const origin = n.absoluteBoundingBox;
+      if (c.kind === 'editor-row') {
+        const anchors = {component:rect(n,origin)};
+        const resolved = {};
+        const fieldTarget = unique(scope.findAll(t=>t.name===c.design.anchors.field), c.id+'/field');
+        for (const [role,name] of Object.entries(c.design.anchors)) {
+          const targetScope = role === 'text' ? fieldTarget : scope;
+          const target = unique(targetScope.findAll(t=>t.name===name), c.id + '/' + role);
+          resolved[role] = target;
+          anchors[role] = rect(target,origin);
+        }
+        if (resolved.text.type !== 'TEXT' || resolved.text.characters !== c.text)
+          throw new Error(c.id + ': fixture text differs from design');
+        const related = [scope,n,...Object.values(resolved)];
+        if (related.some(t=>(t.rotation??0)!==0 || (t.effects??[]).length)
+            || (scope.strokes??[]).some(s=>s.visible!==false))
+          throw new Error(c.id + ': reference needs an axis-aligned effect-free scope');
+        const paint = scope.fills.filter(f=>f.visible!==false);
+        if (paint.length!==1 || paint[0].type!=='SOLID'
+            || (paint[0].opacity??1)!==1 || (paint[0].color.a??1)!==1)
+          throw new Error(c.id + ': reference scope must be opaque');
+        const background = ['r','g','b'].map(k=>Math.round(paint[0].color[k]*255));
+        return {case_id:c.id,id:scope.id,page:pages[0].name,name:n.name,
+          width:n.width,height:n.height,outset:0,background,anchors,
+          export_width:scope.width,export_height:scope.height,
+          region:rect(n,scope.absoluteBoundingBox)};
+      }
       let background;
       for (let parent = n.parent; parent && !background; parent = parent.parent) {
         const paints = Array.isArray(parent.fills)
@@ -71,7 +111,9 @@ def resolve_designs(fig, cases):
       const outset = Math.max(0, ...(n.strokes ?? []).filter(s => s.visible !== false).map(s =>
         s.align === 'OUTSIDE' ? s.weight : s.align === 'CENTER' ? s.weight / 2 : 0));
       return {case_id:c.id, id:n.id, page:pages[0].name, name:n.name,
-              width:n.width, height:n.height, background, outset};
+              width:n.width, height:n.height, background, outset,
+              anchors:{component:rect(n,origin),field:rect(n,origin),
+                text:rect(unique(n.findAll(t=>t.type==='TEXT'),c.id+'/text'),origin)}};
     });
     """
     return json.loads(command(["openpencil", "eval", str(fig), "--stdin", "--json"], stdin=code))
@@ -115,12 +157,20 @@ def save_comparison(directory, actual_path, raw_reference_path, design, capture,
     offset = (padding - outset) * scale
     expected = ((design["width"] + 2 * outset) * scale,
                 (design["height"] + 2 * outset) * scale)
-    canvas_size = ((design["width"] + 2 * padding) * scale,
-                   (design["height"] + 2 * padding) * scale)
-    if offset != int(offset) or raw.size != expected or actual.size != canvas_size:
-        raise ValueError("export/capture dimensions differ from the declared bounds; no resizing allowed")
-    reference = Image.new("RGBA", actual.size, tuple(design["background"]) + (255,))
+    if offset != int(offset) or raw.size != expected:
+        raise ValueError("export dimensions differ from declared bounds; no resizing allowed")
+    declared = (capture.get("width", actual.width), capture.get("height", actual.height))
+    if actual.size != declared:
+        raise ValueError("capture metadata differs from actual PNG dimensions")
+    reference_size = (math.ceil((design["width"] + 2 * padding) * scale),
+                      math.ceil((design["height"] + 2 * padding) * scale))
+    canvas_size = (max(actual.width, reference_size[0]), max(actual.height, reference_size[1]))
+    reference = Image.new("RGBA", canvas_size, tuple(design["background"]) + (255,))
     reference.alpha_composite(raw, (int(offset), int(offset)))
+    if actual.size != canvas_size:
+        canvas = Image.new("RGBA", canvas_size, actual.getpixel((0, 0)))
+        canvas.alpha_composite(actual)
+        actual = canvas
     diff, metrics = compare_pixels(reference, actual, tolerance)
     reference.save(directory / "reference.png")
     overlay = Image.blend(reference, actual, 0.5)
@@ -137,6 +187,144 @@ def save_comparison(directory, actual_path, raw_reference_path, design, capture,
         montage.paste(image.convert("RGB"), (16, top + 24))
     montage.save(directory / "comparison.png")
     return metrics
+
+
+def crop_reference(path, design, scale):
+    """Crop a declared row region from its painted scope, including sibling nodes."""
+    region = design["region"]
+    coordinates = [region["x"] * scale, region["y"] * scale,
+                   (region["x"] + region["width"]) * scale,
+                   (region["y"] + region["height"]) * scale]
+    if any(v != int(v) for v in coordinates):
+        raise ValueError("reference region must align with native export pixels")
+    with Image.open(path) as image:
+        expected = (design["export_width"] * scale, design["export_height"] * scale)
+        if image.size != expected:
+            raise ValueError("scope export dimensions differ; no resizing allowed")
+        left, top, right, bottom = map(int, coordinates)
+        if not (0 <= left < right <= image.width and 0 <= top < bottom <= image.height):
+            raise ValueError("reference region exceeds exported scope")
+        image.crop((left, top, right, bottom)).save(path.with_name("region.png"))
+
+
+def validate_anchors(anchors):
+    for role in ("component", "field", "text"):
+        if role not in anchors:
+            raise ValueError(f"missing required layout anchor: {role}")
+    for role, rect in anchors.items():
+        if set(rect) != {"x", "y", "width", "height"} or any(
+                not isinstance(v, (int, float)) or not math.isfinite(v) for v in rect.values()):
+            raise ValueError(f"invalid layout anchor: {role}")
+        if rect["width"] <= 0 or rect["height"] <= 0:
+            raise ValueError(f"empty layout anchor: {role}")
+
+
+def layout_values(anchors):
+    """Measure boxes and spaces, not glyph ink or inferred CSS declarations."""
+    validate_anchors(anchors)
+    component, field, text = (anchors[k] for k in ("component", "field", "text"))
+    right = lambda r: r["x"] + r["width"]
+    bottom = lambda r: r["y"] + r["height"]
+    values = {
+        "field.text.left": text["x"] - field["x"],
+        "field.text.top": text["y"] - field["y"],
+        "field.text.right": right(field) - right(text),
+        "field.text.bottom": bottom(field) - bottom(text),
+        "component.field.top": field["y"] - component["y"],
+        "component.field.bottom": bottom(component) - bottom(field),
+    }
+    if "label" in anchors:
+        label = anchors["label"]
+        actions = [r for k, r in anchors.items() if k.startswith("action.")]
+        values.update({
+            "component.content.left": label["x"] - component["x"],
+            "component.content.right": right(component) - max(map(right, [field, *actions])),
+            "label.field.gap": field["x"] - right(label),
+            "label.field.center-offset": label["y"] + label["height"] / 2
+                - field["y"] - field["height"] / 2,
+        })
+        if actions:
+            ordered = sorted(actions, key=lambda r: r["x"])
+            values["field.actions.gap"] = ordered[0]["x"] - right(field)
+            for index, (a, b) in enumerate(zip(ordered, ordered[1:])):
+                values[f"actions.gap.{index + 1}"] = b["x"] - right(a)
+    for role, rect in sorted(anchors.items()):
+        for coordinate, value in rect.items():
+            values[f"{role}.{coordinate}"] = value
+    return values
+
+
+def compare_layout(reference, actual):
+    a, b = layout_values(reference), layout_values(actual)
+    measurements = [{"name": name, "reference": value, "actual": b[name],
+                     "delta": b[name] - value} for name, value in a.items() if name in b]
+    missing = sorted(set(reference) - set(actual))
+    # Missing required semantic anchors cannot silently become visual acceptance.
+    if any(not role.startswith("action.") for role in missing):
+        raise ValueError("missing required actual layout anchors: " + ", ".join(missing))
+    return {"units": "logical_px", "delta_direction": "actual_minus_reference",
+            "text_bounds_kind": "layout_area_not_glyph_ink", "measurements": measurements,
+            "missing_actual": missing, "extra_actual": sorted(set(actual) - set(reference))}
+
+
+def save_layout(directory, design, capture, layout):
+    font = ImageFont.load_default(size=18)
+    small = ImageFont.load_default(size=14)
+    with Image.open(directory / "reference.png") as source:
+        reference = source.convert("RGB")
+    with Image.open(directory / "actual.png") as source:
+        actual = source.convert("RGB")
+    width = max(820, reference.width, actual.width)
+    panel_height = max(reference.height, actual.height) + 45
+    rows = [m for m in layout["measurements"] if m["delta"] != 0
+            or ".text." in m["name"] or m["name"].startswith("component.content.")
+            or m["name"] == "label.field.gap"]
+    notices = [f"Extra GPUI element: {r}" for r in layout["extra_actual"]]
+    notices += [f"Missing GPUI element: {r}" for r in layout["missing_actual"]]
+    roles = sorted(set(design["anchors"]) | set(capture["anchors"]))
+    height = panel_height * 2 + 100 + (len(rows) + len(notices) + len(roles)) * 25
+    canvas = Image.new("RGB", (width + 32, height), "#f3f3f3")
+    draw = ImageDraw.Draw(canvas)
+    palette = ["#ee6840", "#21b4dc", "#b68bff", "#53c968", "#f4cc45", "#f096d4"]
+    for index, (name, image, anchors) in enumerate([
+            ("OpenPencil layout", reference, design["anchors"]),
+            ("GPUI layout", actual, capture["anchors"])]):
+        top = index * panel_height + 12
+        draw.text((16, top), name, font=font, fill="#222222")
+        canvas.paste(image, (16, top + 28))
+        for number, role in enumerate(roles):
+            if role not in anchors:
+                continue
+            rect = anchors[role]
+            scale, padding = capture["scale"], capture["padding"]
+            x = 16 + (rect["x"] + padding) * scale
+            y = top + 28 + (rect["y"] + padding) * scale
+            color = palette[number % len(palette)]
+            draw.rectangle((x, y, x + rect["width"] * scale - 1,
+                            y + rect["height"] * scale - 1), outline=color, width=2)
+            draw.text((x + 2, y + 1), str(number + 1), font=small, fill=color,
+                      stroke_width=1, stroke_fill="#000000")
+    top = panel_height * 2 + 16
+    for number, role in enumerate(roles):
+        draw.text((16, top), f"{number + 1}: {role}", font=font,
+                  fill=palette[number % len(palette)])
+        top += 25
+    draw.text((16, top), "Metric (logical px)", font=font, fill="#222222")
+    for x, label in [(480, "FIG"), (595, "GPUI"), (715, "Delta")]:
+        draw.text((x, top), label, font=font, fill="#222222")
+    top += 30
+    for m in rows:
+        draw.text((16, top), m["name"], font=font, fill="#222222")
+        for x, value in [(480, m["reference"]), (595, m["actual"]), (715, m["delta"])]:
+            draw.text((x, top), f"{value:+.2f}" if x == 715 else f"{value:.2f}",
+                      font=font, fill="#b53b20" if x == 715 and value != 0 else "#222222")
+        top += 25
+    for notice in notices:
+        draw.text((16, top), notice, font=font, fill="#b53b20")
+        top += 25
+    draw.text((16, top + 10), "Text boxes are layout areas, not glyph ink. Pixel-perfect matching is not required.",
+              font=small, fill="#555555")
+    canvas.save(directory / "layout.png")
 
 
 def bounded_float(value):
@@ -157,7 +345,7 @@ def run():
                         help="fail if changed pixels exceed this percentage; default is informational")
     args = parser.parse_args()
     catalog = json.loads(CATALOG.read_text(encoding="utf-8"))
-    if catalog["schema_version"] != 1:
+    if catalog["schema_version"] != 2:
         raise ValueError("unsupported component catalog version")
     cases = catalog["cases"]
     if args.list:
@@ -177,7 +365,7 @@ def run():
     output = args.output.resolve()
     designs = resolve_designs(fig, cases)
     report = {
-        "schema_version": 1,
+        "schema_version": 2,
         "fig": str(fig),
         "fig_sha256": hashlib.sha256(fig.read_bytes()).hexdigest(),
         "catalog_sha256": hashlib.sha256(CATALOG.read_bytes()).hexdigest(),
@@ -207,19 +395,31 @@ def run():
             shutil.copyfile(work / "rendered" / capture["file"], directory / "actual.png")
             command(["openpencil", "export", str(fig), "--node", design["id"],
                      "--scale", str(capture["scale"]), "--output", str(directory / "design.png")])
-            metrics = save_comparison(directory, directory / "actual.png", directory / "design.png",
+            reference_path = directory / "design.png"
+            if "region" in design:
+                crop_reference(reference_path, design, capture["scale"])
+                reference_path = directory / "region.png"
+            layout = compare_layout(design["anchors"], capture["anchors"])
+            metrics = save_comparison(directory, directory / "actual.png", reference_path,
                                       design, capture, args.pixel_tolerance)
-            if (metrics["width"], metrics["height"]) != (capture["width"], capture["height"]):
-                raise ValueError("capture metadata differs from actual PNG dimensions")
+            save_layout(directory, design, capture, layout)
             status = "informational" if args.max_changed_percent is None else (
                 "passed" if metrics["changed_percent"] <= args.max_changed_percent else "failed")
             report["cases"].append({"id": case["id"], "design": design, "capture": capture,
-                                    "metrics": metrics, "status": status})
+                                    "metrics": metrics, "layout": layout, "status": status})
         shutil.rmtree(work / "rendered")
         (work / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         shutil.copytree(work, output, dirs_exist_ok=True)
     for item in report["cases"]:
         print(f"{item['id']}: {item['metrics']['changed_percent']:.2f}% changed ({item['status']})")
+        differences = [m for m in item["layout"]["measurements"] if m["delta"] != 0]
+        for m in differences[:12]:
+            print(f"  {m['name']}: FIG {m['reference']:.2f}, GPUI {m['actual']:.2f}, delta {m['delta']:+.2f} logical px")
+        for role in item["layout"]["extra_actual"]:
+            print(f"  Extra GPUI element: {role}")
+        for role in item["layout"]["missing_actual"]:
+            print(f"  Missing GPUI element: {role}")
+        print(f"Layout: {output / item['id'] / 'layout.png'}")
         print(f"Comparison: {output / item['id'] / 'comparison.png'}")
     print(f"Report: {output / 'report.json'}")
     return int(any(c["status"] == "failed" for c in report["cases"]))
