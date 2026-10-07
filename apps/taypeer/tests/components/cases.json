@@ -119,13 +119,17 @@
         "anchors": {
           "header.title": "Entry title",
           "action.menu": "Icon button / Действия записи",
-          "action.primary": "Icon button / Назад из редактора"
+          "action.primary": "Icon button / Вернуться к записи",
+          "action.save": "Icon button / Сохранить запись",
+          "action.cancel": "Icon button / Отменить правки"
         }
       },
       "observations": {
         "header.title": "entry-header-title",
         "action.menu": "entry-menu",
-        "action.primary": "close-editor"
+        "action.primary": "close-editor",
+        "action.save": "save-entry",
+        "action.cancel": "cancel-entry"
       }
     },
     {

@@ -106,7 +106,7 @@ function buildAndroidV1() {
     rule(p,inset,87,inner);
     const bottom=keyboard?h-24-(landscape?112:280):h-24;
     if(keyboard)ime(p,bottom);
-    if(form){const f=box(p,form.autosave?'Android / autosave status':'Android / form actions',inset,bottom-64,inner,64,'panel');rule(f,0,0,inner);if(form.autosave){copy(f,form.status||'Сохранено',16,20,inner-32,{size:14,color:'muted',h:24});}else{const cw=Math.floor((inner-40)/2);action(f,form.cancel||'Отмена',16,8,cw,'ghost');action(f,form.label,24+cw,8,cw,form.kind||'primary');}}
+    if(form){const f=box(p,'Android / form actions',inset,bottom-64,inner,64,'panel');rule(f,0,0,inner);const cw=Math.floor((inner-40)/2);action(f,form.cancel||'Отмена',16,8,cw,'ghost');action(f,form.label||'Сохранить',24+cw,8,cw,form.kind||'default');}
     const top=88+(tab?56:0), end=bottom-(form?64:0);
     const viewport=box(p,'Android / scroll viewport',inset,top,inner,end-top,'bg');viewport.clipsContent=true;
     const body=box(viewport,'Android / scroll content',0,0,inner,2000,'');
@@ -130,14 +130,15 @@ function buildAndroidV1() {
     if(c.body.height>c.viewport.height)box(c.p,'Android / scroll thumb',c.viewport.x+c.w-4,c.viewport.y+12,2,Math.max(30,c.viewport.height*c.viewport.height/c.body.height),'dim',1);
     return c.p;
   }
-  function form(name,title,render,{label='Сохранить',kind='primary',...options}={}) {
-    const automatic=['group','attribute','attachment','database-info'].includes(name);const c=phone(name,title,{page:FORMS,right:null,form:automatic?{autosave:true}:{label,kind},...options});render(c);return finish(c);
+  function form(name,title,render,{label='Сохранить',kind='default',...options}={}) {
+    const c=phone(name,title,{page:FORMS,right:null,form:{label,kind},...options});render(c);return finish(c);
   }
   function confirm(name,title,summary,label,kind='primary') {return form(name,title,c=>paragraph(c,summary,'fg',16),{label,kind});}
+  form('unsaved','Сохранить изменения?',c=>{paragraph(c,'Изменения ещё не сохранены в базе данных.');fullAction(c,'Не сохранять');},{form:{label:'Сохранить',cancel:'Остаться',kind:'default'}});
   function search(c,query='Поиск записей…') {const f=inputFrame(c.body,'Поиск',16,c.y,c.w-32,48);const n=touch(f,'Искать записи',0,0,f.width,48);glyph(n,'search',14,14);copy(n,query,48,12,f.width-64,{color:query.includes('…')?'muted':'fg',h:24});c.y+=60;}
 
   function entry(name,{edit=false,tab='Обзор',newEntry=false,...options}={}) {
-    const c=phone(name,newEntry?'Новая запись':'GitHub',{right:edit?null:'pencil',rightLabel:'Редактировать запись',form:edit?{autosave:true,status:newEntry?'Локальный черновик':'Сохранено'}:null,tab,tabOffset:['Свойства','История'].includes(tab)?216:tab==='Вид'?100:0,...options});
+    const c=phone(name,newEntry?'Новая запись':'GitHub',{right:edit?null:'pencil',rightLabel:'Редактировать запись',form:edit?{label:'Сохранить',kind:'default'}:null,tab,tabOffset:['Свойства','История'].includes(tab)?216:tab==='Вид'?100:0,...options});
     if(tab==='Обзор') {
       const row={entry:true,edit};
       field(c,'Название',newEntry?'Новая запись':'GitHub',row);
@@ -184,7 +185,7 @@ function buildAndroidV1() {
   item(welcome,'Рабочая','Внутренняя копия · заблокирована','database');item(welcome,'Личная','Внутренняя копия · вчера','database');finish(welcome);
   const unlock=phone('unlock','Рабочая',{right:'settings',rightLabel:'Настройки'});unlock.y=64;glyph(unlock.body,'lock-keyhole',16,24);heading(unlock,'База заблокирована');paragraph(unlock,'Внутренняя рабочая копия');field(unlock,'Мастер-пароль','••••••••••••',{secret:true});fullAction(unlock,'Разблокировать','primary');fullAction(unlock,'Биометрия…');paragraph(unlock,'Подготовка ключа: 1,2 с на Pixel 9');notice(unlock,'Изменения получены','Применение после разблокировки.',{tone:'muted'});fullAction(unlock,'Выбрать другую базу…');finish(unlock);
   entriesScreen();entriesScreen('entries-alternatives',{alternatives:true});
-  const empty=phone('empty','Рабочая',{menu:true});search(empty);empty.y+=64;heading(empty,'Пока нет групп');paragraph(empty,'Записи можно создать без группы.');fullAction(empty,'Создать запись…');fullAction(empty,'Создать группу…');finish(empty);
+  const empty=phone('empty','Рабочая',{menu:true});search(empty);empty.y+=64;heading(empty,'Пока нет групп');paragraph(empty,'Создайте группу перед первой записью.');fullAction(empty,'Создать группу…');finish(empty);
   const emptyGroup=phone('empty-group','Архив',{menu:true});search(emptyGroup);emptyGroup.y+=64;heading(emptyGroup,'В группе пока нет записей');fullAction(emptyGroup,'Создать запись…');finish(emptyGroup);
   function drawer(name,scroll=0,options={}) {
     const c=phone(name,'Работа',{menu:true,...options});c.viewport.remove();
@@ -197,7 +198,7 @@ function buildAndroidV1() {
       iconAction(row,depth?'chevron-right':'chevron-down','Раскрыть '+name,depth*16,0);
       const label=touch(row,'Открыть группу '+name,48+depth*16,0,row.width-48-depth*16,48);glyph(label,'folder',8,14);copy(label,name,36,12,label.width-44,{h:24});c.y+=48;
     });
-    fullAction(c,'Создать группу…');item(c,'Без группы','','file',{end:null});separator(c);
+    fullAction(c,'Создать группу…');separator(c);
     for(const [s,key] of [['Устройства и обмен','monitor'],['Корзина','trash-2'],['Черновики · 3','history'],['Отложенные правки · 2','history'],['Настройки','settings'],['Заблокировать','lock-keyhole']])item(c,s,'',key,{end:null});
     return finish(c,{scroll});
   }
@@ -297,7 +298,7 @@ function buildAndroidV1() {
     ['Защита изменилась',c=>{paragraph(c,'Получено новое состояние защиты. Введите актуальный мастер-пароль.','fg',16);field(c,'Мастер-пароль','',{secret:true});fullAction(c,'Разблокировать','primary');}],
     ['Не удалось сохранить',c=>{notice(c,'Недостаточно места','Черновик остаётся открытым. Подтверждённая запись не изменилась.');fullAction(c,'Повторить','primary');fullAction(c,'Остаться в редакторе');}],
     ['Ошибка черновика при блокировке',c=>{heading(c,'База заблокирована');paragraph(c,'Не удалось сохранить черновик. Его восстановление не гарантируется.','danger',16);fullAction(c,'Разблокировать…');}],
-    ['Автосохранение / следующий ввод',c=>{heading(c,'Сохраняем изменения…');paragraph(c,'Ввод продолжается. Новые правки сохранятся следующими.');paragraph(c,'После 500 мс без ввода · переход запускает запись сразу.');}],
+    ['Сохранение / следующий ввод',c=>{heading(c,'Сохраняем изменения…');paragraph(c,'Ввод продолжается. Новые правки останутся до следующего сохранения.');paragraph(c,'Изменения сохраняются по кнопке Сохранить.');}],
     ['Создание и локальная копия',c=>{heading(c,'База создана');paragraph(c,'Рабочая · внутренняя копия\nИсходный файл импорта не обновляется.');fullAction(c,'Открыть');fullAction(c,'Сохранить копию .taypeer…');}]
   ]);
   stateSheet('exchange','Обмен: от приглашения до применения',[
@@ -340,9 +341,9 @@ function buildAndroidV1() {
   // Control sizes are laid out again, not scaled screenshots.
   entriesScreen('small-360-640',{page:QA,w:360,h:640});entriesScreen('large-430-932',{page:QA,w:430,h:932,long:true});
   entriesScreen('landscape-844-390',{page:QA,w:844,h:390});drawer('small-drawer',180,{page:QA,w:360,h:640});
-  const keyboard=phone('keyboard','GitHub',{page:QA,right:null,keyboard:true,form:{autosave:true},tab:'Обзор'});field(keyboard,'Логин','demo@studio.example',{entry:true});field(keyboard,'Пароль','••••••••••••',{entry:true,actions:[['eye','Показать пароль'],['dice-5','Генератор пароля']]});field(keyboard,'URL','https://github.com',{entry:true,focus:true,actions:[['download','Загрузить favicon…']]});finish(keyboard);
+  const keyboard=phone('keyboard','GitHub',{page:QA,right:null,keyboard:true,form:{label:'Сохранить',kind:'default'},tab:'Обзор'});field(keyboard,'Логин','demo@studio.example',{entry:true});field(keyboard,'Пароль','••••••••••••',{entry:true,actions:[['eye','Показать пароль'],['dice-5','Генератор пароля']]});field(keyboard,'URL','https://github.com',{entry:true,focus:true,actions:[['download','Загрузить favicon…']]});finish(keyboard);
   const smallKeyboard=phone('small-keyboard','Создать группу',{page:QA,w:360,h:640,right:null,keyboard:true,form:{label:'Создать'}});field(smallKeyboard,'Название','Инфраструктура',{focus:true});finish(smallKeyboard);
-  const horizontalKeyboard=phone('landscape-keyboard','GitHub',{page:QA,w:844,h:390,right:null,keyboard:true,form:{autosave:true}});field(horizontalKeyboard,'URL','https://github.com',{entry:true,focus:true});finish(horizontalKeyboard);
+  const horizontalKeyboard=phone('landscape-keyboard','GitHub',{page:QA,w:844,h:390,right:null,keyboard:true,form:{label:'Сохранить',kind:'default'}});field(horizontalKeyboard,'URL','https://github.com',{entry:true,focus:true});finish(horizontalKeyboard);
   function largeHeader(c) {
     const bar=c.p.children.find(n=>n.name==='Android / app bar');
     const title=bar.children.find(n=>n.type==='TEXT');title.fontSize=32;title.resize(title.width,48);title.y=4;
@@ -356,7 +357,7 @@ function buildAndroidV1() {
     const c=phone(name,'GitHub',{page:QA,right:null,keyboard});largeHeader(c);
     const bottom=keyboard?540:820,actions=box(c.p,'Android / form actions',0,bottom-160,390,160,'panel');
     c.viewport.resize(390,actions.y-c.viewport.y);
-    for(const [i,s] of ['Сохранено','Ввод продолжается'].entries()){copy(actions,s,16,8+i*76,358,{size:28,color:'muted',h:48});}
+    for(const [i,s] of ['Отмена','Сохранить'].entries()){const a=action(actions,s,16,8+i*76,358,'default',68);a.children.find(n=>n.type==='TEXT').fontSize=28;}
     copy(c.body,'Заметки',16,16,358,{size:28,color:'muted',h:42});
     const input=inputFrame(c.body,'Заметки 200%',16,66,358,164,'row','focus');
     const target=touch(input,'Ввести заметки',0,0,358,164);copy(target,'Рабочий аккаунт\nдля тестового\nсервиса.',0,8,350,{size:32,h:144});c.y=246;return finish(c);
@@ -393,7 +394,7 @@ function buildAndroidV1() {
   ];
   routes.forEach(([title,steps],i)=>{const n=box(flow,'Android flow / '+title,24+i%3*432,144+Math.floor(i/3)*304,408,280,'panel',6,true);copy(n,title,16,16,376,{size:20,weight:500});copy(n,steps,16,72,376,{size:16,h:168});});
   copy(flow,'Правила переходов',24,1400,1272,{size:22,weight:500});
-  copy(flow,'Назад: клавиатура → верхний слой → предыдущий маршрут. Изменённая форма сохраняется автоматически.\nВвод сохраняется после 500 мс; переход запускает запись сразу. Черновик общий для трёх редактируемых вкладок.\nФон блокирует БД сразу; локальный ввод продолжается при открытии объекта. Уведомление обмена не раскрывает содержимое.\nМеню открывается кнопкой и свайпом вправо внутри списка, вне системного края. В записи и редакторе свайп меню выключен.\nКраевой Back, Home, клавиатура, TalkBack и фон проверяются на реальном Android отдельно от этих статических схем.',24,1456,1272,{size:16,h:216});
+  copy(flow,'Назад: клавиатура → верхний слой → предыдущий маршрут. Изменённая форма: Сохранить / Не сохранять / Остаться.\nВвод сохраняется по кнопке; переход требует решения. Черновик общий для трёх редактируемых вкладок.\nФон блокирует БД сразу; локальный ввод продолжается при открытии объекта. Уведомление обмена не раскрывает содержимое.\nМеню открывается кнопкой и свайпом вправо внутри списка, вне системного края. В записи и редакторе свайп меню выключен.\nКраевой Back, Home, клавиатура, TalkBack и фон проверяются на реальном Android отдельно от этих статических схем.',24,1456,1272,{size:16,h:216});
   copy(flow,'Контрольные размеры: 390 × 844 · 360 × 640 · 430 × 932 · 844 × 390.\n48 dp без пересечения действий. При 200% строки растут, формы прокручиваются, команды переносятся на две строки.\nМатрица: wireframes/COVERAGE.md · приёмка устройства: wireframes/ANDROID-QA.md',24,1710,1272,{size:16,color:'muted',h:120});
   // Arrange only Android pages; preserve every desktop artboard and its position.
   for(const name of [MAIN,FORMS,STATES,QA,FLOW]){const nodes=pages[name].children;const cols=name===STATES?3:name===FLOW?1:4,cw=Math.max(...nodes.map(n=>n.width))+64;let y=0;for(let i=0;i<nodes.length;i+=cols){const row=nodes.slice(i,i+cols);row.forEach((n,j)=>{n.x=j*cw;n.y=y;});y+=Math.max(...row.map(n=>n.height))+80;}counts[name]=nodes.length;}

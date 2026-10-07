@@ -63,11 +63,11 @@ for(const name of ['Dialog / revoke','Dialog / change-password']) {
 const alternatives=board('macOS / alternatives');
 if(alternatives.findAll(n=>n.name==='Icon button / Копировать вариант').length!==2)errors.push('history alternatives: independent copy missing');
 if(alternatives.findAll(n=>n.name.startsWith('Radio / ')).length)errors.push('history alternatives: mandatory selection remains');
-const forbiddenBoards=['Dialog / unsaved','Dialog / restore-backup','Dialog / import-review','Dialog / export-kdbx','Dialog / transfer-report','Dialog / migrate','Dialog / delete-objects','macOS / backups','macOS / transfer','macOS / conflict','Android / unsaved','Android / draft','Android / delete','Android / files','Android / conflict','Android / conflicts','Android form / import','Android form / export','Android form / migrate'];
+const forbiddenBoards=['Dialog / restore-backup','Dialog / import-review','Dialog / export-kdbx','Dialog / transfer-report','Dialog / migrate','Dialog / delete-objects','macOS / backups','macOS / transfer','macOS / conflict','Android / draft','Android / delete','Android / files','Android / conflict','Android / conflicts','Android form / import','Android form / export','Android form / migrate'];
 for(const name of forbiddenBoards)if(board(name))errors.push('automation: obsolete route '+name);
-if(figma.root.findAll(n=>n.type==='TEXT'&&/KDBX|Сохранить \/ Не сохранять \/ Остаться|Сохранить изменения\?|Резервные копии/.test(n.characters)).length)errors.push('automation: obsolete product command');
-if(!hasText(board('macOS / drafts'),'Новая запись')||!hasText(board('macOS / main'),'Без группы'))errors.push('automation: drafts or ungrouped filter missing');
-if(board('macOS / edit').findAll(n=>n.name==='Icon button / Сохранить запись').length)errors.push('automation: manual entry save remains');
+if(figma.root.findAll(n=>n.type==='TEXT'&&/KDBX|Без группы|Изменения сохраняются автоматически|Резервные копии/.test(n.characters)).length)errors.push('automation: obsolete product command');
+if(!hasText(board('macOS / drafts'),'Новая запись')||!board('Dialog / unsaved'))errors.push('manual saving: draft list or dirty decision missing');
+if(!board('macOS / edit').findAll(n=>n.name==='Icon button / Сохранить запись').length||!board('macOS / edit').findAll(n=>n.name==='Icon button / Отменить правки').length)errors.push('manual saving: entry save/cancel missing');
 if(!board('Dialog / invite').findAll(n=>n.name==='QR / synthetic invitation').length)errors.push('invitation: QR missing');
 const qr=board('Dialog / invite').findAll(n=>n.name==='QR / synthetic invitation')[0];
 const modules=qr?.children.find(n=>n.type==='VECTOR');
@@ -121,8 +121,8 @@ for(const name of ['Android form / create','Android form / change-password','And
 }
 const mobileAlternatives=board('Android / alternatives');
 if(mobileAlternatives.findAll(n=>n.name==='Touch / ghost / Копировать вариант').length!==2)errors.push('android alternatives: independent copy missing');
-if(board('Android / edit').findAll(n=>n.name==='Android / form actions').length)errors.push('android automation: manual editor footer remains');
-if(!hasText(board('Android / edit'),'Сохранено')||!hasText(board('Android / drafts'),'Новая запись')||!hasText(board('Android / drawer'),'Без группы'))errors.push('android automation: status, drafts or ungrouped missing');
+if(!board('Android / edit').findAll(n=>n.name==='Android / form actions').length)errors.push('android manual saving: editor footer missing');
+if(!hasText(board('Android / edit'),'Сохранить')||!hasText(board('Android / edit'),'Отмена')||!hasText(board('Android / drafts'),'Новая запись')||!board('Android form / unsaved'))errors.push('android manual saving: actions, drafts or dirty decision missing');
 for(const name of ['Android / unlock','Android / receive','Android / receiving']) {
  const b=board(name);if(b.findAll(n=>n.name==='Value / Логин'||n.name==='Value / Пароль'||n.name==='Android / group row').length)errors.push(name+': decrypted contents on locked route');
 }

@@ -44,8 +44,7 @@ function entryHeader(p,w,edit=false,m=false){
  const h=m?56:UI.toolbar,sz=m?44:32,pad=m?16:UI.inset,yy=(h-sz)/2;
  const title=text(p,'GitHub',pad,(h-20)/2,w-(m?pad+112:edit?232:128),18,'fg',500);title.name='Entry title';
  if(edit){
-  text(p,'Сохранено',m?w-pad-120:w-200,yy+6,m?120:96,12,'muted');
-  if(!m)ib(p,'arrow-left',w-96,yy).name='Icon button / Назад из редактора';
+  if(!m){ib(p,'check',w-176,yy).name='Icon button / Сохранить запись';ib(p,'x',w-136,yy).name='Icon button / Отменить правки';ib(p,'arrow-left',w-96,yy).name='Icon button / Вернуться к записи';}
  }else ib(p,'pencil',m?w-pad-sz:w-96,yy,m).name='Icon button / Редактировать запись';
  if(!m)ib(p,'ellipsis',w-56,yy).name='Icon button / Действия записи';
  rule(p,0,h,w).name='Toolbar boundary';
@@ -63,7 +62,7 @@ else{['#EA6B66','#D6B86C','#80B981'].forEach((c,i)=>{const e=figma.createEllipse
 rule(p,0,m?88:UI.title,W);
 if(!m){box(p,'StatusBar',0,H-28,W,28,'panel');rule(p,0,H-28,W);if(!isWelcome){icon(p,'database',12,H-22);text(p,'2,4 МиБ',36,H-22,140,11,'muted');text(p,'Синхронизировано',W-206,H-22,166,11,'muted').textAlignHorizontal='RIGHT';icon(p,'refresh-cw',W-28,H-22);}}
 else{box(p,'Home indicator',W/2-48,H-10,96,3,'muted',2);}return p;}
-function sidebar(p,empty=false,active='Работа'){const n=box(p,'Sidebar / groups',0,UI.title+1,224,p.height-UI.title-29,'panel');ib(n,'folder-plus',180,6);ib(n,'ellipsis',140,6);rule(n,0,UI.toolbar,224).name='Toolbar boundary';if(empty){text(n,'Нет групп',16,67,180,13,'muted');button(n,'Добавить группу…',16,99,190);}else{[['Работа',0,'6'],['Сервисы',1,'2'],['Инфраструктура',1,'2'],['Личное',0,'3'],['Архив',0,'0']].forEach(([s,level,count],i)=>{const y=52+i*34;box(n,'Tree row / '+s,8,y,208,32,s===active?'selected':'',4);icon(n,level?'chevron-right':'chevron-down',16+level*16,y+8);icon(n,'folder',40+level*16,y+8);text(n,s,64+level*16,y+7,level?117:138,12,'fg',s===active?500:400);text(n,count,194,y+7,20,11,'muted');});}rule(n,0,n.height-172,224);[['file','Без группы'],['trash-2','Корзина'],['monitor','Устройства'],['history','Черновики']].forEach(([key,s],i)=>{icon(n,key,16,n.height-153+i*36);text(n,s,44,n.height-155+i*36,164,13,'muted');});rule(p,224,UI.title+1,1,n.height);}
+function sidebar(p,empty=false,active='Работа'){const n=box(p,'Sidebar / groups',0,UI.title+1,224,p.height-UI.title-29,'panel');ib(n,'folder-plus',180,6);ib(n,'ellipsis',140,6);rule(n,0,UI.toolbar,224).name='Toolbar boundary';if(empty){text(n,'Нет групп',16,67,180,13,'muted');button(n,'Добавить группу…',16,99,190);}else{[['Работа',0,'6'],['Сервисы',1,'2'],['Инфраструктура',1,'2'],['Личное',0,'3'],['Архив',0,'0']].forEach(([s,level,count],i)=>{const y=52+i*34;box(n,'Tree row / '+s,8,y,208,32,s===active?'selected':'',4);icon(n,level?'chevron-right':'chevron-down',16+level*16,y+8);icon(n,'folder',40+level*16,y+8);text(n,s,64+level*16,y+7,level?117:138,12,'fg',s===active?500:400);text(n,count,194,y+7,20,11,'muted');});}rule(n,0,n.height-136,224);[['trash-2','Корзина'],['monitor','Устройства'],['history','Черновики']].forEach(([key,s],i)=>{icon(n,key,16,n.height-117+i*36);text(n,s,44,n.height-119+i*36,164,13,'muted');});rule(p,224,UI.title+1,1,n.height);}
 const entries=[['Cloudflare','admin@studio.dev'],['Figma','valentin@studio.dev'],['GitHub','valentin'],['Linear','valentin'],['Notion','valentin@studio.dev'],['Vercel','valentin']];
 // Keep the editable mockup aligned with the product Entries/DataTable builder.
 // Fixed column widths overflow a clipped viewport rather than shrinking or hiding columns.
