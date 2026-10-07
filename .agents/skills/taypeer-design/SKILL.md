@@ -7,6 +7,8 @@ description: Edit, review, build and verify this repository's Taypeer OpenPencil
 
 Locate the project root from this skill directory (`../../..`). Read `wireframes/README.md` for design rules, commands and artifact ownership; consult the relevant part of `spec.md` for behavior. Reuse the available `open-pencil` skill for editor/API operations and its versioned compatibility reference when relevant.
 
+Before live MCP operations or publication, read [the tested OpenPencil runbook](../../../wireframes/OPENPENCIL.md). It records the 0.15.1 save/archive and disposed-renderer failures, the same-name page setter, native reload, persistent-page verification and Peekaboo 4 commands. Use its tested path on the recorded versions; a successful RPC or changed tab path does not prove a saved or reloaded file.
+
 ## Work from the actual design
 
 1. Inspect the relevant saved previews and source before changing a screen. Read the matching live document when the user is editing in OpenPencil; match its file path using document discovery.
