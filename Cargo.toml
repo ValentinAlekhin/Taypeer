@@ -1,5 +1,5 @@
 [workspace]
-members = ["apps/taypeer-android/native", "crates/taypeer-core", "crates/taypeer-document", "crates/taypeer-services", "crates/taypeer-storage", "crates/taypeer-runtime", "crates/taypeer-trust", "crates/taypeer-sync", "apps/taypeer", "apps/taypeer/crates/taypeer-database-ui", "apps/taypeer/crates/taypeer-sync-ui", "apps/taypeer/crates/taypeer-settings-ui", "apps/taypeer/crates/taypeer-runtime-client", "apps/taypeer/crates/taypeer-desktop-platform", "apps/taypeer/crates/taypeer-ui", "apps/taypeer-cli"]
+members = ["apps/taypeer-android/native", "crates/taypeer-core", "crates/taypeer-document", "crates/taypeer-services", "crates/taypeer-storage", "crates/taypeer-runtime", "crates/taypeer-trust", "crates/taypeer-sync", "apps/taypeer", "apps/taypeer/crates/taypeer-database-ui", "apps/taypeer/crates/taypeer-sync-ui", "apps/taypeer/crates/taypeer-settings-ui", "apps/taypeer/crates/taypeer-runtime-client", "apps/taypeer/crates/taypeer-desktop-platform", "apps/taypeer/crates/taypeer-ui"]
 default-members = ["apps/taypeer"]
 resolver = "3"
 
@@ -41,9 +41,6 @@ usvg = { version = "=0.46.0", default-features = false }
 roxmltree = "=0.20.0"
 fractional_index = { version = "=2.0.2", default-features = false }
 sha2 = "=0.10.9"
-clap = { version = "=4.6.6", features = ["derive", "string"] }
-clap-repl = "=0.3.2"
-crossterm = "=0.28.1"
 taypeer-runtime = { path = "crates/taypeer-runtime" }
 taypeer-storage = { path = "crates/taypeer-storage" }
 argon2 = "=0.5.3"

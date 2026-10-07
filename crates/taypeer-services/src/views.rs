@@ -35,8 +35,8 @@ pub struct GroupSummary {
 pub struct EntrySummary {
     /// Stable entry identifier.
     pub id: EntryId,
-    /// Selected owning group, absent for an ungrouped entry.
-    pub group_id: Option<GroupId>,
+    /// Selected owning user-created group.
+    pub group_id: GroupId,
     /// Selected exact entry label.
     pub title: String,
     /// Ordinary username, if present.
@@ -62,7 +62,7 @@ pub struct SearchResult {
     /// Public database label.
     pub database_name: String,
     /// Source group label.
-    pub group_name: Option<String>,
+    pub group_name: String,
     /// Matching entry without secret values.
     pub entry: EntrySummary,
 }
@@ -121,7 +121,7 @@ pub struct DraftView {
     /// Existing entry identifier; None denotes a not-yet-saved entry.
     pub entry_id: Option<EntryId>,
     /// Group in which the entry is being edited or created.
-    pub group_id: Option<GroupId>,
+    pub group_id: GroupId,
     /// Form fields, including explicitly edited secrets.
     pub fields: EditableEntry,
     /// Whether the form differs from its starting state.
@@ -137,7 +137,7 @@ pub struct PendingDraftSummary {
     /// Existing entry, or None for a not-yet-saved entry.
     pub entry_id: Option<EntryId>,
     /// Group containing the interrupted form.
-    pub group_id: Option<GroupId>,
+    pub group_id: GroupId,
 }
 
 /// An attribute in a read-only view; protected values remain absent.
@@ -160,8 +160,8 @@ pub struct AttributeView {
 pub struct EntryView {
     /// Stable entry identifier.
     pub id: EntryId,
-    /// Selected owning group, absent for an ungrouped entry.
-    pub group_id: Option<GroupId>,
+    /// Selected owning user-created group.
+    pub group_id: GroupId,
     /// Selected exact entry label.
     pub title: String,
     /// Optional ordinary username.

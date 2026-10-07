@@ -71,7 +71,7 @@ pub(super) fn generator_modes_insert_and_persist_the_generated_value() {
     });
     click(&mut app, "generator-use");
     app.wait("generated value applied to editor", |window, _| {
-        window.try_find("generator-panel").is_none() && window.try_find("close-editor").is_some()
+        window.try_find("generator-panel").is_none() && window.try_find("save-entry").is_some()
     });
     click(&mut app, "editor-password-eye");
     app.wait(
@@ -88,7 +88,7 @@ pub(super) fn generator_modes_insert_and_persist_the_generated_value() {
     let generated =
         app.update(|window, _| window.find("field-password").value().unwrap().to_owned());
     click(&mut app, "editor-password-eye");
-    click(&mut app, "close-editor");
+    click(&mut app, "save-entry");
     app.wait("generated entry saved", |window, _| {
         window.try_find("edit-entry").is_some()
     });

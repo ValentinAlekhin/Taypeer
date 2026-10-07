@@ -231,7 +231,7 @@ impl DatabaseService {
             .document()
             .entries()?
             .into_iter()
-            .filter(|e| e.group_id.as_ref().is_some_and(|g| selected.contains(g)))
+            .filter(|e| selected.contains(&e.group_id))
             .collect();
         let mut results = Vec::new();
         for entry in entries {

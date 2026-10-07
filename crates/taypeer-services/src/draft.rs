@@ -55,7 +55,7 @@ impl DraftState {
             target: match self.kind {
                 DraftKind::New => super::DraftTarget::NewEntry {
                     entry: self.document.entry_id().clone(),
-                    group: self.document.group_id().cloned(),
+                    group: self.document.group_id().clone(),
                 },
                 DraftKind::Existing => super::DraftTarget::Entry(self.document.entry_id().clone()),
             },
@@ -91,7 +91,7 @@ impl DraftState {
         self.baseline = confirmed.document.fields().clone();
         self.kind = DraftKind::Existing;
         self.attempt = None;
-        // The editor identity survives autosave. Lost import responses may be
+        // The editor identity survives confirmation. Lost import responses may be
         // retried afterwards, so their immutable intents live with this draft.
         Ok(())
     }
@@ -205,7 +205,7 @@ impl DraftState {
     pub(super) fn pending_summary(&self) -> PendingDraftSummary {
         PendingDraftSummary {
             entry_id: self.entry_id().cloned(),
-            group_id: self.document.group_id().cloned(),
+            group_id: self.document.group_id().clone(),
         }
     }
 
@@ -308,7 +308,7 @@ impl DraftState {
         DraftView {
             identity: self.identity(),
             entry_id: self.entry_id().cloned(),
-            group_id: self.document.group_id().cloned(),
+            group_id: self.document.group_id().clone(),
             dirty: self.is_dirty(),
             fields,
             expiry_input: self.expiry_input.clone(),

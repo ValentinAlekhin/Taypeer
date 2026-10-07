@@ -842,19 +842,23 @@ impl Render for Inspector {
                     .gap_2()
                     .when(editing, |el| {
                         el.child(
-                            div()
-                                .id("autosave-status")
-                                .w(rems(6.))
-                                .flex_shrink_0()
-                                .text_size(rems(12. / 16.))
-                                .text_color(cx.theme().muted_foreground)
-                                .child(tr(self
-                                    .store
-                                    .read(cx)
-                                    .editor()
-                                    .map_or("ui.autosave_pending", |editor| {
-                                        editor.read(cx).status_key()
-                                    }))),
+                            icon_button("save-entry", "check", "save")
+                                .disabled(
+                                    self.store
+                                        .read(cx)
+                                        .editor()
+                                        .is_none_or(|editor| editor.read(cx).saving()),
+                                )
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.store.update(cx, |store, cx| store.save(cx));
+                                })),
+                        )
+                        .child(
+                            icon_button("cancel-entry", "x", "cancel")
+                                .disabled(busy)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.store.update(cx, |store, cx| store.cancel_edit(cx));
+                                })),
                         )
                         .child(
                             icon_button("close-editor", "arrow-left", "back")

@@ -81,7 +81,9 @@ impl Document {
                     if address == &root {
                         match &address.object {
                             ObjectId::Entry(_) => {
-                                tx.put(&node, "group", encode(&prepared.destination)?)?;
+                                let destination =
+                                    prepared.destination.as_ref().ok_or(Error::InvalidContext)?;
+                                tx.put(&node, "group", encode(destination)?)?;
                             }
                             ObjectId::Group(_) => {
                                 groups::put_placement(
@@ -280,18 +282,6 @@ impl Document {
         operation: &OperationId,
         now: Timestamp,
     ) -> Result<Vec<ObjectId>, Error> {
-        self.move_entry_to(id, Some(group), review, operation, now)
-    }
-
-    /// Move an entry to an optional group without overwriting unseen concurrent destinations.
-    pub fn move_entry_to(
-        &mut self,
-        id: &EntryId,
-        group: Option<GroupId>,
-        review: Option<Vec<String>>,
-        operation: &OperationId,
-        now: Timestamp,
-    ) -> Result<Vec<ObjectId>, Error> {
         let intent = ("move_entry", id, &group, &review);
         if let Some(result) = self.action_receipt(operation, &intent)? {
             return Ok(result);
@@ -310,8 +300,10 @@ impl Document {
             return Err(Error::InvalidContext);
         }
         let before = projection::read_entry_generation(&basis.doc, &address, None)?;
-        let destination = self.destination(group.clone())?;
-        if basis.destination(group.clone())? != destination {
+        let destination = self
+            .destination(Some(group.clone()))?
+            .ok_or(Error::InvalidContext)?;
+        if basis.destination(Some(group.clone()))?.as_ref() != Some(&destination) {
             return Err(Error::InvalidContext);
         }
         let heads = basis.heads();
@@ -465,20 +457,11 @@ impl Document {
                 })
                 .collect();
             let parent = mapping
-                .get(&ObjectAddress::from(
-                    original.placement.ok_or(Error::InvalidContext)?,
-                ))
+                .get(&ObjectAddress::from(original.placement))
                 .ok_or(Error::InvalidContext)?
                 .group_ref()?;
             let revision = RevisionId::new(random_id());
-            initialize_entry(
-                &mut tx,
-                &mapping[address],
-                &fields,
-                Some(&parent),
-                now,
-                &revision,
-            )?;
+            initialize_entry(&mut tx, &mapping[address], &fields, &parent, now, &revision)?;
             confirm_revision(
                 &mut tx,
                 &mapping[address],
@@ -544,7 +527,7 @@ pub(super) fn initialize_entry(
     tx: &mut Transaction<'_>,
     address: &ObjectAddress,
     fields: &EntryFields,
-    parent: Option<&GroupRef>,
+    parent: &GroupRef,
     now: Timestamp,
     revision: &RevisionId,
 ) -> Result<(), Error> {

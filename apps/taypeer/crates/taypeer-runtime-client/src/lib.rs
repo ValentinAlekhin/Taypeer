@@ -9,13 +9,14 @@ use std::{
     },
     thread,
 };
-use taypeer_core::{DatabaseId, EntryId, GroupId};
+use taypeer_core::{DatabaseId, DraftId, EntryId, GroupId, OperationId};
 use taypeer_runtime::{
     Command, RuntimeError, RuntimeHost, Worker, WorkerControl,
     session::{SessionController, SessionSettings},
 };
 use taypeer_services::{
-    CreateDatabase, DatabaseInfo, EntrySummary, EntryView, GroupInfo, RevisionSummary, StorageUsage,
+    CreateDatabase, DatabaseInfo, DraftIdentity, DraftSaveOutcome, EntrySummary, EntryView,
+    GroupInfo, RevisionSummary, StorageUsage,
 };
 
 /// Runtime failures crossing the background client boundary.
@@ -45,6 +46,13 @@ impl<T> Ticket<T> {
             Err(mpsc::TryRecvError::Disconnected) => Some(Err(RuntimeError::Transport)),
         }
     }
+}
+/// Captured identity is retained even when publication fails, so retries cannot change the input.
+pub struct CapturedSnapshot {
+    /// Exact service revision captured at the command queue position of the click.
+    pub identity: DraftIdentity,
+    /// Durable publication outcome; an error never acknowledges database persistence.
+    pub outcome: Result<DraftSaveOutcome>,
 }
 type Work = Box<dyn FnOnce(&mut Worker) + Send>;
 #[derive(Clone)]
@@ -122,6 +130,45 @@ impl Connection {
     pub fn command<T: DeserializeOwned + Send + 'static>(&self, command: Command) -> Ticket<T> {
         let command = Input(command);
         self.run(move |worker| decode(worker.request(&command.0)))
+    }
+    /// Capture and publish the active form in one queued job, before any later input commands.
+    pub fn capture_snapshot(
+        &self,
+        draft: DraftId,
+        operation: OperationId,
+    ) -> Ticket<CapturedSnapshot> {
+        self.run(move |worker| {
+            let identity = request::<Option<DraftIdentity>>(worker, Command::ActiveDraft)?
+                .filter(|identity| identity.draft == draft)
+                .ok_or(RuntimeError::Protocol)?;
+            let outcome = request(
+                worker,
+                Command::SaveDraftSnapshot {
+                    draft: identity.draft.clone(),
+                    revision: identity.revision,
+                    operation,
+                },
+            );
+            Ok(CapturedSnapshot { identity, outcome })
+        })
+    }
+    /// Repeat exactly a previously captured publication; never capture the current form again.
+    pub fn retry_snapshot(
+        &self,
+        identity: DraftIdentity,
+        operation: OperationId,
+    ) -> Ticket<CapturedSnapshot> {
+        self.run(move |worker| {
+            let outcome = request(
+                worker,
+                Command::SaveDraftSnapshot {
+                    draft: identity.draft.clone(),
+                    revision: identity.revision,
+                    operation,
+                },
+            );
+            Ok(CapturedSnapshot { identity, outcome })
+        })
     }
     /// Read a coherent database projection through the worker queue.
     pub fn query(&self, query: Query) -> Ticket<Snapshot> {

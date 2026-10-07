@@ -1,4 +1,4 @@
-//! Observable autosave behavior through the real isolated worker on PUBLIC data.
+//! Observable explicit snapshot confirmation through the real isolated worker on PUBLIC data.
 use super::*;
 use taypeer_services::{DraftSaveOutcome, EditorView, EntryPatch, FieldUpdate, GroupSummary};
 
@@ -29,7 +29,7 @@ fn save(
 #[test]
 fn snapshot_acknowledges_exact_input_and_automatically_resumes_after_lock() {
     let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("PUBLIC autosave.taypeer");
+    let path = directory.path().join("PUBLIC snapshot.taypeer");
     let sessions = SessionController::new(SessionPolicy::default());
     let client = open(&sessions, &path, true);
     let group: GroupSummary = serde_json::from_value(
@@ -51,7 +51,7 @@ fn snapshot_acknowledges_exact_input_and_automatically_resumes_after_lock() {
     client
         .request(
             &Command::PatchDraft(EntryPatch {
-                title: FieldUpdate::Set("PUBLIC autosaved entry".into()),
+                title: FieldUpdate::Set("PUBLIC confirmed entry".into()),
                 password: FieldUpdate::Set("PUBLIC password".into()),
                 ..Default::default()
             }),
@@ -118,23 +118,46 @@ fn snapshot_acknowledges_exact_input_and_automatically_resumes_after_lock() {
 }
 
 #[test]
-fn empty_ungrouped_form_creates_nothing_and_incomplete_input_is_local_only() {
+fn empty_grouped_form_creates_nothing_and_invalid_input_requires_local_persistence() {
     let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("PUBLIC ungrouped.taypeer");
+    let path = directory.path().join("PUBLIC grouped.taypeer");
     let sessions = SessionController::new(SessionPolicy::default());
     let client = open(&sessions, &path, true);
+    let group: GroupSummary = serde_json::from_value(
+        client
+            .request(
+                &Command::CreateGroup {
+                    name: "PUBLIC required group".into(),
+                    parent: None,
+                    operation: taypeer_services::new_operation_id().unwrap(),
+                },
+                false,
+            )
+            .unwrap(),
+    )
+    .unwrap();
     client
-        .request(&Command::BeginCreateUngrouped, false)
+        .request(&Command::BeginCreate(group.id.clone()), false)
         .unwrap();
     let empty = view(&client);
-    assert!(matches!(
-        save(
-            &client,
-            &empty,
-            &taypeer_services::new_operation_id().unwrap()
+    let operation = taypeer_services::new_operation_id().unwrap();
+    let before = std::fs::read(&path).unwrap();
+    assert!(!empty.dirty);
+    assert_eq!(
+        client.request(
+            &Command::SaveDraftSnapshot {
+                draft: empty.identity.draft.clone(),
+                revision: empty.identity.revision,
+                operation: operation.clone(),
+            },
+            false,
         ),
-        DraftSaveOutcome::Unchanged { .. }
-    ));
+        Err(RuntimeError::Service(
+            taypeer_services::ServiceError::InvalidInput
+        ))
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    assert_eq!(view(&client).identity, empty.identity);
     client
         .request(
             &Command::PatchDraft(EntryPatch {
@@ -145,14 +168,20 @@ fn empty_ungrouped_form_creates_nothing_and_incomplete_input_is_local_only() {
         )
         .unwrap();
     let unfinished = view(&client);
-    assert!(matches!(
-        save(
-            &client,
-            &unfinished,
-            &taypeer_services::new_operation_id().unwrap()
+    assert_eq!(
+        client.request(
+            &Command::SaveDraftSnapshot {
+                draft: unfinished.identity.draft.clone(),
+                revision: unfinished.identity.revision,
+                operation: taypeer_services::new_operation_id().unwrap(),
+            },
+            false,
         ),
-        DraftSaveOutcome::LocalDraftSaved { .. }
-    ));
+        Err(RuntimeError::Service(
+            taypeer_services::ServiceError::InvalidInput
+        ))
+    );
+    client.request(&Command::PersistDrafts, false).unwrap();
     assert_eq!(
         client
             .request(
@@ -176,7 +205,7 @@ fn empty_ungrouped_form_creates_nothing_and_incomplete_input_is_local_only() {
         resumed.fields.username.as_deref(),
         Some("PUBLIC unfinished")
     );
-    assert!(resumed.group.is_none());
+    assert_eq!(resumed.group, group.id);
     reopened
         .request(
             &Command::PatchDraft(EntryPatch {
@@ -186,11 +215,7 @@ fn empty_ungrouped_form_creates_nothing_and_incomplete_input_is_local_only() {
             false,
         )
         .unwrap();
-    save(
-        &reopened,
-        &view(&reopened),
-        &taypeer_services::new_operation_id().unwrap(),
-    );
+    save(&reopened, &view(&reopened), &operation);
     let entries = reopened
         .request(
             &Command::Entries {
@@ -201,7 +226,10 @@ fn empty_ungrouped_form_creates_nothing_and_incomplete_input_is_local_only() {
         )
         .unwrap();
     assert_eq!(entries.as_array().unwrap().len(), 1);
-    assert!(entries[0]["group_id"].is_null());
+    assert_eq!(
+        entries[0]["group_id"],
+        serde_json::to_value(&group.id).unwrap()
+    );
     reopened.control.invalidate(LockReason::Manual);
     reopened.control.wait_closed().unwrap();
 }

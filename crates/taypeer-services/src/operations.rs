@@ -59,22 +59,10 @@ impl DatabaseService {
         title: Option<String>,
         operation: &OperationId,
     ) -> Result<SessionValue<EntryId>, ServiceError> {
-        self.clone_entry_in(session, entry, Some(group), title, operation)
-    }
-
-    /// Clone a selected current entry into a group or the ungrouped collection.
-    pub fn clone_entry_in(
-        &mut self,
-        session: &SessionToken,
-        entry: &EntryId,
-        group: Option<GroupId>,
-        title: Option<String>,
-        operation: &OperationId,
-    ) -> Result<SessionValue<EntryId>, ServiceError> {
         let now = (self.clock)();
         let result = self
             .checked_mut(session)?
-            .change(|doc| Ok(doc.clone_entry_in(entry, group, title, operation, now)?))?;
+            .change(|doc| Ok(doc.clone_entry(entry, group, title, operation, now)?))?;
         Ok(stamped(session, result))
     }
 
@@ -87,22 +75,10 @@ impl DatabaseService {
         group: GroupId,
         operation: &OperationId,
     ) -> Result<SessionValue<EntryId>, ServiceError> {
-        self.restore_revision_in(session, entry, revision, Some(group), operation)
-    }
-
-    /// Restore a saved revision into an optional group without closing other causal forms.
-    pub fn restore_revision_in(
-        &mut self,
-        session: &SessionToken,
-        entry: &EntryId,
-        revision: &RevisionId,
-        group: Option<GroupId>,
-        operation: &OperationId,
-    ) -> Result<SessionValue<EntryId>, ServiceError> {
         let now = (self.clock)();
         let state = self.checked_mut(session)?;
         let result = state
-            .change(|doc| Ok(doc.restore_revision_in(entry, revision, group, operation, now)?))?;
+            .change(|doc| Ok(doc.restore_revision(entry, revision, group, operation, now)?))?;
         Ok(stamped(session, result))
     }
 

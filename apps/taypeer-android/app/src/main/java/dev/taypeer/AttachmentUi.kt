@@ -75,7 +75,7 @@ fun PendingAttachment(state: DocumentState) {
     val exactForm = expectedDraft == null || state.activeForm?.draft == expectedDraft
     Text(stringResource(if (!sameDatabase) R.string.unlock_selected_database else if (!exactForm) R.string.resume_selected_draft else R.string.selected_file_ready))
     FlowRow {
-        TextButton(state::acceptAttachmentSelection, enabled = sameDatabase && exactForm && !state.navigating && (pending !is AttachmentSelection.Import || state.overview?.writable == true), modifier = Modifier.testTag("accept-selected-file")) {
+        TextButton(state::acceptAttachmentSelection, enabled = sameDatabase && exactForm && !state.editingBlocked && (pending !is AttachmentSelection.Import || state.overview?.writable == true), modifier = Modifier.testTag("accept-selected-file")) {
             Text(stringResource(if (pending is AttachmentSelection.Import) R.string.add_selected_file else R.string.export_selected_attachment))
         }
         TextButton(state::discardAttachmentSelection) { Text(stringResource(R.string.cancel)) }

@@ -8,7 +8,6 @@ use gpui_kit::{
         checkbox::Checkbox,
         color_picker::ColorPickerState,
         input::{InputState, TextareaState},
-        list::ListItem,
         tree::*,
         *,
     },
@@ -415,15 +414,8 @@ impl Preview {
         let actions = if editing {
             h_flex()
                 .gap_2()
-                .child(
-                    div()
-                        .id("autosave-status")
-                        .test_support()
-                        .w(rems(6.))
-                        .text_size(rems(12. / 16.))
-                        .text_color(cx.theme().muted_foreground)
-                        .child(tr("ui.autosave_saved")),
-                )
+                .child(icon_button("save-entry", "check", "save"))
+                .child(icon_button("cancel-entry", "x", "cancel"))
                 .child(icon_button("close-editor", "arrow-left", "back"))
                 .child(icon_button("entry-menu", "ellipsis", "ui.entry_actions"))
         } else {
@@ -495,14 +487,6 @@ impl Preview {
             )))
             .child(
                 sidebar::navigation(cx)
-                    .child(
-                        ListItem::new("ungrouped").h(rems(2.25)).child(
-                            h_flex()
-                                .gap_3()
-                                .child(icon("file"))
-                                .child(tr("ui.ungrouped")),
-                        ),
-                    )
                     .child(
                         Button::new("trash")
                             .ghost()

@@ -43,8 +43,7 @@ mod editing;
 use draft::{DraftKind, DraftState};
 use editing::DraftCollection;
 pub use editing::{
-    AUTOSAVE_DELAY_MILLIS, DraftIdentity, DraftRevision, DraftSaveOutcome, DraftSummary,
-    DraftTarget, MetadataDraftView,
+    DraftIdentity, DraftRevision, DraftSaveOutcome, DraftSummary, DraftTarget, MetadataDraftView,
 };
 
 pub use taypeer_core::{AttributeId, DatabaseId, DraftId, EntryId, GroupId, RevisionId};
@@ -461,10 +460,7 @@ impl DatabaseService {
             .document()
             .entries()?
             .into_iter()
-            .filter(|entry| {
-                !query.is_empty()
-                    || group.is_none_or(|group| entry.group_id.as_ref() == Some(group))
-            })
+            .filter(|entry| !query.is_empty() || group.is_none_or(|group| &entry.group_id == group))
             .filter(|entry| matches_query(entry, &query))
             .map(entry_summary)
             .collect();
@@ -498,11 +494,10 @@ impl DatabaseService {
                 .map(|group| (group.id, group.name))
                 .collect();
             for entry in self.entries(&session, None, query)?.value {
-                let group_name = entry
-                    .group_id
-                    .as_ref()
-                    .map(|id| groups.get(id).cloned().ok_or(ServiceError::InvalidDocument))
-                    .transpose()?;
+                let group_name = groups
+                    .get(&entry.group_id)
+                    .cloned()
+                    .ok_or(ServiceError::InvalidDocument)?;
                 results.push(stamped(
                     &session,
                     SearchResult {
@@ -543,25 +538,8 @@ impl DatabaseService {
         session: &SessionToken,
         group: GroupId,
     ) -> Result<SessionValue<DraftView>, ServiceError> {
-        self.start_create_entry_in(session, Some(group))
-    }
-
-    /// Begin a local form without requiring an existing group.
-    pub fn start_create_entry_ungrouped(
-        &mut self,
-        session: &SessionToken,
-    ) -> Result<SessionValue<DraftView>, ServiceError> {
-        self.start_create_entry_in(session, None)
-    }
-
-    /// Begin a new local form at an optional destination, parking the previous editor.
-    pub fn start_create_entry_in(
-        &mut self,
-        session: &SessionToken,
-        group: Option<GroupId>,
-    ) -> Result<SessionValue<DraftView>, ServiceError> {
         let state = self.checked_mut(session)?;
-        let document = state.document().begin_create_entry_in(group)?;
+        let document = state.document().begin_create_entry(group)?;
         let draft = DraftState::new(document, DraftKind::New)?;
         let view = draft.view();
         state.drafts.activate_entry(draft);

@@ -556,7 +556,7 @@ impl Render for EditorView {
             .when_some(self.editor.read(cx).error(), |el, error| {
                 el.child(
                     div()
-                        .id("autosave-error")
+                        .id("save-error")
                         .test_support()
                         .aria_label(tr(error.key()))
                         .p_4()

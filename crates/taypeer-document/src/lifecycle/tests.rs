@@ -38,6 +38,37 @@ fn edit(doc: &mut Document, entry: &EntryId, value: &str) {
     draft.fields_mut().password = Some(value.into());
     doc.save_entry(draft, 20).unwrap();
 }
+
+#[test]
+fn restoring_a_trashed_entry_requires_a_current_user_created_group() {
+    let (mut doc, _, destination, entry) = fixture();
+    transition(
+        &mut doc,
+        LifecycleAction::Trash,
+        ObjectId::Entry(entry.clone()),
+        None,
+        "trash before explicit restoration",
+    );
+    let before = doc.export();
+    assert_eq!(
+        doc.prepare_lifecycle(
+            LifecycleAction::Restore,
+            ObjectId::Entry(entry.clone()),
+            None
+        )
+        .unwrap_err(),
+        Error::InvalidContext
+    );
+    assert_eq!(doc.export(), before);
+    transition(
+        &mut doc,
+        LifecycleAction::Restore,
+        ObjectId::Entry(entry.clone()),
+        Some(destination.clone()),
+        "restore into group",
+    );
+    assert_eq!(doc.entry(&entry).unwrap().group_id, destination);
+}
 fn moving(id: &GroupId, parent: Option<GroupId>) -> GroupMove {
     GroupMove {
         group: id.clone(),
@@ -162,10 +193,22 @@ fn purge_old_delivery_and_late_source_recovery_preserve_generations() {
         name: None,
         fields: None,
     };
+    let before_recovery = doc.export();
+    for mode in [RecoveryMode::Restore, RecoveryMode::Clone] {
+        let mut missing_group = request.clone();
+        missing_group.mode = mode;
+        missing_group.destination = None;
+        assert_eq!(
+            doc.recover_source(&missing_group, &op("recover without group"), 39)
+                .unwrap_err(),
+            Error::InvalidContext
+        );
+        assert_eq!(doc.export(), before_recovery);
+    }
     doc.recover_source(&request, &op("recover"), 40).unwrap();
     let restored = doc.entry(&entry).unwrap();
     assert_ne!(restored.generation, source.address.generation);
-    assert_eq!(restored.group_id, Some(destination.clone()));
+    assert_eq!(restored.group_id, destination.clone());
     assert_eq!(restored.created_at, 3);
     assert_eq!(restored.modified_at, 40);
     assert_eq!(doc.history(&entry).unwrap().len(), 1);
@@ -287,7 +330,7 @@ fn subtree_clone_remaps_all_identities_and_move_noops_keep_history() {
     let before = doc.history(&entry).unwrap().len();
     doc.move_entry(
         &entry,
-        doc.entry(&entry).unwrap().group_id.unwrap(),
+        doc.entry(&entry).unwrap().group_id,
         None,
         &op("no-op"),
         6,

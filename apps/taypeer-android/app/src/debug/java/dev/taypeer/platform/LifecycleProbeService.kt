@@ -15,7 +15,7 @@ class LifecycleProbeService : Service() {
             check(owner == null)
             host.linkToDeath(died, 0)
             owner = host
-            check(bridgeVersion() == 2u)
+            check(bridgeVersion() == 3u)
             return Process.myPid()
         }
         override fun terminate() { Process.killProcess(Process.myPid()) }

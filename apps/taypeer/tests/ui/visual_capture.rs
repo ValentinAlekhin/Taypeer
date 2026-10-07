@@ -19,7 +19,8 @@ pub(super) fn capture_guards_and_supported_viewports() {
     click(&mut app, "edit-entry");
     app.wait("editor installed", |window, _| window.try_find("field-name").is_some());
     assert_eq!(app.capture_checkpoint("editor-forbidden").unwrap_err(), "PNG forbidden for sensitive UI or closed window");
-    click(&mut app, "close-editor");
+    click(&mut app, "save-entry");
+    app.wait("unchanged entry confirmed", |window, _| window.try_find("edit-entry").is_some());
     click_title(&mut app);
     app.update(|window, cx| window.hover("value-None-Password", cx));
     app.pump();

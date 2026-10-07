@@ -743,8 +743,30 @@ impl Fixture {
 fn editor(worker: &mut Worker) -> EditorView {
     serde_json::from_value(worker.request(&Command::EditorView).unwrap()).unwrap()
 }
+fn begin_fixture_entry(worker: &mut Worker) {
+    let groups: Vec<taypeer_services::GroupSummary> =
+        serde_json::from_value(worker.request(&Command::Groups).unwrap()).unwrap();
+    let group = match groups.into_iter().next() {
+        Some(group) => group.id,
+        None => {
+            let group: taypeer_services::GroupSummary = serde_json::from_value(
+                worker
+                    .request(&Command::CreateGroup {
+                        name: "PUBLIC descriptor fixture group".into(),
+                        parent: None,
+                        operation: taypeer_services::new_operation_id().unwrap(),
+                    })
+                    .unwrap(),
+            )
+            .unwrap();
+            group.id
+        }
+    };
+    worker.request(&Command::BeginCreate(group)).unwrap();
+}
+
 fn edit(worker: &mut Worker, title: &str) {
-    worker.request(&Command::BeginCreateUngrouped).unwrap();
+    begin_fixture_entry(worker);
     worker
         .request(&Command::PatchDraft(EntryPatch {
             title: FieldUpdate::Set(title.into()),
@@ -1117,7 +1139,7 @@ fn selected_stream_limits_failure_stale_editor_and_visibility_preserve_state() {
         f.launcher.faults.selected_outputs.lock().unwrap()[&2],
         b"PUBLIC retained output"
     );
-    worker.request(&Command::BeginCreateUngrouped).unwrap();
+    begin_fixture_entry(&mut worker);
     assert!(matches!(
         selected_import(
             &mut worker,
@@ -1139,7 +1161,7 @@ fn selected_stream_limits_failure_stale_editor_and_visibility_preserve_state() {
 fn clean_picker_pin_survives_process_background_without_a_document_revision() {
     let f = Fixture::new();
     let mut worker = f.open(PASSWORD, true).unwrap();
-    worker.request(&Command::BeginCreateUngrouped).unwrap();
+    begin_fixture_entry(&mut worker);
     let clean = editor(&mut worker);
     assert!(!clean.dirty);
     let before = f.launcher.writer.snapshot().unwrap().fingerprint();
@@ -1158,7 +1180,7 @@ fn clean_picker_pin_survives_process_background_without_a_document_revision() {
     let resumed = editor(&mut worker);
     assert_eq!(resumed.identity, pinned);
     assert!(!resumed.dirty);
-    worker.request(&Command::BeginCreateUngrouped).unwrap();
+    begin_fixture_entry(&mut worker);
     let replacement: taypeer_services::DraftIdentity =
         serde_json::from_value(worker.request(&Command::PinActiveForm).unwrap()).unwrap();
     assert_ne!(replacement.draft, pinned.draft);
@@ -1260,7 +1282,7 @@ fn invitation_only_process_returns_public_proof_without_opening_a_document() {
 }
 
 #[test]
-fn descriptor_process_creates_autosaves_and_reopens_the_confirmed_file() {
+fn descriptor_process_creates_confirms_and_reopens_the_saved_file() {
     let f = Fixture::new();
     let mut worker = f.open(PASSWORD, true).unwrap();
     edit(&mut worker, "PUBLIC descriptor entry");

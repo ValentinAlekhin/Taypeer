@@ -146,7 +146,7 @@ impl Document {
                     if parent.status == ObjectStatus::Active
                         && parent.current
                         && !parent.placement_conflict => {}
-                _ if snapshot.placement.as_ref() == Some(placement) => {
+                _ if &snapshot.placement == placement => {
                     conflict = true;
                     if status == ObjectStatus::Active {
                         status = ObjectStatus::Unplaced;
@@ -248,6 +248,12 @@ impl Document {
         destination: Option<GroupId>,
     ) -> Result<PreparedLifecycle, Error> {
         let address = objects::single(&self.doc, &target)?;
+        if action == LifecycleAction::Restore
+            && matches!(target, ObjectId::Entry(_))
+            && destination.is_none()
+        {
+            return Err(Error::InvalidContext);
+        }
         let destination = if action == LifecycleAction::Restore {
             self.destination(destination)?
         } else {
@@ -345,7 +351,7 @@ impl Document {
         self.confirm_lifecycle(&prepared, operation, now)
     }
 
-    pub(super) fn validate_v6_structure(&self) -> Result<(), Error> {
+    pub(super) fn validate_v7_structure(&self) -> Result<(), Error> {
         groups::tree(&self.doc)?;
         let mut owners = BTreeMap::new();
         let mut attachment_owners = BTreeMap::new();

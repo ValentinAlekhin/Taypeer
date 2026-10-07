@@ -114,7 +114,7 @@ impl EntryTableDelegate {
                         url: entry.content.url.clone(),
                         notes: entry.content.notes.replace('\n', " "),
                         modified: stamp(entry.modified),
-                        location: catalog.group_path(&database, entry.group.as_ref()),
+                        location: catalog.group_path(&database, Some(&entry.group)),
                         icon: entry.content.icon.clone(),
                         icon_blob: entry.content.icon_blob.clone(),
                         foreground: entry.content.foreground,
@@ -536,7 +536,7 @@ impl Render for Entries {
         let store = self.store.read(cx);
         let state = store.state();
         let scope = state.scope;
-        let can_add = state.is_unlocked();
+        let can_add = self.store.read(cx).writable(cx) && state.group.is_some();
         let bookmark = state.bookmark.is_some();
         let row_count = self.table.read(cx).delegate().rows.len();
         let menu_store = self.store.clone();

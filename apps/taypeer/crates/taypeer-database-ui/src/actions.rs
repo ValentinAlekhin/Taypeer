@@ -5,7 +5,7 @@ use gpui_kit::*;
 actions!(
     taypeer,
     [
-        /// Commit the active entry draft.
+        /// Confirm the current entry, group, or database metadata snapshot.
         SaveEntry,
         /// Revoke access to open database sessions.
         LockDatabase,
@@ -52,5 +52,11 @@ pub fn bind(cx: &mut App) {
             Some("Taypeer"),
         ),
         KeyBinding::new("escape", CancelEditing, Some("Taypeer")),
+        KeyBinding::new(
+            &taypeer_desktop_platform::primary_shortcut("s"),
+            SaveEntry,
+            Some("TaypeerMetadata"),
+        ),
+        KeyBinding::new("escape", CancelEditing, Some("TaypeerMetadata")),
     ]);
 }

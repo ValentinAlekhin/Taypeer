@@ -208,9 +208,9 @@ mod desktop {
     fn create_entry(app: &mut Session) {
         click(app, "empty-add-group");
         fill(app, "field-name", "PUBLIC group");
-        click(app, "close-metadata");
+        click(app, "save-metadata");
         app.wait("group saved", |window, _| {
-            window.try_find("close-metadata").is_none()
+            window.try_find("save-metadata").is_none()
         });
         click(app, "new-entry");
         app.wait("editor opened", |window, _| {
@@ -219,7 +219,7 @@ mod desktop {
         fill(app, "field-name", "PUBLIC entry");
         fill(app, "field-username", "PUBLIC user");
         fill(app, "field-password", "PUBLIC secret");
-        click(app, "close-editor");
+        click(app, "save-entry");
         app.wait("entry saved", |window, _| {
             window.try_find("edit-entry").is_some() && title_cell(window).is_some()
         });
@@ -382,9 +382,10 @@ mod desktop {
         app.wait("attribute accepted", |window, _| {
             window.try_find("dialog-confirm").is_none()
         });
-        click(&mut app, "close-editor");
+        click(&mut app, "save-entry");
         app.wait("edited entry saved", |window, _| {
-            title_cell(window).is_some_and(|e| e.label() == Some("PUBLIC edited"))
+            window.try_find("edit-entry").is_some()
+                && title_cell(window).is_some_and(|e| e.label() == Some("PUBLIC edited"))
         });
         drop(app);
         let mut reopened = start(directory.path(), "editing");
@@ -501,9 +502,10 @@ mod desktop {
             },
         );
         fill(&mut app, "field-ui.expires", "");
-        click(&mut app, "close-editor");
+        click(&mut app, "save-entry");
         app.wait("restored draft saved", |window, _| {
-            title_cell(window).is_some_and(|e| e.label() == Some("PUBLIC draft"))
+            window.try_find("edit-entry").is_some()
+                && title_cell(window).is_some_and(|e| e.label() == Some("PUBLIC draft"))
         });
         drop(app);
         let mut app = start(directory.path(), "lock-password-reopened");
@@ -633,9 +635,10 @@ mod desktop {
             window.try_find("field-name").is_some()
         });
         fill(app, "field-name", title);
-        click(app, "close-editor");
+        click(app, "save-entry");
         app.wait("local edit persisted", |window, _| {
-            title_cell(window).is_some_and(|e| e.label() == Some(title))
+            window.try_find("edit-entry").is_some()
+                && title_cell(window).is_some_and(|e| e.label() == Some(title))
         });
     }
 
@@ -764,8 +767,8 @@ mod desktop {
             app.wait_idle();
             app.wait_idle();
             app.update(|window, _| {
-                assert!(window.find("close-editor").visible());
-                assert_ne!(window.find("close-editor").disabled(), Some(true));
+                assert!(window.find("save-entry").visible());
+                assert_ne!(window.find("save-entry").disabled(), Some(true));
                 assert_eq!(
                     window.find("field-name").value(),
                     Some("PUBLIC first attempt")
@@ -779,7 +782,7 @@ mod desktop {
             } else {
                 "PUBLIC first attempt"
             };
-            click(&mut app, "close-editor");
+            click(&mut app, "save-entry");
             app.wait("retry saved", |window, _| {
                 window.try_find("edit-entry").is_some()
             });
@@ -791,6 +794,69 @@ mod desktop {
             });
         }
     }
+    fn cancel_waits_for_publication_and_preserves_confirmed_data() {
+        for uncertain in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let mut app = start(directory.path(), "cancel-during-save");
+            let path = create(&mut app, &directory.path().join("PUBLIC.taypeer"));
+            create_entry(&mut app);
+            click(&mut app, "edit-entry");
+            let fault = path.with_extension(if uncertain {
+                "fail-after"
+            } else {
+                "hold-after"
+            });
+            std::fs::write(&fault, b"PUBLIC fault").unwrap();
+            fill_nowait(&mut app, "field-name", "PUBLIC confirmed before cancel");
+            app.update(|window, cx| {
+                window.press(&taypeer_desktop_platform::primary_shortcut("s"), cx)
+            });
+            if uncertain {
+                app.wait_idle();
+                app.wait("uncertain publication is reported", |window, _| {
+                    window.try_find("save-error").is_some()
+                });
+            } else {
+                app.wait("publication started before cancel", |_, _| {
+                    path.with_extension("committed").exists()
+                });
+            }
+            fill_nowait(&mut app, "field-name", "PUBLIC discarded newer input");
+            app.update(|window, cx| window.click("cancel-entry", cx));
+            app.pump();
+            if !uncertain {
+                app.update(|window, _| {
+                    assert!(
+                        window.try_find("field-name").is_some(),
+                        "cancel waits for the started write"
+                    )
+                });
+            }
+            std::fs::remove_file(&fault).unwrap();
+            app.wait(
+                "cancel removes only the remaining local form",
+                |window, _| {
+                    window.try_find("field-name").is_none()
+                        && title_cell(window).is_some_and(|cell| {
+                            cell.label() == Some("PUBLIC confirmed before cancel")
+                        })
+                },
+            );
+            drop(app);
+            let mut reopened = start(directory.path(), "cancel-during-save-reopened");
+            open(&mut reopened, &path);
+            reopened.wait(
+                "confirmed snapshot survives cancel without restoring newer input",
+                |window, _| {
+                    window.try_find("field-name").is_none()
+                        && title_cell(window).is_some_and(|cell| {
+                            cell.label() == Some("PUBLIC confirmed before cancel")
+                        })
+                },
+            );
+        }
+    }
+
     fn lock_during_save_reconciles_the_committed_draft() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("PUBLIC-lock-save.taypeer");
@@ -810,7 +876,7 @@ mod desktop {
         });
         app.system_lock();
         app.wait("lock clears editor", |window, _| {
-            window.try_find("unlock").is_some() && window.try_find("close-editor").is_none()
+            window.try_find("unlock").is_some() && window.try_find("save-entry").is_none()
         });
         app.assert_capture_safe();
         let committed = std::fs::read(&path).unwrap();
@@ -828,9 +894,9 @@ mod desktop {
         assert_eq!(std::fs::read(&path).unwrap(), committed);
     }
 
-    fn autosave_keeps_focus_and_newer_input() {
+    fn manual_save_keeps_newer_input_uncommitted() {
         let directory = tempfile::tempdir().unwrap();
-        let mut app = start(directory.path(), "autosave-newer-input");
+        let mut app = start(directory.path(), "manual-save-newer-input");
         let path = create(&mut app, &directory.path().join("PUBLIC.taypeer"));
         create_entry(&mut app);
         click(&mut app, "edit-entry");
@@ -849,13 +915,25 @@ mod desktop {
             );
             assert_eq!(window.find("field-name").focused(), Some(true));
             assert_ne!(window.find("field-name").disabled(), Some(true));
-            assert!(window.try_find("save-entry").is_none());
+            assert!(window.find("save-entry").visible());
         });
         std::fs::remove_file(path.with_extension("hold-after")).unwrap();
         app.wait_idle();
-        app.wait("newer snapshot saved", |window, _| {
-            title_cell(window).is_some_and(|cell| cell.label() == Some("PUBLIC newer input"))
+        app.wait(
+            "captured snapshot is shown while newer input stays editable",
+            |window, _| {
+                title_cell(window).is_some_and(|cell| cell.label() == Some("PUBLIC captured input"))
+                    && window
+                        .try_find("field-name")
+                        .is_some_and(|field| field.value() == Some("PUBLIC newer input"))
+            },
+        );
+        let snapshot = std::fs::read(&path).unwrap();
+        let started = Instant::now();
+        app.wait("idle does not save later input", |_, _| {
+            started.elapsed() >= Duration::from_millis(700)
         });
+        assert_eq!(std::fs::read(&path).unwrap(), snapshot);
         app.update(|window, _| {
             assert_eq!(
                 window.find("field-name").value(),
@@ -863,11 +941,15 @@ mod desktop {
             );
             assert_eq!(window.find("field-name").focused(), Some(true));
         });
-        click(&mut app, "close-editor");
+        click(&mut app, "save-entry");
+        app.wait("second explicit snapshot saved", |window, _| {
+            window.try_find("field-name").is_none()
+                && title_cell(window).is_some_and(|cell| cell.label() == Some("PUBLIC newer input"))
+        });
         drop(app);
         let confirmed = std::fs::read(&path).unwrap();
         for _ in 0..2 {
-            let mut reopened = start(directory.path(), "autosave-newer-input-reopened");
+            let mut reopened = start(directory.path(), "manual-save-newer-input-reopened");
             open(&mut reopened, &path);
             reopened.wait("latest input retained across reopen", |window, _| {
                 title_cell(window).is_some_and(|cell| cell.label() == Some("PUBLIC newer input"))
@@ -881,95 +963,173 @@ mod desktop {
         }
     }
 
-    fn navigation_resumes_independent_ungrouped_drafts() {
+    fn manual_save_and_dirty_navigation_choices() {
         let directory = tempfile::tempdir().unwrap();
-        let mut app = start(directory.path(), "multiple-drafts");
+        let mut app = start(directory.path(), "manual-save-choices");
         let path = create(&mut app, &directory.path().join("PUBLIC.taypeer"));
-        click(&mut app, "new-entry");
-        fill_nowait(&mut app, "field-username", "PUBLIC draft A");
-        app.update(|window, cx| window.click("new-entry", cx));
-        app.wait("independent empty form opened", |window, _| {
-            window
-                .try_find("field-username")
-                .is_some_and(|field| field.value() == Some(""))
+        app.update(|window, cx| {
+            assert!(window.find("new-entry").visible());
+            assert!(window.try_find("ungrouped").is_none());
+            window.click("new-entry", cx);
         });
-        let first = app.update(|window, _| {
-            gpui_kit::base::test_support::snapshots(window)
-                .iter()
-                .find_map(|element| match element.path().last() {
-                    Some(gpui_kit::ElementId::Name(name)) if name.starts_with("draft-") => {
-                        Some(name.to_string())
-                    }
-                    _ => None,
-                })
-                .expect("first retained draft")
+        app.pump();
+        app.wait_idle();
+        app.update(|window, _| {
+            assert!(
+                window.try_find("save-entry").is_none(),
+                "disabled New Entry ignores activation without a group"
+            );
         });
-        fill_nowait(&mut app, "field-username", "PUBLIC draft B");
-        app.update(|window, cx| window.click("ungrouped", cx));
-        app.wait("navigation durably parked both forms without a dialog", |window, _| {
-            window.try_find("field-name").is_none() && title_cell(window).is_none() && window.try_find("dialog-confirm").is_none()
-                && gpui_kit::base::test_support::snapshots(window).iter().filter(|element| element.path().last().is_some_and(|id| matches!(id, gpui_kit::ElementId::Name(name) if name.starts_with("draft-")))).count() == 2
+        let empty = std::fs::read(&path).unwrap();
+        click(&mut app, "empty-add-group");
+        fill(&mut app, "field-name", "PUBLIC first group");
+        let started = Instant::now();
+        app.wait("group pause leaves archive unchanged", |_, _| {
+            started.elapsed() >= Duration::from_millis(700)
         });
-        drop(app);
-        let mut reopened = start(directory.path(), "multiple-drafts-reopened");
-        open(&mut reopened, &path);
-        reopened.wait(
-            "last active encrypted form resumes automatically",
+        assert_eq!(std::fs::read(&path).unwrap(), empty);
+        app.update(|window, cx| window.press("escape", cx));
+        click(&mut app, "unsaved-stay");
+        app.update(|window, _| {
+            assert_eq!(
+                window.find("field-name").value(),
+                Some("PUBLIC first group")
+            )
+        });
+        app.update(|window, cx| window.press("escape", cx));
+        click(&mut app, "unsaved-discard");
+        app.wait(
+            "discarded group never creates a document object",
+            |window, _| window.try_find("save-metadata").is_none(),
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), empty);
+        click(&mut app, "empty-add-group");
+        fill(&mut app, "field-name", "PUBLIC cancelled group");
+        click(&mut app, "cancel-metadata");
+        app.wait(
+            "metadata Cancel discards without a decision dialog",
             |window, _| {
-                window
-                    .try_find("field-username")
-                    .is_some_and(|field| field.value() == Some("PUBLIC draft B"))
+                window.try_find("save-metadata").is_none()
+                    && window.try_find("unsaved-save").is_none()
             },
         );
-        reopened.update(|window, cx| window.click(first.clone(), cx));
-        reopened.wait("first independent form resumes", |window, _| {
-            window
-                .try_find("field-username")
-                .is_some_and(|field| field.value() == Some("PUBLIC draft A"))
+        assert_eq!(std::fs::read(&path).unwrap(), empty);
+        click(&mut app, "empty-add-group");
+        fill(&mut app, "field-name", "PUBLIC first group");
+        click(&mut app, "save-metadata");
+        app.wait("first saved group enables entry creation", |window, _| {
+            window.try_find("save-metadata").is_none()
+                && window.find("new-entry").disabled() != Some(true)
         });
-        fill_nowait(&mut reopened, "field-name", "PUBLIC A");
-        reopened.update(|window, cx| window.click("ungrouped", cx));
-        reopened.wait(
-            "valid form committed immediately on navigation",
+        click(&mut app, "new-entry");
+        fill(&mut app, "field-name", "PUBLIC unsaved entry");
+        let grouped = std::fs::read(&path).unwrap();
+        let started = Instant::now();
+        app.wait("entry pause leaves archive unchanged", |_, _| {
+            started.elapsed() >= Duration::from_millis(700)
+        });
+        assert_eq!(std::fs::read(&path).unwrap(), grouped);
+        click(&mut app, "close-editor");
+        click(&mut app, "unsaved-stay");
+        app.update(|window, _| {
+            assert_eq!(
+                window.find("field-name").value(),
+                Some("PUBLIC unsaved entry")
+            )
+        });
+        click(&mut app, "close-editor");
+        click(&mut app, "unsaved-discard");
+        app.wait(
+            "discard removes only the current local form",
+            |window, _| window.try_find("field-name").is_none() && title_cell(window).is_none(),
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), grouped);
+        click(&mut app, "new-entry");
+        fill(&mut app, "field-name", "PUBLIC confirmed entry");
+        click(&mut app, "close-editor");
+        click(&mut app, "unsaved-save");
+        app.wait(
+            "save choice confirms the entry and leaves the editor",
             |window, _| {
                 window.try_find("field-name").is_none()
-                    && title_cell(window).is_some_and(|cell| cell.label() == Some("PUBLIC A"))
+                    && title_cell(window)
+                        .is_some_and(|cell| cell.label() == Some("PUBLIC confirmed entry"))
             },
         );
-        let second = reopened.update(|window, _| {
-            gpui_kit::base::test_support::snapshots(window)
-                .iter()
-                .find_map(|element| match element.path().last() {
-                    Some(gpui_kit::ElementId::Name(name)) if name.starts_with("draft-") => {
-                        Some(name.to_string())
-                    }
-                    _ => None,
-                })
-                .expect("second retained draft")
+        click(&mut app, "edit-entry");
+        fill(&mut app, "field-name", "PUBLIC cancelled edit");
+        click(&mut app, "cancel-entry");
+        app.wait(
+            "explicit cancel discards changes without a decision dialog",
+            |window, _| {
+                window.try_find("field-name").is_none() && window.try_find("unsaved-save").is_none()
+            },
+        );
+        click(&mut app, "edit-entry");
+        fill(&mut app, "field-name", "");
+        click(&mut app, "close-editor");
+        click(&mut app, "unsaved-save");
+        app.wait("invalid save keeps the form", |window, _| {
+            window.try_find("save-error").is_some() && window.try_find("field-name").is_some()
         });
-        reopened.update(|window, cx| window.click(second.clone(), cx));
-        reopened.wait("second form keeps its independent input", |window, _| {
-            window
-                .try_find("field-username")
-                .is_some_and(|field| field.value() == Some("PUBLIC draft B"))
-        });
-        fill_nowait(&mut reopened, "field-name", "PUBLIC B");
-        reopened.update(|window, cx| window.click("close-editor", cx));
-        reopened.wait("second form committed", |window, _| {
+        click(&mut app, "cancel-entry");
+        app.wait("invalid form can be discarded", |window, _| {
             window.try_find("field-name").is_none()
         });
-        drop(reopened);
-        let mut final_open = start(directory.path(), "multiple-drafts-confirmed");
-        open(&mut final_open, &path);
-        final_open.wait("both ungrouped entries retained", |window, _| {
-            let snapshots = gpui_kit::base::test_support::snapshots(window);
-            ["PUBLIC A", "PUBLIC B"].iter().all(|label| {
-                snapshots
-                    .iter()
-                    .any(|element| element.label() == Some(*label))
-            })
+        drop(app);
+        let mut reopened = start(directory.path(), "manual-save-choices-reopened");
+        open(&mut reopened, &path);
+        reopened.wait(
+            "only explicitly confirmed entry survives reopen",
+            |window, _| {
+                title_cell(window)
+                    .is_some_and(|cell| cell.label() == Some("PUBLIC confirmed entry"))
+                    && window.try_find("restore-draft").is_none()
+            },
+        );
+    }
+
+    fn metadata_save_keeps_newer_input_uncommitted() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut app = start(directory.path(), "metadata-newer-input");
+        let path = create(&mut app, &directory.path().join("PUBLIC.taypeer"));
+        click(&mut app, "empty-add-group");
+        fill_nowait(&mut app, "field-name", "PUBLIC captured group");
+        std::fs::write(path.with_extension("hold-after"), b"PUBLIC hold").unwrap();
+        app.update(|window, cx| window.press(&taypeer_desktop_platform::primary_shortcut("s"), cx));
+        app.wait(
+            "metadata snapshot committed while response is delayed",
+            |_, _| path.with_extension("committed").exists(),
+        );
+        fill_nowait(&mut app, "field-name", "PUBLIC newer group name");
+        std::fs::remove_file(path.with_extension("hold-after")).unwrap();
+        app.wait_idle();
+        app.update(|window, _| {
+            assert_eq!(
+                window.find("field-name").value(),
+                Some("PUBLIC newer group name")
+            )
         });
-        final_open.update(|window, _| assert!(window.try_find("restore-draft").is_none()));
+        let captured = std::fs::read(&path).unwrap();
+        let started = Instant::now();
+        app.wait(
+            "metadata pause does not publish a second snapshot",
+            |_, _| started.elapsed() >= Duration::from_millis(700),
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), captured);
+        click(&mut app, "save-metadata");
+        app.wait(
+            "second explicit metadata Save closes the form",
+            |window, _| window.try_find("save-metadata").is_none(),
+        );
+        drop(app);
+        let mut reopened = start(directory.path(), "metadata-newer-input-reopened");
+        open(&mut reopened, &path);
+        reopened.wait("latest explicitly saved name survives reopen without a duplicate group", |window, _| {
+            let elements = gpui_kit::base::test_support::snapshots(window);
+            elements.iter().any(|element| element.label() == Some("PUBLIC newer group name"))
+                && elements.iter().filter(|element| matches!(element.path().last(), Some(gpui_kit::ElementId::Name(name)) if name.starts_with("group-node-"))).count() == 1
+        });
     }
 
     fn metadata_forms_resume_and_save_atomically() {
@@ -982,12 +1142,19 @@ mod desktop {
             "field-ui.description",
             "PUBLIC unfinished group description",
         );
-        click(&mut app, "close-metadata");
+        click(&mut app, "save-metadata");
         app.wait(
-            "incomplete group retained locally without creating an object",
+            "invalid metadata remains editable without a document commit",
             |window, _| {
-                window.try_find("close-metadata").is_none()
-                    && window.try_find("empty-add-group").is_some()
+                window.try_find("save-metadata").is_some()
+                    && window.try_find("metadata-name-error").is_some()
+            },
+        );
+        app.system_lock();
+        app.wait(
+            "OS lock preserves the local metadata form and hides input",
+            |window, _| {
+                window.try_find("field-name").is_none() && window.try_find("unlock").is_some()
             },
         );
         drop(app);
@@ -1002,9 +1169,9 @@ mod desktop {
             },
         );
         fill_nowait(&mut resumed, "field-name", "PUBLIC resumed group");
-        resumed.update(|window, cx| window.click("close-metadata", cx));
-        resumed.wait("complete group durably created on close", |window, _| {
-            window.try_find("close-metadata").is_none()
+        resumed.update(|window, cx| window.click("save-metadata", cx));
+        resumed.wait("complete group durably created by Save", |window, _| {
+            window.try_find("save-metadata").is_none()
                 && gpui_kit::base::test_support::snapshots(window)
                     .iter()
                     .any(|element| element.label() == Some("PUBLIC resumed group"))
@@ -1025,10 +1192,10 @@ mod desktop {
             "field-ui.description",
             "PUBLIC renamed description",
         );
-        resumed.update(|window, cx| window.click("close-metadata", cx));
+        resumed.update(|window, cx| window.click("save-metadata", cx));
         resumed.wait(
             "database form closed after durable grouped patch",
-            |window, _| window.try_find("close-metadata").is_none(),
+            |window, _| window.try_find("save-metadata").is_none(),
         );
         click(&mut resumed, "database-history");
         resumed.wait("confirmed database history shown", |window, _| {
@@ -1081,6 +1248,7 @@ mod desktop {
         click(&mut app, "new-entry");
         fill_nowait(&mut app, "field-username", "PUBLIC input before undo");
         app.update(|window, cx| window.click("undo-trash", cx));
+        click(&mut app, "unsaved-discard");
         app.wait("undo restores the exact entry", |window, _| {
             title_cell(window).is_some_and(|cell| cell.label() == Some("PUBLIC entry"))
         });
@@ -1104,14 +1272,15 @@ mod desktop {
         let permissions = std::fs::metadata(parent).unwrap().permissions();
         std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o500)).unwrap();
         fill_nowait(&mut app, "field-name", "PUBLIC unconfirmed input");
-        app.update(|window, cx| window.click("close-editor", cx));
+        click(&mut app, "close-editor");
+        click(&mut app, "unsaved-save");
         app.wait("double failure keeps the editor and its input", |window, _| {
             window.try_find("field-name").is_some_and(|field| field.value() == Some("PUBLIC unconfirmed input"))
                 && gpui_kit::base::test_support::snapshots(window).iter().any(|element| element.label() == Some("The file could not be read or saved. Check the path and access."))
         });
         app.wait_idle();
         app.update(|window, _| {
-            assert!(window.find("close-editor").visible());
+            assert!(window.find("save-entry").visible());
             assert_ne!(window.find("field-name").disabled(), Some(true));
             assert!(window.try_find("dialog-confirm").is_none());
         });
@@ -1194,7 +1363,7 @@ mod desktop {
             .skip(1)
             .filter(|arg| !arg.starts_with("--"))
             .collect();
-        let scenarios: [(&str, fn()); 21] = [
+        let scenarios: &[(&str, fn())] = &[
             (
                 "group_drag_changes_order_and_parent_durably",
                 group_dnd::group_drag_changes_order_and_parent_durably,
@@ -1232,6 +1401,10 @@ mod desktop {
                 double_write_failure_blocks_navigation_but_never_lock,
             ),
             (
+                "metadata_save_keeps_newer_input_uncommitted",
+                metadata_save_keeps_newer_input_uncommitted,
+            ),
+            (
                 "metadata_forms_resume_and_save_atomically",
                 metadata_forms_resume_and_save_atomically,
             ),
@@ -1240,16 +1413,20 @@ mod desktop {
                 trash_is_immediate_and_undo_restores_the_selection,
             ),
             (
-                "autosave_keeps_focus_and_newer_input",
-                autosave_keeps_focus_and_newer_input,
+                "manual_save_keeps_newer_input_uncommitted",
+                manual_save_keeps_newer_input_uncommitted,
             ),
             (
-                "navigation_resumes_independent_ungrouped_drafts",
-                navigation_resumes_independent_ungrouped_drafts,
+                "manual_save_and_dirty_navigation_choices",
+                manual_save_and_dirty_navigation_choices,
             ),
             (
                 "save_failure_can_be_retried_or_edited",
                 save_failure_can_be_retried_or_edited,
+            ),
+            (
+                "cancel_waits_for_publication_and_preserves_confirmed_data",
+                cancel_waits_for_publication_and_preserves_confirmed_data,
             ),
             (
                 "lock_during_save_reconciles_the_committed_draft",

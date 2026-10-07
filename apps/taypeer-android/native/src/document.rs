@@ -17,6 +17,9 @@ pub(crate) fn failure(_: impl std::fmt::Debug) -> AndroidError {
 }
 pub(crate) fn runtime(error: taypeer_runtime::RuntimeError) -> AndroidError {
     match error {
+        taypeer_runtime::RuntimeError::Service(taypeer_services::ServiceError::InvalidInput) => {
+            AndroidError::InvalidInput
+        }
         taypeer_runtime::RuntimeError::Service(taypeer_services::ServiceError::Storage(error)) => {
             match error {
                 taypeer_storage::Error::Io => AndroidError::StorageIo,

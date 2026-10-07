@@ -71,6 +71,65 @@ fn setup() -> (Document, GroupId, EntryId) {
     (document, group.id, entry)
 }
 
+#[test]
+fn a_null_entry_destination_is_rejected_on_load_without_changing_the_source() {
+    let (mut document, _, entry) = setup();
+    let address = objects::single(&document.doc, &ObjectId::Entry(entry)).unwrap();
+    let node = objects::generation_object(&document.doc, &address).unwrap();
+    let mut tx = document.doc.transaction();
+    tx.put(
+        node,
+        "group",
+        codec::encode(&Option::<GroupRef>::None).unwrap(),
+    )
+    .unwrap();
+    tx.commit();
+    let source = document.export();
+    assert_eq!(Document::load(&source).unwrap_err(), Error::InvalidDocument);
+    assert_eq!(document.export(), source);
+}
+
+#[test]
+fn a_null_concurrent_destination_rejects_the_merge_without_applying_other_peer_fields() {
+    let (mut document, _, entry) = setup();
+    let mut peer = document.fork();
+    let mut changed = peer.begin_edit_entry(&entry).unwrap();
+    changed.fields_mut().username = Some("PUBLIC rejected peer login".into());
+    peer.save_entry(changed, 2_000).unwrap();
+    let address = objects::single(&peer.doc, &ObjectId::Entry(entry.clone())).unwrap();
+    let node = objects::generation_object(&peer.doc, &address).unwrap();
+    let mut tx = peer.doc.transaction();
+    tx.put(
+        node,
+        "group",
+        codec::encode(&Option::<GroupRef>::None).unwrap(),
+    )
+    .unwrap();
+    tx.commit();
+
+    let mut local = document.begin_edit_entry(&entry).unwrap();
+    local.fields_mut().notes = Some("PUBLIC retained local note".into());
+    document.save_entry(local, 3_000).unwrap();
+    let before = document.export();
+    assert_eq!(document.merge(&peer).unwrap_err(), Error::InvalidDocument);
+    assert_eq!(document.export(), before);
+    let fields = document.entry(&entry).unwrap().fields.unwrap();
+    assert_eq!(fields.username.as_deref(), Some("PUBLIC original login"));
+    assert_eq!(fields.notes.as_deref(), Some("PUBLIC retained local note"));
+}
+
+#[test]
+fn the_previous_development_document_is_rejected_without_a_migration() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/dev6/extensions.automerge");
+    let source = std::fs::read(&path).unwrap();
+    assert_eq!(
+        Document::load(&source).unwrap_err(),
+        Error::UnsupportedSchema
+    );
+    assert_eq!(std::fs::read(path).unwrap(), source);
+}
+
 fn state(document: &Document, entry: &EntryId, field: EntryField) -> FieldState {
     document
         .entry(entry)
@@ -173,7 +232,7 @@ fn confirmation_is_atomic_exact_and_retryable() {
     document.save_entry(retry.clone(), 9_000).unwrap();
     let snapshot = document.entry(&entry).unwrap();
     let fields = snapshot.fields.unwrap();
-    assert_eq!(snapshot.group_id, Some(group));
+    assert_eq!(snapshot.group_id, group);
     assert_eq!(
         fields.password.as_deref(),
         Some("  PUBLIC e\u{301} пароль \n")

@@ -68,16 +68,6 @@ impl DatabaseService {
         patch: EntryPatch,
         operation: &OperationId,
     ) -> Result<SessionValue<EntryId>, ServiceError> {
-        self.create_entry_in(session, Some(group), patch, operation)
-    }
-    /// Create an entry at an optional destination without retaining an implicit editor.
-    pub fn create_entry_in(
-        &mut self,
-        session: &SessionToken,
-        group: Option<GroupId>,
-        patch: EntryPatch,
-        operation: &OperationId,
-    ) -> Result<SessionValue<EntryId>, ServiceError> {
         let fingerprint = fingerprint(&(&group, &patch))?;
         let now = (self.clock)();
         let state = self.checked_mut(session)?;
@@ -85,7 +75,7 @@ impl DatabaseService {
             return Ok(stamped(session, id));
         }
         let id = state.command(operation, "create_entry", fingerprint, |doc, receipt| {
-            let mut draft = DraftState::new(doc.begin_create_entry_in(group)?, DraftKind::New)?;
+            let mut draft = DraftState::new(doc.begin_create_entry(group)?, DraftKind::New)?;
             let mut fields = draft.view().fields;
             patch.apply(&mut fields)?;
             draft.update(fields)?;

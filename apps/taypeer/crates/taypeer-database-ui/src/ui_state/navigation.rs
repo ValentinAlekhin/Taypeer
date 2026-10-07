@@ -86,8 +86,6 @@ pub enum Route {
 pub enum Destination {
     /// Device settings, after confirming current input durability.
     Settings,
-    /// Entries outside all groups.
-    Ungrouped,
     /// Resume one service-owned local editor.
     Draft(taypeer_core::DraftId),
     /// Return to the database home.
@@ -257,7 +255,7 @@ impl NavigationState {
             });
         }
         self.database = Some(db);
-        self.group = entry.group.clone();
+        self.group = Some(entry.group.clone());
         self.selected = Some(id);
         self.tab = EntryTab::Overview;
         if self.bookmark.is_some() {
@@ -297,7 +295,7 @@ impl NavigationState {
             for entry in db.entries.values() {
                 // Search membership comes from the service response; never reimplement its matching rules.
                 if db.row_ids.contains(&entry.id)
-                    && (!self.query.is_empty() || entry.group == self.group)
+                    && (!self.query.is_empty() || Some(&entry.group) == self.group.as_ref())
                 {
                     rows.push((db.id.clone(), entry.id.clone()));
                 }
@@ -313,7 +311,7 @@ impl NavigationState {
                 Column::Url => entry.content.url.to_lowercase(),
                 Column::Notes => entry.content.notes.to_lowercase(),
                 Column::Modified => format!("{:020}", entry.modified),
-                Column::Location => catalog.group_path(db, entry.group.as_ref()).to_lowercase(),
+                Column::Location => catalog.group_path(db, Some(&entry.group)).to_lowercase(),
             }
         });
         if self.descending {

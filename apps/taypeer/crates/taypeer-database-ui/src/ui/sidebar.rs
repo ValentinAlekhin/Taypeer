@@ -445,22 +445,6 @@ impl Render for Sidebar {
             .child(
                 navigation(cx)
                     .child(
-                        ListItem::new("ungrouped")
-                            .h(rems(2.25))
-                            .selected(self.store.read(cx).state().group.is_none())
-                            .child(
-                                h_flex()
-                                    .gap_3()
-                                    .child(icon("file"))
-                                    .child(tr("ui.ungrouped")),
-                            )
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.store.update(cx, |store, cx| {
-                                    store.navigate(Destination::Ungrouped, window, cx)
-                                })
-                            })),
-                    )
-                    .child(
                         gpui_kit::component::button::Button::new("trash")
                             .ghost()
                             .justify_start()

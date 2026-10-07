@@ -20,6 +20,10 @@ pub use metadata::metadata_preview;
 
 /// Resolve database and shared-form dirty state before application exit.
 pub fn request_quit(store: Entity<WorkspaceStore>, window: &mut Window, cx: &mut App) {
+    if store.read(cx).has_metadata_form() {
+        store.update(cx, |store, cx| store.request_quit(cx));
+        return;
+    }
     taypeer_ui::forms::request_quit(
         std::rc::Rc::new(move |_, cx| {
             store.update(cx, |store, cx| store.request_quit(cx));

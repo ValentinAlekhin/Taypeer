@@ -329,7 +329,19 @@ fn lifecycle_confirmation_is_durable_masked_and_retryable_after_storage_failure(
         )
         .unwrap()
         .value;
-    service.start_create_entry_ungrouped(&session).unwrap();
+    let independent_group = service
+        .create_group(
+            &session,
+            "PUBLIC independent form group".into(),
+            None,
+            &taypeer_services::new_operation_id().unwrap(),
+        )
+        .unwrap()
+        .value
+        .id;
+    service
+        .start_create_entry(&session, independent_group)
+        .unwrap();
     service
         .patch_draft(
             &session,

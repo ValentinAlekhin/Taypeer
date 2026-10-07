@@ -36,7 +36,7 @@
     <string name="new_group">Новая группа</string>
     <string name="add_group">Добавить группу…</string>
     <string name="all_entries">Все записи</string>
-    <string name="ungrouped">Без группы</string>
+    <string name="create_group_first">Создайте группу перед добавлением записи.</string>
     <string name="local_forms">Локальные черновики</string>
     <string name="database_info">Информация о базе</string>
     <string name="entry">Запись</string>
@@ -56,7 +56,12 @@
     <string name="save_dirty">Несохранённые правки</string>
     <string name="save_running">Сохранение…</string>
     <string name="save_saved">Сохранено</string>
-    <string name="save_local">Черновик сохранён на устройстве</string>
+    <string name="save">Сохранить</string>
+    <string name="unsaved_changes">Несохранённые изменения</string>
+    <string name="unsaved_changes_message">Сохранить изменения перед выходом из редактора?</string>
+    <string name="do_not_save">Не сохранять</string>
+    <string name="stay">Остаться</string>
+    <string name="invalid_form">Заполните обязательные поля и исправьте некорректные значения перед сохранением.</string>
     <string name="save_failed">Запись не подтверждена; редактор остаётся открыт</string>
     <string name="discard">Удалить черновик</string>
     <string name="title">Название</string>

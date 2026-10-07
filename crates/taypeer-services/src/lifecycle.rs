@@ -229,20 +229,8 @@ impl DatabaseService {
         review: Option<Vec<String>>,
         operation: &OperationId,
     ) -> Result<SessionValue<Vec<ObjectId>>, ServiceError> {
-        self.move_entry_to(session, entry, Some(group), review, operation)
-    }
-
-    /// Move an entry to a group or explicitly to the ungrouped collection.
-    pub fn move_entry_to(
-        &mut self,
-        session: &SessionToken,
-        entry: &EntryId,
-        group: Option<GroupId>,
-        review: Option<Vec<String>>,
-        operation: &OperationId,
-    ) -> Result<SessionValue<Vec<ObjectId>>, ServiceError> {
         self.lifecycle_change(session, |doc, now| {
-            doc.move_entry_to(entry, group, review, operation, now)
+            doc.move_entry(entry, group, review, operation, now)
         })
     }
 

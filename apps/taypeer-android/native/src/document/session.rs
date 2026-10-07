@@ -380,8 +380,8 @@ pub struct EntryEditor {
     pub form: LocalForm,
     /// Existing entry identity; absent before the first confirmed save.
     pub entry: Option<String>,
-    /// Selected group identity; absent means ungrouped.
-    pub group: Option<String>,
+    /// Required selected group identity.
+    pub group: String,
     /// Exact ordinary entry title.
     pub title: String,
     /// Optional ordinary login.
@@ -406,8 +406,8 @@ pub struct EntryEditor {
 pub struct EntryRow {
     /// Stable identity of the addressed item.
     pub id: String,
-    /// Selected group identity; absent means ungrouped.
-    pub group: Option<String>,
+    /// Required selected group identity.
+    pub group: String,
     /// Exact ordinary entry title.
     pub title: String,
     /// Optional ordinary login.
@@ -424,7 +424,7 @@ pub struct EntryRow {
 fn entry_row(view: taypeer_services::EntryView) -> EntryRow {
     EntryRow {
         id: view.id.to_string(),
-        group: view.group_id.map(|id| id.to_string()),
+        group: view.group_id.to_string(),
         title: view.title,
         username: view.username,
         url: view.url,
@@ -492,8 +492,6 @@ pub struct HistoryRow {
 pub enum SaveState {
     /// Database content and history were durably committed.
     Saved,
-    /// Incomplete input was durably retained locally.
-    LocalDraftSaved,
     /// No effective input change required a database version.
     Unchanged,
 }
@@ -589,7 +587,7 @@ impl DocumentSession {
             .close()
             .map_err(runtime)
     }
-    /// Selected values and groups; a missing group stays ungrouped.
+    /// Selected values and groups; every entry belongs to a group.
     pub fn overview(&self, query: String) -> Result<DocumentOverview, AndroidError> {
         if query.len() > 65536 {
             return Err(AndroidError::InvalidOptions);
@@ -619,7 +617,7 @@ impl DocumentSession {
                 .into_iter()
                 .map(|e| EntryRow {
                     id: e.id.to_string(),
-                    group: e.group_id.map(|id| id.to_string()),
+                    group: e.group_id.to_string(),
                     title: e.title,
                     username: e.username,
                     url: e.url,
@@ -635,20 +633,14 @@ impl DocumentSession {
         self.command(Command::Entry(EntryId::new(identifier(id)?)))
             .map(entry_row)
     }
-    /// Begin or automatically continue an existing entry; absence creates an independent form.
-    pub fn begin_entry(
-        &self,
-        entry: Option<String>,
-        group: Option<String>,
-    ) -> Result<EntryEditor, AndroidError> {
-        let command = match entry {
-            Some(id) => Command::BeginEdit(EntryId::new(identifier(id)?)),
-            None => match group {
-                Some(id) => Command::BeginCreate(GroupId::new(identifier(id)?)),
-                None => Command::BeginCreateUngrouped,
-            },
-        };
-        self.command::<serde_json::Value>(command)?;
+    /// Begin a new entry in a real group; validation belongs to the common service.
+    pub fn begin_create_entry(&self, group: String) -> Result<EntryEditor, AndroidError> {
+        self.command::<serde_json::Value>(Command::BeginCreate(GroupId::new(identifier(group)?)))?;
+        self.editor()
+    }
+    /// Begin or automatically continue an existing entry's local form.
+    pub fn begin_edit_entry(&self, entry: String) -> Result<EntryEditor, AndroidError> {
+        self.command::<serde_json::Value>(Command::BeginEdit(EntryId::new(identifier(entry)?)))?;
         self.editor()
     }
     /// Masked editor values; unchanged passwords are never copied into input fields.
@@ -660,7 +652,7 @@ impl DocumentSession {
             generation,
             form: form(view.identity, view.dirty),
             entry: view.entry.map(|id| id.to_string()),
-            group: view.group.map(|id| id.to_string()),
+            group: view.group.to_string(),
             title: view.fields.title,
             username: view.fields.username,
             url: view.fields.url,
@@ -765,10 +757,6 @@ impl DocumentSession {
                 identity,
                 operation,
             } => (identity, operation, SaveState::Saved),
-            DraftSaveOutcome::LocalDraftSaved {
-                identity,
-                operation,
-            } => (identity, operation, SaveState::LocalDraftSaved),
             DraftSaveOutcome::Unchanged {
                 identity,
                 operation,
@@ -783,7 +771,7 @@ impl DocumentSession {
             state,
         })
     }
-    /// Local encrypted fallback for navigation after a document write failure.
+    /// Retain unfinished forms locally without committing database content or history.
     pub fn persist_forms(&self) -> Result<(), AndroidError> {
         self.command::<serde_json::Value>(Command::PersistDrafts)
             .map(|_| ())
@@ -986,7 +974,7 @@ impl DocumentSession {
         })
         .map(|_| ())
     }
-    /// Return the selected trash object to an explicit group or the ungrouped/root location.
+    /// Return the selected trash object to its group or a root location for groups.
     pub fn undo_trash(
         &self,
         kind: FormKind,

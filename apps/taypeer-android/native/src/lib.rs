@@ -16,6 +16,8 @@ uniffi::setup_scaffolding!();
 pub enum AndroidError {
     /// Invalid generator parameters.
     InvalidOptions,
+    /// The current form is incomplete or invalid and was not committed.
+    InvalidInput,
     /// The imported file could not be verified; no working copy was published.
     InvalidFile,
     /// The cryptographic random source is unavailable.
@@ -85,7 +87,7 @@ pub fn generate_password(options: PasswordOptions) -> Result<String, AndroidErro
 /// Version of the application-owned typed bridge, checked independently of the file format.
 #[uniffi::export]
 pub fn bridge_version() -> u32 {
-    2
+    3
 }
 
 /// Validate a transferred encrypted file before publishing it in the private catalog.

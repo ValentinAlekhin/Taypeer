@@ -44,7 +44,7 @@ class DocumentTest {
         assertNotEquals(android.os.Process.myPid(), manager.process(first).pid)
         assertNotEquals(first.generation(), second.generation())
         val database = first.databaseId()
-        first.beginEntry(null, null)
+        beginPublicEntry(first)
         first.patchEntry(EntryTextField.TITLE, TextEdit.Set("PUBLIC durable entry"))
         val editor = first.patchEntry(EntryTextField.PASSWORD, TextEdit.Set("PUBLIC protected sentinel"))
         val receipt = first.save(editor.form.draft, editor.form.revision, "PUBLIC entry snapshot")
@@ -53,7 +53,7 @@ class DocumentTest {
         assertEquals(1, first.overview("").entries.size)
         assertTrue(second.overview("").entries.isEmpty())
         val id = first.overview("").entries.single().id
-        assertNull(first.entry(id).group)
+        assertEquals(first.overview("").groups.single().id, first.entry(id).group)
         assertEquals(1, first.history(FormKind.ENTRY, id).size)
         first.lock()
         assertThrows(AndroidException::class.java) { first.overview("") }
@@ -69,14 +69,19 @@ class DocumentTest {
     @Test fun confirmedFilesAndIndependentIncompleteFormsSurviveProcessRestart() = fixture { _, manager ->
         val session = manager.create("PUBLIC durable", null, "PUBLIC create", password)
         val database = session.databaseId()
-        session.beginEntry(null, null)
+        beginPublicEntry(session)
         val valid = session.patchEntry(EntryTextField.TITLE, TextEdit.Set("PUBLIC saved"))
         session.save(valid.form.draft, valid.form.revision, "PUBLIC saved snapshot")
         val entry = session.overview("").entries.single().id
-        session.beginEntry(entry, null)
+        session.beginEditEntry(entry)
         val incomplete = session.patchEntry(EntryTextField.TITLE, TextEdit.Set(""))
-        assertEquals(SaveState.LOCAL_DRAFT_SAVED, session.save(incomplete.form.draft, incomplete.form.revision, "PUBLIC incomplete" ).state)
-        session.beginEntry(null, null)
+        val before = File(manager.catalog().single { it.database == database }.path).readBytes()
+        assertThrows(AndroidException.InvalidInput::class.java) {
+            session.save(incomplete.form.draft, incomplete.form.revision, "PUBLIC incomplete")
+        }
+        assertArrayEquals(before, File(manager.catalog().single { it.database == database }.path).readBytes())
+        session.persistForms()
+        beginPublicEntry(session)
         val other = session.patchEntry(EntryTextField.USERNAME, TextEdit.Set("PUBLIC unfinished"))
         session.persistForms()
         assertEquals(2, session.forms().size)
@@ -88,7 +93,7 @@ class DocumentTest {
         assertArrayEquals(ciphertext, File(path).readBytes())
         val reopened = manager.open(path, password)
         assertEquals("PUBLIC saved", reopened.entry(entry).title)
-        val continued = reopened.beginEntry(entry, null)
+        val continued = reopened.beginEditEntry(entry)
         assertEquals(incomplete.form.draft, continued.form.draft)
         assertEquals("", continued.title)
         assertEquals(2, reopened.forms().size)
@@ -108,7 +113,7 @@ class DocumentTest {
             val session = manager.open(working.path, "PUBLIC_SESSION_DRAFT_PASSWORD")
             assertFalse(session.overview("").writable)
             assertEquals(listOf(working.canonicalFile), copies.catalog().map { it.canonicalFile })
-            assertThrows(AndroidException::class.java) { session.beginEntry(null, null) }
+            assertThrows(AndroidException::class.java) { beginPublicEntry(session) }
             assertArrayEquals(bytes, source.readBytes())
             assertArrayEquals(bytes, working.readBytes())
         } finally { assertTrue(source.delete()) }
@@ -148,7 +153,7 @@ class DocumentTest {
                 }
                 try {
                     val session = manager.create("PUBLIC faults", null, "PUBLIC create", password)
-                    session.beginEntry(null, null)
+                    beginPublicEntry(session)
                     val editor = session.patchEntry(EntryTextField.TITLE, TextEdit.Set("PUBLIC retained"))
                     fail.set(true)
                     assertThrows(AndroidException::class.java) { session.save(editor.form.draft, editor.form.revision, "PUBLIC retry" ) }
@@ -207,7 +212,7 @@ class DocumentTest {
             assertTrue(manager.catalog().isEmpty())
             val session = manager.create("PUBLIC pending reopen", null, "PUBLIC actual create", password)
             val database = session.databaseId()
-            session.beginEntry(null, null)
+            beginPublicEntry(session)
             val form = session.patchEntry(EntryTextField.TITLE, TextEdit.Set("PUBLIC retained before reopen")).form
             session.save(form.draft, form.revision, "PUBLIC retained snapshot")
             manager.close(session)

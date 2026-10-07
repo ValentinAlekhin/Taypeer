@@ -7,19 +7,17 @@ use gpui_kit::component::{
     *,
 };
 use gpui_kit::prelude::FluentBuilder;
-use std::time::{Duration, Instant};
 use taypeer_core::{DatabaseMetadataPatch, FieldUpdate, GroupMetadataPatch, OperationId};
 use taypeer_runtime::Command;
 use taypeer_services::{DraftIdentity, DraftSaveOutcome, DraftTarget, MetadataDraftView};
 
 struct Attempt {
-    identity: DraftIdentity,
+    identity: Option<DraftIdentity>,
     input: u64,
     operation: OperationId,
-    ticket: Option<Ticket<DraftSaveOutcome>>,
-    retry_at: Instant,
+    ticket: Option<Ticket<crate::backend::CapturedSnapshot>>,
 }
-/// Window-owned metadata inputs and the immutable publication they are awaiting.
+/// Window-owned metadata input and one explicitly requested immutable publication.
 pub(in crate::ui) struct MetadataForm {
     connection: Connection,
     identity: DraftIdentity,
@@ -28,15 +26,14 @@ pub(in crate::ui) struct MetadataForm {
     icon: Option<taypeer_core::IconRef>,
     input: u64,
     durable: Option<u64>,
-    changed_at: Instant,
     patches: Vec<Ticket<DraftIdentity>>,
     attempt: Option<Attempt>,
-    fallback: Option<(u64, Ticket<()>)>,
     error: Option<FormError>,
-    patch_error: bool,
     closing: bool,
     confirmed: bool,
-    local_only: bool,
+    failed: bool,
+    discard_requested: bool,
+    leave_requested: bool,
     _subscriptions: Vec<Subscription>,
 }
 impl MetadataForm {
@@ -74,15 +71,14 @@ impl MetadataForm {
             icon: view.icon,
             input: 0,
             durable: (!view.dirty).then_some(0),
-            changed_at: Instant::now(),
             patches: Vec::new(),
             attempt: None,
-            fallback: None,
             error: None,
-            patch_error: false,
             closing: false,
             confirmed: false,
-            local_only: false,
+            failed: false,
+            discard_requested: false,
+            leave_requested: false,
             _subscriptions: subscriptions,
         }
     }
@@ -96,9 +92,14 @@ impl MetadataForm {
             return;
         }
         self.input += 1;
-        self.changed_at = Instant::now();
         self.error = None;
-        self.patch_error = false;
+        if self
+            .attempt
+            .as_ref()
+            .is_some_and(|attempt| attempt.ticket.is_none())
+        {
+            self.attempt = None;
+        }
         let name = name.map_or(FieldUpdate::Keep, FieldUpdate::Set);
         let description = description.map_or(FieldUpdate::Keep, FieldUpdate::Set);
         let command = if matches!(self.identity.target, DraftTarget::Database) {
@@ -118,26 +119,92 @@ impl MetadataForm {
         };
         self.patches.push(self.connection.command(command));
     }
-    pub fn request_close(&mut self) {
+    pub fn request_save(&mut self, cx: &App) {
+        if self.saving() || !self.connection.control.is_open() {
+            return;
+        }
+        if let Err(error) = require_name(self.name.read(cx).value().as_str()) {
+            self.error = Some(error);
+            self.closing = false;
+            return;
+        }
+        if self.attempt.is_none() {
+            let Ok(operation) = taypeer_services::new_operation_id() else {
+                self.error = Some(FormError::Backend);
+                return;
+            };
+            self.attempt = Some(Attempt {
+                identity: None,
+                input: self.input,
+                operation,
+                ticket: None,
+            });
+        }
+        let attempt = self
+            .attempt
+            .as_mut()
+            .expect("requested metadata publication exists");
+        attempt.ticket = Some(match &attempt.identity {
+            Some(identity) => self
+                .connection
+                .retry_snapshot(identity.clone(), attempt.operation.clone()),
+            None => self
+                .connection
+                .capture_snapshot(self.identity.draft.clone(), attempt.operation.clone()),
+        });
+        self.error = None;
         self.closing = true;
+    }
+    pub fn request_discard(&mut self) {
+        self.discard_requested = true;
+    }
+    pub fn take_discard(&mut self) -> bool {
+        std::mem::take(&mut self.discard_requested)
+    }
+    pub fn request_leave(&mut self) {
+        self.leave_requested = true;
+    }
+    pub fn take_leave(&mut self) -> bool {
+        std::mem::take(&mut self.leave_requested)
     }
     pub fn closing(&self) -> bool {
         self.closing
     }
+    pub fn stay(&mut self) {
+        self.closing = false;
+    }
     pub fn target(&self) -> &DraftTarget {
         &self.identity.target
+    }
+    pub fn draft_id(&self) -> &taypeer_core::DraftId {
+        &self.identity.draft
+    }
+    pub fn connection(&self) -> &Connection {
+        &self.connection
     }
     pub fn database(&self) -> &DatabaseId {
         &self.connection.database
     }
     pub fn settled(&self) -> bool {
-        self.durable == Some(self.input) && self.patches.is_empty() && self.fallback.is_none()
+        self.durable == Some(self.input)
     }
+    pub fn dirty(&self) -> bool {
+        !self.settled() || self.saving()
+    }
+    pub fn saving(&self) -> bool {
+        self.attempt
+            .as_ref()
+            .is_some_and(|attempt| attempt.ticket.is_some())
+    }
+    #[cfg(feature = "ui-test-support")]
     pub fn pending(&self) -> bool {
-        !self.settled() && self.error.is_none()
+        !self.patches.is_empty() || self.saving()
     }
     pub fn take_confirmed(&mut self) -> bool {
         std::mem::take(&mut self.confirmed)
+    }
+    pub fn take_failed(&mut self) -> bool {
+        std::mem::take(&mut self.failed)
     }
     pub fn poll(&mut self) -> bool {
         let mut changed = false;
@@ -150,55 +217,45 @@ impl MetadataForm {
                 Ok(identity) => self.identity = identity,
                 Err(error) => {
                     self.error = Some(FormError::Runtime(error));
-                    self.patch_error = true;
+                    self.failed = true;
                     self.closing = false;
                 }
             }
             false
         });
-        if let Some((input, ticket)) = &self.fallback
-            && let Some(result) = ticket.try_take()
-        {
-            changed = true;
-            match result {
-                Ok(()) => {
-                    if *input == self.input {
-                        self.durable = Some(*input);
-                    }
-                }
-                Err(error) => {
-                    self.error = Some(FormError::Runtime(error));
-                    self.closing = false;
-                }
-            }
-            self.fallback = None;
-        }
         if let Some(result) = self
             .attempt
             .as_ref()
-            .and_then(|a| a.ticket.as_ref())
+            .and_then(|attempt| attempt.ticket.as_ref())
             .and_then(Ticket::try_take)
         {
             changed = true;
             let attempt = self
                 .attempt
                 .as_mut()
-                .expect("captured ticket belongs to its attempt");
+                .expect("ticket belongs to metadata publication");
             attempt.ticket = None;
+            let result = result.and_then(|captured| {
+                attempt.identity = Some(captured.identity);
+                captured.outcome
+            });
             match result {
                 Ok(outcome) => {
-                    let identity = match &outcome {
-                        DraftSaveOutcome::Saved { identity, .. }
-                        | DraftSaveOutcome::LocalDraftSaved { identity, .. }
-                        | DraftSaveOutcome::Unchanged { identity, .. } => identity,
+                    let (identity, operation) = match &outcome {
+                        DraftSaveOutcome::Saved {
+                            identity,
+                            operation,
+                        }
+                        | DraftSaveOutcome::Unchanged {
+                            identity,
+                            operation,
+                        } => (identity, operation),
                     };
-                    let operation = match &outcome {
-                        DraftSaveOutcome::Saved { operation, .. }
-                        | DraftSaveOutcome::LocalDraftSaved { operation, .. }
-                        | DraftSaveOutcome::Unchanged { operation, .. } => operation,
-                    };
-                    if identity != &attempt.identity || operation != &attempt.operation {
+                    if Some(identity) != attempt.identity.as_ref()
+                        || operation != &attempt.operation
+                    {
                         self.error = Some(FormError::Backend);
+                        self.failed = true;
                         self.closing = false;
                     } else {
                         if attempt.input == self.input {
@@ -210,8 +267,6 @@ impl MetadataForm {
                                 target => target,
                             };
                         }
-                        self.local_only =
-                            matches!(outcome, DraftSaveOutcome::LocalDraftSaved { .. });
                         self.confirmed = true;
                         self.error = None;
                         self.attempt = None;
@@ -219,58 +274,18 @@ impl MetadataForm {
                 }
                 Err(error) => {
                     self.error = Some(FormError::Runtime(error));
-                    attempt.retry_at = Instant::now() + Duration::from_secs(1);
-                    if self.closing {
-                        self.fallback =
-                            Some((self.input, self.connection.command(Command::PersistDrafts)));
+                    self.failed = true;
+                    self.closing = false;
+                    if matches!(
+                        error,
+                        taypeer_runtime::RuntimeError::Service(
+                            taypeer_services::ServiceError::InvalidInput
+                        )
+                    ) || attempt.input != self.input
+                    {
+                        self.attempt = None;
                     }
                 }
-            }
-        }
-        if !self.patch_error
-            && self.patches.is_empty()
-            && self.fallback.is_none()
-            && self.connection.control.is_open()
-            && self.durable != Some(self.input)
-        {
-            let now = Instant::now();
-            let due = self.closing
-                || now.duration_since(self.changed_at)
-                    >= Duration::from_millis(taypeer_services::AUTOSAVE_DELAY_MILLIS);
-            if due
-                && self
-                    .attempt
-                    .as_ref()
-                    .is_none_or(|a| a.ticket.is_none() && a.retry_at <= now)
-            {
-                if self.attempt.is_none() {
-                    match taypeer_services::new_operation_id() {
-                        Ok(operation) => {
-                            self.attempt = Some(Attempt {
-                                identity: self.identity.clone(),
-                                input: self.input,
-                                operation,
-                                ticket: None,
-                                retry_at: now,
-                            })
-                        }
-                        Err(_) => {
-                            self.error = Some(FormError::Backend);
-                            self.closing = false;
-                            return true;
-                        }
-                    }
-                }
-                let attempt = self
-                    .attempt
-                    .as_mut()
-                    .expect("attempt created before submission");
-                attempt.ticket = Some(self.connection.command(Command::SaveDraftSnapshot {
-                    draft: attempt.identity.draft.clone(),
-                    revision: attempt.identity.revision,
-                    operation: attempt.operation.clone(),
-                }));
-                changed = true;
             }
         }
         changed
@@ -307,6 +322,19 @@ impl Render for MetadataForm {
                 .into_any_element()
         });
         v_flex()
+            .key_context("TaypeerMetadata")
+            .on_action(cx.listener(|this, _: &crate::actions::SaveEntry, _, cx| {
+                this.request_save(cx);
+                cx.stop_propagation();
+                cx.notify();
+            }))
+            .on_action(
+                cx.listener(|this, _: &crate::actions::CancelEditing, _, cx| {
+                    this.request_leave();
+                    cx.stop_propagation();
+                    cx.notify();
+                }),
+            )
             .text_sm()
             .child(metadata_fields(
                 &self.name,
@@ -315,21 +343,6 @@ impl Render for MetadataForm {
                 icon,
                 cx,
             ))
-            .child(
-                div()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(tr(if !self.settled() {
-                        "ui.autosave_pending"
-                    } else if self.local_only {
-                        "ui.draft_saved"
-                    } else if self.input == 0
-                        && matches!(self.identity.target, DraftTarget::NewGroup { .. })
-                    {
-                        "ui.autosave_ready"
-                    } else {
-                        "ui.autosave_saved"
-                    })),
-            )
             .when_some(self.error, |el, error| {
                 el.child(div().text_color(cx.theme().danger).child(tr(error.key())))
             })
@@ -412,21 +425,13 @@ pub fn metadata_preview(window: &mut Window, cx: &mut App) -> AnyView {
     }
     impl Render for Preview {
         fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-            v_flex()
-                .px_6()
-                .text_sm()
-                .child(metadata_fields(
-                    &self.name,
-                    &self.description,
-                    false,
-                    Some(icon_choice(default_button("group-icon"), "folder").into_any_element()),
-                    cx,
-                ))
-                .child(
-                    div()
-                        .text_color(cx.theme().muted_foreground)
-                        .child(tr("ui.autosave_ready")),
-                )
+            v_flex().px_6().text_sm().child(metadata_fields(
+                &self.name,
+                &self.description,
+                false,
+                Some(icon_choice(default_button("group-icon"), "folder").into_any_element()),
+                cx,
+            ))
         }
     }
     let name = input("Сервисы", false, window, cx);
@@ -451,7 +456,7 @@ pub(in crate::ui) fn show(
     let form = cx.new(|cx| MetadataForm::new(connection, view, window, cx));
     let focus = form.read(cx).name.clone();
     let retained = form.clone();
-    window.open_dialog(cx, move |dialog, window, _| {
+    window.open_dialog(cx, move |dialog, window, cx| {
         let close = form.clone();
         dialog
             .title(tr(title))
@@ -461,22 +466,40 @@ pub(in crate::ui) fn show(
             .close_button(false)
             .child(form.clone())
             .footer(
-                h_flex().justify_end().child(
-                    default_button("close-metadata")
-                        .label(tr("close"))
-                        .on_click(move |_, _, cx| {
-                            close.update(cx, |form, cx| {
-                                form.request_close();
-                                cx.notify();
-                            })
-                        }),
-                ),
+                h_flex()
+                    .justify_end()
+                    .gap_2()
+                    .child(
+                        default_button("cancel-metadata")
+                            .label(tr("cancel"))
+                            .on_click({
+                                let cancel = form.clone();
+                                move |_, _, cx| {
+                                    cancel.update(cx, |form, cx| {
+                                        form.request_discard();
+                                        cx.notify();
+                                    })
+                                }
+                            }),
+                    )
+                    .child(
+                        Button::new("save-metadata")
+                            .primary()
+                            .label(tr("save"))
+                            .disabled(form.read(cx).saving())
+                            .on_click(move |_, _, cx| {
+                                close.update(cx, |form, cx| {
+                                    form.request_save(cx);
+                                    cx.notify();
+                                })
+                            }),
+                    ),
             )
             .on_cancel({
                 let close = form.clone();
                 move |_, _, cx| {
                     close.update(cx, |form, cx| {
-                        form.request_close();
+                        form.request_leave();
                         cx.notify();
                     });
                     false

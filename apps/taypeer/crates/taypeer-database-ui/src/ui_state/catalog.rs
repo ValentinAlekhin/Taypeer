@@ -44,7 +44,7 @@ pub(crate) struct Revision {
 #[derive(Clone)]
 pub(crate) struct Entry {
     pub id: EntryId,
-    pub group: Option<GroupId>,
+    pub group: GroupId,
     pub content: EntryContent,
     pub revisions: Vec<Revision>,
     pub created: i64,

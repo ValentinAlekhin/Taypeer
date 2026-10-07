@@ -6,7 +6,7 @@ use taypeer_core::{ClientCapabilities, OperationId};
 const CORPUS_PASSWORD: &[u8] = b"PUBLIC_SESSION_DRAFT_PASSWORD";
 const CASES: [&str; 3] = ["empty", "populated", "conflicts"];
 fn corpus() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/dev6")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/dev7")
 }
 fn draft_path(path: &Path) -> PathBuf {
     path.with_file_name(format!(

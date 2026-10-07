@@ -36,7 +36,7 @@
     <string name="new_group">New group</string>
     <string name="add_group">Add group…</string>
     <string name="all_entries">All entries</string>
-    <string name="ungrouped">Ungrouped</string>
+    <string name="create_group_first">Create a group before adding an entry.</string>
     <string name="local_forms">Local drafts</string>
     <string name="database_info">Database information</string>
     <string name="entry">Entry</string>
@@ -56,7 +56,12 @@
     <string name="save_dirty">Unsaved changes</string>
     <string name="save_running">Saving…</string>
     <string name="save_saved">Saved</string>
-    <string name="save_local">Draft saved on this device</string>
+    <string name="save">Save</string>
+    <string name="unsaved_changes">Unsaved changes</string>
+    <string name="unsaved_changes_message">Save your changes before leaving this editor?</string>
+    <string name="do_not_save">Do not save</string>
+    <string name="stay">Stay</string>
+    <string name="invalid_form">Complete the required fields and correct invalid values before saving.</string>
     <string name="save_failed">Could not confirm a save; the editor remains open</string>
     <string name="discard">Discard draft</string>
     <string name="title">Title</string>

@@ -36,7 +36,7 @@ pub(super) fn editor_password_commands_preserve_keep_clear_and_typed_input() {
         );
     });
     click(&mut app, "editor-password-eye");
-    click(&mut app, "close-editor");
+    click(&mut app, "save-entry");
     app.wait("replacement saved", |window, _| {
         window.try_find("edit-entry").is_some()
     });
@@ -59,7 +59,7 @@ pub(super) fn editor_password_commands_preserve_keep_clear_and_typed_input() {
         "explicit password clear updates native input",
         |window, _| window.find("field-password").value() == Some(""),
     );
-    click(&mut app, "close-editor");
+    click(&mut app, "save-entry");
     app.wait("clear saved", |window, _| {
         window.try_find("edit-entry").is_some()
     });
@@ -118,7 +118,7 @@ pub(super) fn labels_focus_fields_without_moving_values() {
     });
     const NOTES: &str = "PUBLIC first line\nPUBLIC second line";
     fill(&mut app, "field-notes", NOTES);
-    click(&mut app, "close-editor");
+    click(&mut app, "save-entry");
     app.wait("notes saved", |window, _| {
         window.try_find("edit-entry").is_some()
     });

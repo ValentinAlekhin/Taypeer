@@ -1,15 +1,14 @@
 //! Editable widget values and ordered delivery to the service-owned draft.
 use super::*;
 use crate::backend::{Connection, Ticket};
-use std::time::{Duration, Instant};
 use taypeer_runtime::Command;
 use taypeer_services::{
     BinaryEdit, BinaryRequest, BinaryTarget, EditorView, EntryPatch, FieldUpdate,
 };
 use zeroize::Zeroize;
 
-mod autosave;
-pub(crate) use autosave::SaveEvent;
+mod saving;
+pub(crate) use saving::SaveEvent;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum EntryField {
@@ -68,12 +67,10 @@ impl EntryField {
 pub(crate) struct EditorStore {
     connection: Connection,
     identity: taypeer_services::DraftIdentity,
-    last_input: Instant,
     durable_revision: Option<u64>,
-    snapshot: Option<autosave::SaveAttempt>,
+    snapshot: Option<saving::SaveAttempt>,
     save_event: Option<SaveEvent>,
     content: EntryContent,
-    dirty: bool,
     preview: Option<taypeer_services::IconPreview>,
     error: Option<FormError>,
     save_error: Option<FormError>,
@@ -93,12 +90,10 @@ impl EditorStore {
         let mut result = Self {
             connection,
             identity: view.identity.clone(),
-            last_input: Instant::now(),
             durable_revision: (!view.dirty).then_some(0),
             snapshot: None,
             save_event: None,
             content: EntryContent::default(),
-            dirty: view.dirty,
             preview: None,
             error: None,
             save_error: None,
@@ -114,7 +109,6 @@ impl EditorStore {
     }
     fn install(&mut self, view: EditorView) {
         self.identity = view.identity.clone();
-        self.dirty = view.dirty;
         self.content = EntryContent {
             title: view.fields.title,
             username: view.fields.username.unwrap_or_default(),
@@ -168,27 +162,8 @@ impl EditorStore {
     pub fn editable(&self) -> bool {
         self.connection.control.is_open()
     }
-    pub fn save_blocked(&self) -> bool {
-        self.error.is_some()
-    }
     pub fn unacknowledged(&self) -> bool {
         !self.pending.is_empty() || self.forms_pending > 0
-    }
-    pub fn status_key(&self) -> &'static str {
-        if !self.durably_current() {
-            "ui.autosave_pending"
-        } else if self.dirty {
-            "ui.draft_saved"
-        } else if self.revision == 0
-            && matches!(
-                self.identity.target,
-                taypeer_services::DraftTarget::NewEntry { .. }
-            )
-        {
-            "ui.autosave_ready"
-        } else {
-            "ui.autosave_saved"
-        }
     }
     pub fn error(&self) -> Option<FormError> {
         self.error.or(self.save_error)
@@ -212,7 +187,6 @@ impl EditorStore {
         match result {
             Ok(()) => {
                 self.save_error = None;
-                self.dirty = true;
                 self.needs_projection = true;
                 self.error = None;
             }
@@ -227,7 +201,6 @@ impl EditorStore {
         self.input_changed();
         self.needs_projection = true;
         self.pending.push(self.connection.command(command));
-        self.dirty = true;
         self.error = None;
     }
     pub fn binary(&mut self, edit: BinaryEdit) {
@@ -356,7 +329,13 @@ impl EditorStore {
     }
     fn input_changed(&mut self) {
         self.revision += 1;
-        self.last_input = Instant::now();
+        if self
+            .snapshot
+            .as_ref()
+            .is_some_and(|attempt| !attempt.saving())
+        {
+            self.snapshot = None;
+        }
     }
     pub fn set_field(&mut self, field: EntryField, value: String) {
         if !self.editable() || field.value(&self.content) == value {

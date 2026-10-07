@@ -16,7 +16,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import java.util.UUID
 
-enum class SaveLabel { CLEAN, DIRTY, SAVING, SAVED, LOCAL, FAILED }
+enum class SaveLabel { CLEAN, DIRTY, SAVING, SAVED, FAILED }
 data class EntryInput(val source: EntryEditor, val title: String = source.title,
     val username: String = source.username.orEmpty(), val password: String = "",
     val url: String = source.url.orEmpty(), val notes: String = source.notes.orEmpty(),
@@ -53,8 +53,9 @@ class DocumentState(application: Application) : AndroidViewModel(application) {
     private var appliedInputRevision = 0L
     private var secretEpoch = 0L
     private val cleanup = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private var saveJob: Job? = null
     private val receipts = mutableMapOf<Pair<String, ULong>, String>()
+    private val saveAttempts = mutableMapOf<String, SaveAttempt>()
+    private var pendingNavigation: PendingNavigation? = null
     private val retryEdits = linkedMapOf<String, suspend (DocumentSession) -> Unit>()
     private val pendingUnpins = linkedSetOf<Pair<String, String>>()
     var catalog by mutableStateOf<List<WorkingCopyView>>(emptyList()); private set
@@ -85,16 +86,21 @@ class DocumentState(application: Application) : AndroidViewModel(application) {
     fun selectDatabaseImport(uri: Uri?) { databaseImport = uri }
     var undo by mutableStateOf<UndoTarget?>(null); private set
     var selectedGroup by mutableStateOf<String?>(null); private set
-    var ungrouped by mutableStateOf(false); private set
     var query by mutableStateOf(""); private set
     var saveLabel by mutableStateOf(SaveLabel.CLEAN); private set
     var error by mutableStateOf(false); private set
     var opening by mutableStateOf(false); private set
     var navigating by mutableStateOf(false); private set
+    var navigationDecision by mutableStateOf(false); private set
+    var invalidInput by mutableStateOf(false); private set
+    val editingBlocked get() = navigating || navigationDecision
     var generator by mutableStateOf(false)
     var secrecyEpoch by mutableStateOf(0L); private set
 
     private data class Binding(val session: DocumentSession, val epoch: Long, val database: String, val generation: ULong)
+    private data class SaveAttempt(val form: LocalForm, val operation: String, val input: Long)
+    private data class SaveCompletion(val form: LocalForm, val input: Long)
+    private data class PendingNavigation(val binding: Binding, val draft: String, val action: suspend (Binding) -> Unit)
     init {
         viewModelScope.launch {
             for (command in commands) {
@@ -128,7 +134,10 @@ class DocumentState(application: Application) : AndroidViewModel(application) {
                 catch (cancelled: CancellationException) { throw cancelled }
                 catch (failure: Exception) {
                     if (session === binding.session && epoch == binding.epoch && binding.session.access() != SessionAccess.OPEN) clearSensitive()
-                    else if (current(binding)) { error = true; saveLabel = SaveLabel.FAILED; navigating = false }
+                    else if (current(binding)) {
+                        invalidInput = failure is AndroidException.InvalidInput
+                        error = !invalidInput; saveLabel = SaveLabel.FAILED; navigating = false
+                    }
                 }
             }
         }
@@ -145,15 +154,18 @@ class DocumentState(application: Application) : AndroidViewModel(application) {
     fun unlock(copy: WorkingCopyView, password: String) = open { it.open(copy.path, password) }
     fun import(uri: Uri, password: String) = open { it.import(uri, password) }
     private fun open(action: (DocumentManager) -> DocumentSession) {
+        if (binding() != null) {
+            navigate { openResolved(action) }
+        } else openResolved(action)
+    }
+    private fun openResolved(action: (DocumentManager) -> DocumentSession) {
         val requestedEpoch = epoch
         val previousBinding = binding()
-        saveJob?.cancel(); opening = true; navigating = true; error = false
+        opening = true; navigating = true; error = false; invalidInput = false
         enqueue {
             if (epoch != requestedEpoch) return@enqueue
             val owner = manager.await()
             if (previousBinding != null) {
-                if (!current(previousBinding)) return@enqueue
-                flush(previousBinding)
                 if (!current(previousBinding)) return@enqueue
             }
             val previous = session
@@ -184,7 +196,10 @@ class DocumentState(application: Application) : AndroidViewModel(application) {
         val view = io { binding.session.overview(expectedQuery) }
         val local = io { binding.session.forms() }
         if (current(binding) && view.database == binding.database && view.generation == binding.generation) {
-            if (query == expectedQuery) overview = view
+            if (query == expectedQuery) {
+                overview = view
+                if (selectedGroup != null && view.groups.none { it.id == selectedGroup }) selectedGroup = null
+            }
             forms = local
         }
     }
@@ -194,23 +209,68 @@ class DocumentState(application: Application) : AndroidViewModel(application) {
         if (!current(binding)) return
         entry = editor?.let(::EntryInput); metadata = descriptive?.let(::MetadataInput); inspectedEntry = null
         activeForm = editor?.form ?: descriptive?.form
+        if (editor != null) selectedGroup = editor.group
         inputRevision++; appliedInputRevision = inputRevision; revealed = ""; history = null; historicalEntry = null; historicalRevision = null
         saveLabel = if (activeForm?.dirty == true) SaveLabel.DIRTY else SaveLabel.CLEAN
+        saveAttempts[form.draft]?.let { attempt ->
+            if (attempt.form.revision == activeForm?.revision) saveAttempts[form.draft] = attempt.copy(input = inputRevision)
+        }
         loadEntryTab(binding)
     }
     private fun navigate(action: suspend (Binding) -> Unit) {
-        saveJob?.cancel(); navigating = true
+        if (editingBlocked || binding() == null) return
+        navigating = true
         bound { binding ->
-            flush(binding)
-            if (current(binding)) { action(binding); navigating = false; refresh(binding) }
+            replayEdits(binding)
+            if (!current(binding)) return@bound
+            val form = activeForm
+            if (form != null && hasUnsavedInput()) {
+                pendingNavigation = PendingNavigation(binding, form.draft, action)
+                navigationDecision = true; navigating = false
+            } else {
+                form?.let { discard(binding, it.draft) }
+                if (current(binding)) { action(binding); navigating = false; refresh(binding) }
+            }
         }
     }
-    fun chooseGroup(group: String?, onlyUngrouped: Boolean = false) = navigate { binding ->
-        selectedGroup = group; ungrouped = onlyUngrouped; clearEditor()
+    private fun hasUnsavedInput() = activeForm?.dirty == true || inputRevision != appliedInputRevision || retryEdits.isNotEmpty()
+    fun stay() { pendingNavigation = null; navigationDecision = false; navigating = false }
+    fun saveNavigation() {
+        val pending = pendingNavigation ?: return
+        val clickedInput = inputRevision
+        navigating = true
+        bound { binding ->
+            if (binding != pending.binding || activeForm?.draft != pending.draft) return@bound
+            val saved = saveSnapshot(binding, clickedInput)
+            if (saved == null || inputRevision != saved.input) { navigating = false; return@bound }
+            discard(binding, saved.form.draft)
+            if (current(binding)) {
+                pendingNavigation = null; navigationDecision = false
+                pending.action(binding); navigating = false; refresh(binding)
+            }
+        }
+    }
+    fun discardNavigation() {
+        val pending = pendingNavigation ?: return
+        navigating = true
+        bound { binding ->
+            if (binding != pending.binding || activeForm?.draft != pending.draft) return@bound
+            discard(binding, pending.draft)
+            if (current(binding)) {
+                pendingNavigation = null; navigationDecision = false
+                pending.action(binding); navigating = false; refresh(binding)
+            }
+        }
+    }
+    fun chooseGroup(group: String?) = navigate {
+        selectedGroup = group; clearEditor()
     }
     fun beginEntry(id: String? = null) = navigate { binding ->
-        val editor = io { binding.session.beginEntry(id, selectedGroup) }
-        if (current(binding)) { entry = EntryInput(editor); metadata = null; inspectedEntry = null; activeForm = editor.form; inputRevision++; appliedInputRevision = inputRevision; if (id == null) entryTab = 0; loadEntryTab(binding) }
+        val editor = io {
+            if (id != null) binding.session.beginEditEntry(id)
+            else binding.session.beginCreateEntry(selectedGroup ?: throw AndroidException.InvalidInput())
+        }
+        if (current(binding)) { if (id == null) entryTab = 0; loadForm(binding, editor.form) }
     }
     fun selectEntry(id: String) = navigate { binding ->
         val view = io { binding.session.entry(id) }
@@ -219,13 +279,13 @@ class DocumentState(application: Application) : AndroidViewModel(application) {
     }
     fun beginMetadata(kind: FormKind, group: String? = null) = navigate { binding ->
         val editor = io { binding.session.beginMetadata(kind, group, selectedGroup) }
-        if (current(binding)) { metadata = MetadataInput(editor); entry = null; inspectedEntry = null; activeForm = editor.form; inputRevision++; appliedInputRevision = inputRevision }
+        if (current(binding)) loadForm(binding, editor.form)
     }
     fun resumeForm(form: LocalForm) = navigate { binding ->
         io { binding.session.resumeForm(form.draft) }; loadForm(binding, form)
     }
     fun deleteForm(form: LocalForm) = bound { binding ->
-        io { binding.session.deleteForm(form.draft) }
+        discard(binding, form.draft)
         if (current(binding)) { if (activeForm?.draft == form.draft) clearEditor(); refresh(binding) }
     }
     fun search(value: String) {
@@ -236,7 +296,7 @@ class DocumentState(application: Application) : AndroidViewModel(application) {
     }
     fun edit(field: EntryTextField, value: String, clear: Boolean = false) {
         val input = entry ?: return
-        if (navigating) return
+        if (editingBlocked) return
         entry = when (field) {
             EntryTextField.TITLE -> input.copy(title = value)
             EntryTextField.USERNAME -> input.copy(username = value)
@@ -248,24 +308,24 @@ class DocumentState(application: Application) : AndroidViewModel(application) {
     }
     fun editExpiry(value: String) {
         val input = entry ?: return
-        if (navigating) return
+        if (editingBlocked) return
         entry = input.copy(expiry = value)
         patch("expiry") { it.patchExpiry(value).form }
     }
     fun editTags(value: String) {
         val input = entry ?: return
-        if (navigating) return
+        if (editingBlocked) return
         entry = input.copy(tags = value)
         patch("tags") { it.patchTags(if (value.isEmpty()) emptyList() else value.split('\n')).form }
     }
     fun setIcon(key: String?) {
-        if (navigating || entry == null) return
+        if (editingBlocked || entry == null) return
         val operation = newOperation()
         appearance = (appearance ?: AppearanceView(null, null, null, null)).copy(lucide = key, image = null)
         patch("icon") { it.setIcon(key, operation).form }
     }
     fun setColors(foreground: ColorEdit, background: ColorEdit) {
-        if (navigating || entry == null) return
+        if (editingBlocked || entry == null) return
         val operation = newOperation()
         val old = appearance ?: AppearanceView(null, null, null, null)
         appearance = old.copy(
@@ -275,6 +335,7 @@ class DocumentState(application: Application) : AndroidViewModel(application) {
         patch(address) { it.setColors(foreground, background, operation).form }
     }
     fun setGroupIcon(key: String?) {
+        if (editingBlocked) return
         val draft = activeForm?.draft ?: return
         patch("metadata:icon") { it.patchGroupIcon(draft, key?.let(TextEdit::Set) ?: TextEdit.Clear).form }
     }
@@ -306,16 +367,16 @@ class DocumentState(application: Application) : AndroidViewModel(application) {
     }
     fun enableExpiry(enabled: Boolean) {
         val input = entry ?: return
-        if (navigating) return
+        if (editingBlocked) return
         entry = input.copy(expiryEnabled = enabled)
         patch("expiry") { it.patchExpiry(if (enabled) input.expiry else null).form }
     }
     fun prepareAttachment(replacement: String?, launch: (String) -> Unit) {
         val form = activeForm ?: return
-        if (entry == null || navigating) return
-        saveJob?.cancel(); navigating = true
+        if (entry == null || editingBlocked) return
+        navigating = true
         bound { binding ->
-            flush(binding)
+            replayEdits(binding)
             attachmentSelection?.let(::requestUnpin)
             attachmentSelection = null
             releaseAbandonedPins(binding)
@@ -328,10 +389,10 @@ class DocumentState(application: Application) : AndroidViewModel(application) {
         }
     }
     fun prepareExport(entry: String, revision: String?, blob: String, launch: (String) -> Unit) {
-        if (navigating) return
-        saveJob?.cancel(); navigating = true
+        if (editingBlocked) return
+        navigating = true
         bound { binding ->
-            flush(binding)
+            replayEdits(binding)
             attachmentSelection?.let(::requestUnpin)
             attachmentSelection = null
             releaseAbandonedPins(binding)
@@ -415,7 +476,7 @@ class DocumentState(application: Application) : AndroidViewModel(application) {
     }
     fun editMetadata(name: String? = null, description: String? = null, clearDescription: Boolean = false) {
         val input = metadata ?: return
-        if (navigating) return
+        if (editingBlocked) return
         metadata = input.copy(name = name ?: input.name, description = description ?: input.description)
         val form = input.source.form
         patch(if (name != null) "metadata:name" else "metadata:description") {
@@ -424,6 +485,7 @@ class DocumentState(application: Application) : AndroidViewModel(application) {
         }
     }
     fun editAttribute(id: String?, name: String, value: String?, protected: Boolean, remove: Boolean = false) {
+        if (editingBlocked) return
         var response: EntryEditor? = null
         patch("attribute:${id ?: name}", {
             val view = response
@@ -434,10 +496,11 @@ class DocumentState(application: Application) : AndroidViewModel(application) {
         }
     }
     private fun patch(address: String, applied: (() -> Unit)? = null, action: (DocumentSession) -> LocalForm) {
+        if (editingBlocked) return
         val draft = activeForm?.draft ?: return
         activity()
         val expectedInput = ++inputRevision
-        saveLabel = SaveLabel.DIRTY; error = false
+        saveLabel = SaveLabel.DIRTY; error = false; invalidInput = false
         bound { binding ->
             if (activeForm?.draft != draft) return@bound
             retryEdits[address] = { native ->
@@ -450,53 +513,110 @@ class DocumentState(application: Application) : AndroidViewModel(application) {
                 if (inputRevision == expectedInput) saveLabel = SaveLabel.DIRTY
             }
         }
-        saveJob?.cancel()
-        saveJob = viewModelScope.launch { delay(500); saveNow() }
     }
-    fun saveNow() { saveJob?.cancel(); bound { flush(it) } }
-    private suspend fun flush(binding: Binding) {
+    private suspend fun replayEdits(binding: Binding) {
         for ((address, retry) in retryEdits.toMap()) {
             retry(binding.session)
             if (!current(binding)) return
             retryEdits.remove(address)
         }
-        val capturedInput = appliedInputRevision
-        val captured = activeForm ?: return
-        if (!captured.dirty) return
-        val operation = receipts.getOrPut(captured.draft to captured.revision, ::newOperation)
-        saveLabel = SaveLabel.SAVING
+    }
+    fun saveNow() {
+        if (editingBlocked || saveLabel == SaveLabel.SAVING) return
+        val clickedInput = inputRevision
+        bound { binding ->
+            val saved = saveSnapshot(binding, clickedInput) ?: return@bound
+            if (inputRevision == saved.input) closeForm(binding, saved.form.draft)
+        }
+    }
+    fun cancelForm() {
+        if (editingBlocked) return
+        val draft = activeForm?.draft ?: return
+        navigating = true
+        bound { binding -> closeForm(binding, draft) }
+    }
+    private suspend fun discard(binding: Binding, draft: String) {
+        // The service reconciles any uncertain attempt before cancelling the form;
+        // repeating Save here could commit a known unsaved snapshot.
+        io { binding.session.deleteForm(draft) }
+        saveAttempts.remove(draft)
+        receipts.keys.removeAll { it.first == draft }
+        attachmentSelection?.let { selected ->
+            val selectedDraft = when (selected) {
+                is AttachmentSelection.Import -> selected.draft
+                is AttachmentSelection.Export -> selected.draft
+            }
+            if (selected.database == binding.database && selectedDraft == draft) attachmentSelection = null
+        }
+        pendingUnpins.remove(binding.database to draft)
+    }
+    private suspend fun closeForm(binding: Binding, draft: String) {
+        if (!current(binding) || activeForm?.draft != draft) return
+        navigating = true
+        val id = entry?.source?.entry
+        discard(binding, draft)
+        val view = id?.let { io { binding.session.entry(it) } }
+        val information = id?.let { io { binding.session.entryProperties(it) } }
+        if (current(binding)) {
+            clearEditor(); inspectedEntry = view; properties = information; appearance = information?.appearance
+            navigating = false; refresh(binding); loadEntryTab(binding)
+        }
+    }
+    private suspend fun saveSnapshot(binding: Binding, clickedInput: Long): SaveCompletion? {
+        replayEdits(binding)
+        if (!current(binding)) return null
+        val captured = activeForm ?: return null
+        val attempt = saveAttempts[captured.draft] ?: run {
+            // This queued action runs after edits preceding the click and before
+            // subsequent patches. Capture the service's acknowledged revision.
+            val exact = if (entry != null) io { binding.session.editor().form }
+                else io { binding.session.metadata(captured.draft).form }
+            if (!current(binding) || exact.draft != captured.draft) return null
+            SaveAttempt(exact, receipts.getOrPut(exact.draft to exact.revision, ::newOperation), clickedInput)
+                .also { saveAttempts[exact.draft] = it }
+        }
+        saveLabel = SaveLabel.SAVING; invalidInput = false; error = false
         try {
-            val saved = io { binding.session.save(captured.draft, captured.revision, operation) }
-            if (!current(binding) || activeForm?.draft != captured.draft || saved.database != binding.database || saved.generation != binding.generation) return
+            val saved = io { binding.session.save(attempt.form.draft, attempt.form.revision, attempt.operation) }
+            if (!current(binding) || activeForm?.draft != captured.draft || saved.database != binding.database || saved.generation != binding.generation) return null
             // Refresh identity only. Keyboard input and focus belong to this existing UI form.
             val updated = if (entry != null) {
                 val view = io { binding.session.editor() }
-                if (!current(binding)) return
+                if (!current(binding)) return null
                 entry = entry?.copy(source = view); view.form
             } else {
                 val view = io { binding.session.metadata(captured.draft) }
-                if (!current(binding)) return
+                if (!current(binding)) return null
                 metadata = metadata?.copy(source = view); view.form
             }
             activeForm = updated
-            if (captured.kind == FormKind.NEW_GROUP && saved.state == SaveState.SAVED) { selectedGroup = updated.target; ungrouped = false }
-            saveLabel = if (inputRevision != capturedInput) SaveLabel.DIRTY else when (saved.state) {
+            saveAttempts.remove(captured.draft)
+            if (captured.kind == FormKind.NEW_GROUP && saved.state == SaveState.SAVED) selectedGroup = updated.target
+            saveLabel = if (inputRevision != attempt.input) SaveLabel.DIRTY else when (saved.state) {
                 SaveState.SAVED -> SaveLabel.SAVED
-                SaveState.LOCAL_DRAFT_SAVED -> SaveLabel.LOCAL
                 SaveState.UNCHANGED -> SaveLabel.CLEAN
             }
             error = false; refresh(binding)
+            return SaveCompletion(updated, attempt.input)
         } catch (cancelled: CancellationException) { throw cancelled }
         catch (failure: Exception) {
             if (binding.session.access() != SessionAccess.OPEN) {
                 if (session === binding.session && epoch == binding.epoch) clearSensitive()
-                return
+                return null
             }
-            io { binding.session.persistForms() }
-            if (current(binding)) { error = true; saveLabel = SaveLabel.LOCAL }
+            val invalid = failure is AndroidException.InvalidInput
+            if (invalid) {
+                saveAttempts.remove(captured.draft)
+                receipts.remove(attempt.form.draft to attempt.form.revision)
+            }
+            val retained = try { io { binding.session.persistForms() }; true }
+                catch (cancelled: CancellationException) { throw cancelled }
+                catch (_: Exception) { false } // Preserve the original failed Save and keep its editor.
+            if (current(binding)) { invalidInput = invalid; error = !invalid || !retained; saveLabel = SaveLabel.FAILED }
+            return null
         }
     }
-    fun showHistory(kind: FormKind, target: String?) = navigate { binding ->
+    fun showHistory(kind: FormKind, target: String?) = bound { binding ->
         val rows = io { binding.session.history(kind, target) }
         if (current(binding)) { history = HistorySelection(kind, target, rows); historicalEntry = null; revealed = "" }
     }
@@ -531,7 +651,8 @@ class DocumentState(application: Application) : AndroidViewModel(application) {
         }
     }
     fun restoreRevision(entry: String, revision: String, operation: String) = navigate { binding ->
-        val group = inspectedEntry?.group ?: this.entry?.source?.group
+        val group = inspectedEntry?.group ?: this.entry?.source?.group ?: historicalEntry?.group
+            ?: throw AndroidException.InvalidInput()
         val restored = io { binding.session.restoreRevision(entry, revision, group, operation) }
         val view = io { binding.session.entry(restored) }
         if (current(binding)) { clearEditor(); inspectedEntry = view; dismissHistory(); loadEntryTab(binding) }
@@ -621,11 +742,13 @@ class DocumentState(application: Application) : AndroidViewModel(application) {
         appearance = null; properties = null; entryHistory = emptyList()
         inspectedAttributes = emptyList(); attachments = emptyList()
         historicalAttachments = emptyList(); historicalAttributes = emptyList()
-        retryEdits.clear(); hideSecrets(); inputRevision++; saveLabel = SaveLabel.CLEAN
+        retryEdits.clear(); hideSecrets(); inputRevision++; appliedInputRevision = inputRevision
+        saveLabel = SaveLabel.CLEAN; invalidInput = false
     }
-    private fun clearContent() { clearEditor(); overview = null; forms = emptyList(); history = null; historicalEntry = null; historicalRevision = null; policy = null; undo = null; query = ""; selectedGroup = null; ungrouped = false; hideSecrets() }
+    private fun clearContent() { clearEditor(); overview = null; forms = emptyList(); history = null; historicalEntry = null; historicalRevision = null; policy = null; undo = null; query = ""; selectedGroup = null; hideSecrets() }
     private fun clearSensitive() {
-        epoch++; secrecyEpoch++; saveJob?.cancel(); clearContent(); opening = false; navigating = false; error = false
+        epoch++; secrecyEpoch++; pendingNavigation = null; navigationDecision = false
+        clearContent(); opening = false; navigating = false; error = false
         val clearedEpoch = epoch
         val old = session; session = null
         while (commands.tryReceive().isSuccess) { /* Drop pending entered JVM values immediately. */ }

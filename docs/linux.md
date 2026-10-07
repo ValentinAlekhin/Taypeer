@@ -4,7 +4,8 @@
 credentials, Linux lifecycle/буфер и Nix-пакет реализованы. Это ограниченный
 экспериментальный срез; проверки безопасности и выпуска остаются открытыми.
 
-Автоматизация dev6 запланирована по [automation-plan.md](automation-plan.md).
+Текущий dev7-срез использует обязательную группу и сохранение формы по кнопке.
+Прежний [план автоматизации](automation-plan.md) сохранён как исторический.
 Linux использует те же сервисные снимки, коллекцию локальных черновиков,
 внутренний каталог и автоматическое объединение, что macOS/Android. Общий
 `PlatformState` владеет SessionController, типизированными событиями, активностью
@@ -16,9 +17,8 @@ Linux использует те же сервисные снимки, колле
 из исторических результатов ниже.
 
 
-Общий host/profile определяет для GUI и CLI `$XDG_DATA_HOME/taypeer/profiles/default` с fallback
-`$HOME/.local/share/taypeer/profiles/default`; явный `--profile PATH` имеет
-приоритет. Системная директория определяется через `directories::BaseDirs`,
+Общий host/profile определяет для desktop `$XDG_DATA_HOME/taypeer/profiles/default` с fallback
+`$HOME/.local/share/taypeer/profiles/default`. Системная директория определяется через `directories::BaseDirs`,
 суффикс приложения остаётся явным; существующие профили не перемещаются
 автоматически. Общий GPUI UI сохраняет закреплённый GPUI Kit, системную тему и
 системные файловые диалоги. Linux использует Ctrl-сочетания и собственный app ID;

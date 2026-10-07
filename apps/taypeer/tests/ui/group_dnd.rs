@@ -15,9 +15,9 @@ fn add_group(app: &mut Session, name: &str) -> SharedString {
     let before = app.update(|window, _| groups(window));
     click(app, "add-group");
     fill_nowait(app, "field-name", name);
-    app.update(|window, cx| window.click("close-metadata", cx));
+    app.update(|window, cx| window.click("save-metadata", cx));
     app.wait("group durably created", |window, _| {
-        window.try_find("close-metadata").is_none() && groups(window).len() == before.len() + 1
+        window.try_find("save-metadata").is_none() && groups(window).len() == before.len() + 1
     });
     app.update(|window, _| {
         groups(window)
@@ -104,18 +104,14 @@ pub(super) fn group_drag_changes_order_and_parent_durably() {
     let a = add_group(&mut app, "PUBLIC A");
     let b = add_group(&mut app, "PUBLIC B");
     let c = add_group(&mut app, "PUBLIC C");
-    click(&mut app, "ungrouped");
-    app.wait("ungrouped clears tree selection", |window, _| {
-        [&a, &b, &c].iter().all(|row| !selected(window, row))
-    });
-
+    choose(&mut app, &a);
     drag(&mut app, &c, drop_zone(&a, "before"));
     order(&mut app, &[&c, &a, &b]);
     app.update(|window, _| {
         assert!(
-            [&a, &b, &c].iter().all(|row| !selected(window, row)),
-            "reorder retains ungrouped selection"
-        );
+            selected(window, &a),
+            "reorder retains selected active group"
+        )
     });
     choose(&mut app, &b);
     drag(&mut app, &b, drop_zone(&c, "after"));
@@ -160,11 +156,12 @@ pub(super) fn group_drag_changes_order_and_parent_durably() {
     choose(&mut app, &a);
     click(&mut app, "new-entry");
     fill_nowait(&mut app, "field-name", "PUBLIC input before group move");
-    // Do not wait for autosave: the gesture must flush the latest input itself.
+    // A dirty editor must be resolved explicitly before the gesture changes the tree.
     app.update(|window, cx| window.drag_to(c.clone(), drop_zone(&b, "after"), cx));
     app.pump();
+    click(&mut app, "unsaved-save");
     app.wait("move saves the open editor first", |window, _| {
-        window.try_find("close-editor").is_none()
+        window.try_find("save-entry").is_none()
             && title_cell(window)
                 .is_some_and(|cell| cell.label() == Some("PUBLIC input before group move"))
     });

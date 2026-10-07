@@ -79,7 +79,7 @@ impl From<automerge::AutomergeError> for Error {
 pub struct EntryDraft {
     database_id: DatabaseId,
     entry_id: EntryId,
-    group_id: Option<GroupId>,
+    group_id: GroupId,
     generation: GenerationId,
     revision_id: RevisionId,
     base: Vec<ChangeHash>,
@@ -92,9 +92,9 @@ impl EntryDraft {
     pub fn entry_id(&self) -> &EntryId {
         &self.entry_id
     }
-    /// Destination group, or no group for an ungrouped entry.
-    pub fn group_id(&self) -> Option<&GroupId> {
-        self.group_id.as_ref()
+    /// Owning user-created destination group.
+    pub fn group_id(&self) -> &GroupId {
+        &self.group_id
     }
     /// Identity of this immutable confirmation attempt.
     pub fn revision_id(&self) -> &RevisionId {
@@ -388,19 +388,7 @@ impl Document {
 
     /// Opens an empty local form and captures the current document heads.
     pub fn begin_create_entry(&self, group: GroupId) -> Result<EntryDraft, Error> {
-        self.begin_create_entry_in(Some(group))
-    }
-
-    /// Open an empty form without creating an implicit group.
-    pub fn begin_create_entry_ungrouped(&self) -> Result<EntryDraft, Error> {
-        self.begin_create_entry_in(None)
-    }
-
-    /// Open an empty local form at an optional group destination.
-    pub fn begin_create_entry_in(&self, group: Option<GroupId>) -> Result<EntryDraft, Error> {
-        if let Some(group) = &group {
-            self.require_group(group)?;
-        }
+        self.require_group(&group)?;
         let entry_id = EntryId::new(random_id());
         Ok(EntryDraft {
             database_id: self.database_id.clone(),
@@ -521,9 +509,7 @@ impl Document {
         if draft.database_id != self.database_id {
             return Err(Error::InvalidContext);
         }
-        if let Some(group) = &draft.group_id {
-            self.require_group(group)?;
-        }
+        self.require_group(&draft.group_id)?;
         draft.fields.validate()?;
         if draft
             .base
@@ -560,10 +546,10 @@ impl Document {
             if address.generation != draft.generation {
                 return Err(Error::InvalidContext);
             }
-        } else if let Some(group) = &draft.group_id {
+        } else {
             // An old create form must not silently save under a closed parent lifetime.
             let basis = self.doc.fork_at(&draft.base)?;
-            let parent = ObjectId::Group(group.clone());
+            let parent = ObjectId::Group(draft.group_id.clone());
             if objects::single(&basis, &parent)? != objects::single(&self.doc, &parent)? {
                 return Err(Error::InvalidContext);
             }
@@ -622,11 +608,8 @@ impl Document {
             }
             let (_, entry) =
                 objects::initialize(&mut tx, &ObjectId::Entry(draft.entry_id.clone()))?;
-            let destination = draft
-                .group_id
-                .as_ref()
-                .map(|group| objects::single(&tx, &ObjectId::Group(group.clone()))?.group_ref())
-                .transpose()?;
+            let destination =
+                objects::single(&tx, &ObjectId::Group(draft.group_id.clone()))?.group_ref()?;
             tx.put(&entry, "group", encode(&destination)?)?;
             tx.put(&entry, "created_at", now)?;
             tx.put_object(&entry, "attributes", ObjType::Map)?;
@@ -755,7 +738,7 @@ impl Document {
         Ok(id.clone())
     }
 
-    /// Return active entries with deterministic selected fields and optional groups.
+    /// Return active entries with deterministic selected fields and owning groups.
     pub fn entries(&self) -> Result<Vec<EntrySnapshot>, Error> {
         let root = object(&self.doc, &ROOT, "entries")?;
         let groups = self.groups()?;
@@ -768,11 +751,7 @@ impl Document {
                 continue;
             }
             let snapshot = read_entry(&self.doc, &id, None)?;
-            if snapshot
-                .group_id
-                .as_ref()
-                .is_none_or(|id| groups.iter().any(|group| &group.id == id))
-            {
+            if groups.iter().any(|group| group.id == snapshot.group_id) {
                 result.push(snapshot);
             }
         }

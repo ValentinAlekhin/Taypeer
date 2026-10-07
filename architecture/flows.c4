@@ -11,9 +11,9 @@ views 'Сценарии' {
     taypeer.desktop <- taypeer.sessions 'Подтверждено только в памяти; актуальное поколение'
   }
   dynamic view save {
-    title 'Автосохранение снимка'
+    title 'Сохранение снимка по кнопке'
     description 'Планируемая интеграция macOS UI; Android вызывает те же сценарии через UniFFI. При ошибке записи форма остаётся доступной.'
-    taypeer.desktop -> taypeer.sessions 'Снимок после 500 мс без ввода либо при переходе'
+    taypeer.desktop -> taypeer.sessions 'Явно подтвердить снимок с обязательной группой записи'
     taypeer.sessions -> taypeer.core 'Проверить команду'
     taypeer.sessions -> taypeer.document 'Подготовить изменение'
     taypeer.sessions -> taypeer.crypto 'Зашифровать'
@@ -93,44 +93,44 @@ views 'Сценарии' {
 views 'Локальный файл' {
   dynamic view binarySave {
     title 'Вложения и сохранение бинарного черновика'
-    taypeer.cli -> taypeer.secretWorker 'Добавить файл или явно загрузить иконку'
+    taypeer.desktop -> taypeer.secretWorker 'Добавить файл или явно загрузить иконку'
     taypeer.secretWorker -> taypeer.sessions 'Проверить текущую сессию и черновик'
     taypeer.sessions -> taypeer.iconLoader 'Явная загрузка и проверка изображения при необходимости'
     taypeer.sessions -> taypeer.storage 'Зашифрованное временное содержимое и дедупликация'
     taypeer.sessions -> taypeer.local 'Собственный бинарный черновик'
-    taypeer.cli -> taypeer.secretWorker 'Подтвердить запись с ID операции'
+    taypeer.desktop -> taypeer.secretWorker 'Подтвердить запись с ID операции'
     taypeer.sessions -> taypeer.document 'Ссылки, варианты и одна сохранённая версия'
     taypeer.sessions -> taypeer.storage 'Проверить удержание и атомарно записать секции'
     taypeer.storage -> taypeer.vault 'Каталог, документ и нужные blobs в одном файле'
-    taypeer.cli <- taypeer.secretWorker 'Надёжно сохранённый результат'
+    taypeer.desktop <- taypeer.secretWorker 'Надёжно сохранённый результат'
   }
-  dynamic view cliSession {
-    title 'Командная сессия и блокировка'
-    description 'CLI использует отдельный процесс БД. Завершение процесса не доказывает очистку копий терминала, swap или физической RAM.'
-    taypeer.cli -> taypeer.secretWorker 'Открыть БД и выполнить команду'
+  dynamic view desktopSession {
+    title 'Desktop-сессия и блокировка'
+    description 'Desktop использует отдельный процесс БД. Завершение процесса не доказывает очистку копий UI, swap или физической RAM.'
+    taypeer.desktop -> taypeer.secretWorker 'Открыть БД и выполнить команду'
     taypeer.secretWorker -> taypeer.sessions 'Команда текущей сессии'
     taypeer.sessions -> taypeer.document 'Подготовить изменение'
     taypeer.sessions -> taypeer.crypto 'Зашифровать кандидат'
     taypeer.sessions -> taypeer.storage 'Зафиксировать одним писателем'
     taypeer.secretWorker <- taypeer.sessions 'Подтверждённый результат'
-    taypeer.cli <- taypeer.secretWorker 'Ограниченное представление'
-    taypeer.cli -> taypeer.sessionGuard 'Активность, ручная блокировка или истечение таймера'
+    taypeer.desktop <- taypeer.secretWorker 'Ограниченное представление'
+    taypeer.desktop -> taypeer.sessionGuard 'Активность, ручная блокировка или истечение таймера'
     taypeer.sessionGuard -> taypeer.secretWorker 'Немедленно запретить команды и старые ответы'
     taypeer.secretWorker -> taypeer.sessions 'Закрыть доступ и сохранить черновик'
     taypeer.sessionGuard -> taypeer.secretWorker 'Завершить процесс; не ждать дольше двух секунд'
-    taypeer.cli <- taypeer.sessionGuard 'Причина блокировки и результат закрытия'
+    taypeer.desktop <- taypeer.sessionGuard 'Причина блокировки и результат закрытия'
   }
   dynamic view lifecycle {
     title 'Подтверждение корзины и очистки'
-    taypeer.cli -> taypeer.secretWorker 'Подготовить точный выбор объектов'
+    taypeer.desktop -> taypeer.secretWorker 'Подготовить точный выбор объектов'
     taypeer.secretWorker -> taypeer.sessions 'Проверить сессию'
     taypeer.sessions -> taypeer.document 'Контекст, поколения и выбранное поддерево'
-    taypeer.cli <- taypeer.secretWorker 'Предпросмотр операции'
-    taypeer.cli -> taypeer.secretWorker 'Подтвердить выбор с ID операции'
+    taypeer.desktop <- taypeer.secretWorker 'Предпросмотр операции'
+    taypeer.desktop -> taypeer.secretWorker 'Подтвердить выбор с ID операции'
     taypeer.secretWorker -> taypeer.sessions 'Проверить сессию и отсутствие черновика'
     taypeer.sessions -> taypeer.document 'Кандидат с отметками и квитанцией повтора'
     taypeer.sessions -> taypeer.storage 'Надёжно сохранить кандидат'
-    taypeer.cli <- taypeer.secretWorker 'Подтверждённый результат'
+    taypeer.desktop <- taypeer.secretWorker 'Подтверждённый результат'
   }
   dynamic view fileSave {
     title 'Подтверждение записи в локальном файле'
@@ -144,7 +144,7 @@ views 'Локальный файл' {
     taypeer.coordinator -> taypeer.storage 'Атомарная надёжная запись'
     taypeer.storage -> taypeer.vault 'Заменить файл и синхронизировать'
     taypeer.secretWorker <- taypeer.coordinator 'Результат фиксации'
-    taypeer.desktop <- taypeer.secretWorker 'Подтвердить ревизию снимка; редактор остаётся открытым'
+    taypeer.desktop <- taypeer.secretWorker 'Подтвердить ревизию; закрыть форму только без нового ввода'
   }
 }
 
@@ -160,7 +160,7 @@ views 'Потоковые вложения Android' {
     taypeer.secretWorker -> taypeer.sessions 'Проверить форму, квоту и точный повтор'
     taypeer.sessions -> taypeer.storage 'Зашифровать поток в BlobStore без plaintext staging'
     taypeer.secretWorker -> taypeer.coordinator 'Сохранить зашифрованный локальный черновик'
-    taypeer.android <- taypeer.ffi 'Актуальная форма; обычное автосохранение снимка'
+    taypeer.android <- taypeer.ffi 'Актуальный черновик; запись БД требует кнопки Сохранить'
     taypeer.ffi -> taypeer.androidPlatform 'Освободить capability при завершении или отказе'
   }
 }
@@ -168,45 +168,45 @@ views 'Потоковые вложения Android' {
 views 'Разбор сетевых источников' {
   dynamic view inspectReceived {
     title 'Просмотр и извлечение непринятых изменений'
-    description 'Просмотр изолирован от текущего документа. Подтверждение создаёт изменения действующего автора и долговечную квитанцию происхождения.'
-    taypeer.cli -> taypeer.secretWorker 'Выбрать исходное изменение и запись'
+    description 'Общий Rust runtime; подключение просмотра источников к UI отложено. Изолированный просмотр и подтверждение сохраняют происхождение.'
+    taypeer.desktop -> taypeer.secretWorker 'Выбрать исходное изменение и запись'
     taypeer.secretWorker -> taypeer.sessions 'Проверить сессию и точный выбор'
     taypeer.sessions -> taypeer.trust 'Проверить подписи исходников и зависимости'
     taypeer.sessions -> taypeer.document 'Изолированное представление выбранного источника'
-    taypeer.cli <- taypeer.secretWorker 'Маскированный просмотр'
-    taypeer.cli -> taypeer.secretWorker 'Извлечь выбранное или явно удалить источник'
+    taypeer.desktop <- taypeer.secretWorker 'Маскированный просмотр'
+    taypeer.desktop -> taypeer.secretWorker 'Извлечь выбранное или явно удалить источник'
     taypeer.secretWorker -> taypeer.sessions 'Подготовить данные и квитанцию повтора'
     taypeer.sessions -> taypeer.document 'Новое авторское изменение с происхождением'
     taypeer.secretWorker -> taypeer.coordinator 'Зашифрованный кандидат с точным поколением'
     taypeer.coordinator -> taypeer.storage 'Атомарно сохранить результат и квитанцию'
-    taypeer.cli <- taypeer.secretWorker 'Подтверждённый результат'
+    taypeer.desktop <- taypeer.secretWorker 'Подтверждённый результат'
   }
   dynamic view collectReceived {
     title 'Освобождение зашифрованных секций'
-    description 'Доступные данные, конфликты, история и непринятые источники определяют удержание. Неизвестные ссылки останавливают освобождение.'
-    taypeer.cli -> taypeer.secretWorker 'Запросить очистку рабочей копии'
+    description 'Общий Rust runtime; UI очистки секций отложен. Данные, история и непринятые источники определяют удержание; неизвестные ссылки запрещают освобождение.'
+    taypeer.desktop -> taypeer.secretWorker 'Запросить очистку рабочей копии'
     taypeer.secretWorker -> taypeer.sessions 'Проверить сессию и текущий control'
     taypeer.sessions -> taypeer.document 'Получить ссылки доступных и отложенных данных'
     taypeer.sessions -> taypeer.trust 'Проверить исходные подписи ожидающих пакетов'
     taypeer.secretWorker -> taypeer.coordinator 'Checkpoint, удержания и точное поколение'
     taypeer.coordinator -> taypeer.storage 'Атомарно заменить состав ciphertext'
-    taypeer.cli <- taypeer.secretWorker 'Подтверждённое освобождение либо причина удержания'
+    taypeer.desktop <- taypeer.secretWorker 'Подтверждённое освобождение либо причина удержания'
   }
 
   dynamic view recoverTrust {
     title 'Новый доверенный набор из читаемой копии'
     description 'Исходный файл не изменяется. Старые подписи, ключи и непринятые данные сохраняются как происхождение, без переноса полномочий.'
-    taypeer.cli -> taypeer.secretWorker 'Новый файл, пароль и ID восстановления'
+    taypeer.desktop -> taypeer.secretWorker 'Новый файл, пароль и ID восстановления'
     taypeer.secretWorker -> taypeer.sessions 'Проверить читаемую сессию и источник'
     taypeer.sessions -> taypeer.trust 'Создать независимый genesis с локальным управляющим'
     taypeer.sessions -> taypeer.crypto 'Новый ключ; защитить исторический ciphertext и keyring'
     taypeer.secretWorker -> taypeer.coordinator 'Передать только зашифрованный seed нового файла'
     taypeer.coordinator -> taypeer.storage 'Создать отдельный файл без перезаписи источника'
-    taypeer.cli <- taypeer.secretWorker 'Надёжно созданный новый доверенный набор'
-    taypeer.cli -> taypeer.host 'Связать recovery receipt с прежним root и точным ID операции'
+    taypeer.desktop <- taypeer.secretWorker 'Надёжно созданный новый доверенный набор'
+    taypeer.desktop -> taypeer.host 'Связать recovery receipt с прежним root и точным ID операции'
     taypeer.host -> taypeer.local 'Надёжно сохранить публичную квитанцию и защищённую регистрацию'
-    taypeer.cli -> taypeer.sessionGuard 'Закрыть прежний worker и writer перед явным открытием'
-    taypeer.cli -> taypeer.host 'Принять только квитанцию завершённого восстановления'
+    taypeer.desktop -> taypeer.sessionGuard 'Закрыть прежний worker и writer перед явным открытием'
+    taypeer.desktop -> taypeer.host 'Принять только квитанцию завершённого восстановления'
     taypeer.host -> taypeer.local 'Атомарно сменить catalog item; сохранить прежний файл'
   }
 

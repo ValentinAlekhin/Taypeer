@@ -365,7 +365,7 @@ fn failed_binary_save_preserves_the_document_and_operation_can_be_retried() {
 }
 
 #[test]
-fn selected_attachment_retry_survives_autosave_newer_input_removal_and_restart() {
+fn selected_attachment_retry_survives_confirmation_newer_input_removal_and_restart() {
     let directory = tempfile::tempdir().unwrap();
     let mut service = DatabaseService::new();
     let (session, _, entry) = setup(&mut service, directory.path());
@@ -531,7 +531,7 @@ impl std::io::Read for FailingSelectedInput {
 fn selected_input_failures_and_wrong_editor_preserve_prior_form_and_blobs() {
     let directory = tempfile::tempdir().unwrap();
     let mut service = DatabaseService::new();
-    let (session, _, entry) = setup(&mut service, directory.path());
+    let (session, group, entry) = setup(&mut service, directory.path());
     let draft = service
         .start_edit_entry(&session, &entry)
         .unwrap()
@@ -606,7 +606,7 @@ fn selected_input_failures_and_wrong_editor_preserve_prior_form_and_blobs() {
         size
     );
     let second = service
-        .start_create_entry_in(&session, None)
+        .start_create_entry(&session, group)
         .unwrap()
         .value
         .identity
@@ -634,9 +634,9 @@ fn unfinished_new_form_retains_streamed_contents_without_a_document_revision() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("PUBLIC.taypeer");
     let mut service = DatabaseService::new();
-    let (session, _, _) = setup(&mut service, directory.path());
+    let (session, group, _) = setup(&mut service, directory.path());
     let draft = service
-        .start_create_entry_ungrouped(&session)
+        .start_create_entry(&session, group)
         .unwrap()
         .value
         .identity
@@ -658,16 +658,16 @@ fn unfinished_new_form_retains_streamed_contents_without_a_document_revision() {
         .unwrap();
     let editor = service.editor_view(&session).unwrap();
     assert!(editor.fields.title.is_empty());
-    let outcome = service
+    let error = service
         .save_draft_snapshot(
             &session,
             &draft,
             editor.identity.revision,
             &OperationId::new("PUBLIC unfinished local snapshot"),
         )
-        .unwrap()
-        .value;
-    assert!(matches!(outcome, DraftSaveOutcome::LocalDraftSaved { .. }));
+        .unwrap_err();
+    assert_eq!(error, ServiceError::InvalidInput);
+    service.persist_drafts(&session).unwrap();
     let blob = service
         .binary_view(&session, &BinaryTarget::Draft)
         .unwrap()

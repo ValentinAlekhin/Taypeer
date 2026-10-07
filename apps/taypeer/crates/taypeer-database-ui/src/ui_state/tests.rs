@@ -33,7 +33,7 @@ fn snapshot(
 fn row(id: &str) -> taypeer_services::EntrySummary {
     taypeer_services::EntrySummary {
         id: EntryId::new(id),
-        group_id: Some(GroupId::new("PUBLIC group")),
+        group_id: GroupId::new("PUBLIC group"),
         title: "PUBLIC result".into(),
         username: None,
         url: None,

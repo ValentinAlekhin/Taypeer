@@ -63,7 +63,7 @@ class AttachmentTest {
         source.writeBytes(public)
         val session = manager.create("PUBLIC attachments", null, "PUBLIC attachments create", password)
         val database = session.databaseId()
-        session.beginEntry(null, null)
+        beginPublicEntry(session)
         val initial = session.patchEntry(EntryTextField.TITLE, TextEdit.Set("PUBLIC attached entry"))
         assertEquals(source.name, SelectedDescriptors.displayName(context, uri(source)))
         val input = CountingInput(SelectedDescriptors.openInput(context, uri(source)))
@@ -119,9 +119,12 @@ class AttachmentTest {
         source.writeText("PUBLIC local unfinished attachment")
         val session = manager.create("PUBLIC local attachments", null, "PUBLIC local create", password)
         val database = session.databaseId()
-        val initial = session.beginEntry(null, null)
+        val initial = beginPublicEntry(session)
         val editor = session.importAttachment(initial.form.draft, "PUBLIC unfinished.bin", null, "PUBLIC local import", SelectedDescriptors.openInput(context, uri(source)))
-        assertEquals(SaveState.LOCAL_DRAFT_SAVED, session.save(editor.form.draft, editor.form.revision, "PUBLIC local snapshot").state)
+        assertThrows(AndroidException.InvalidInput::class.java) {
+            session.save(editor.form.draft, editor.form.revision, "PUBLIC local snapshot")
+        }
+        session.persistForms()
         val path = manager.catalog().single { it.database == database }.path
         manager.close(session)
         val reopened = manager.open(path, password)
@@ -142,7 +145,7 @@ class AttachmentTest {
     @Test fun limitIsCheckedBeforeReadingAndFailedReplacementPreservesOriginal() = fixture { manager, source ->
         source.writeText("PUBLIC retained attachment")
         val session = manager.create("PUBLIC failures", null, "PUBLIC failure create", password)
-        session.beginEntry(null, null)
+        beginPublicEntry(session)
         val initial = session.patchEntry(EntryTextField.TITLE, TextEdit.Set("PUBLIC retained"))
         session.importAttachment(initial.form.draft, "PUBLIC retained.bin", null, "PUBLIC initial import", SelectedDescriptors.openInput(context, uri(source)))
         val original = session.formAttachments().single()
@@ -195,7 +198,7 @@ class AttachmentTest {
         val command = Executors.newSingleThreadExecutor()
         try {
             val session = manager.create("PUBLIC busy selected", null, "PUBLIC busy create", password)
-            session.beginEntry(null, null)
+            beginPublicEntry(session)
             val editor = session.patchEntry(EntryTextField.TITLE, TextEdit.Set("PUBLIC busy entry"))
             val input = object : SelectedInput {
                 override fun length() = 16uL

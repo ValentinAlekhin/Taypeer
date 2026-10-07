@@ -103,3 +103,26 @@ fn older_development_five_contract_requires_an_update() {
     assert_eq!(SchemaDescriptor::current().schema_version(), CURRENT_SCHEMA);
     assert!(schema::definition(CURRENT_SCHEMA).is_some());
 }
+
+#[test]
+fn development_six_optional_groups_require_an_update() {
+    let frozen = r#"{"schema_version":6,"required_read_features":["taypeer.auto_merge","taypeer.binary","taypeer.entries","taypeer.history","taypeer.lifecycle","taypeer.object_history","taypeer.optional_group"],"required_write_features":["taypeer.auto_merge","taypeer.binary","taypeer.entries","taypeer.history","taypeer.lifecycle","taypeer.object_history","taypeer.optional_group"]}"#;
+    let descriptor: SchemaDescriptor = serde_json::from_str(frozen).unwrap();
+    assert_eq!(
+        ClientCapabilities::default().assess(&descriptor).read,
+        CompatibilityAccess::UnsupportedSchema { schema_version: 6 }
+    );
+    assert_eq!(serde_json::to_string(&descriptor).unwrap(), frozen);
+    let current = SchemaDescriptor::current();
+    assert_eq!(current.schema_version(), 7);
+    assert!(
+        current
+            .required_read_features()
+            .contains(&FeatureId::new("taypeer.required_group").unwrap())
+    );
+    assert!(
+        !current
+            .required_read_features()
+            .contains(&FeatureId::new("taypeer.optional_group").unwrap())
+    );
+}

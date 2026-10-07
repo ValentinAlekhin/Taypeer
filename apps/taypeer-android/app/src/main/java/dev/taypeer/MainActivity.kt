@@ -5,6 +5,7 @@ import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.compose.BackHandler
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
@@ -28,6 +29,7 @@ class MainActivity : ComponentActivity() {
                 val attachments = rememberAttachmentActions(documents)
                 Surface(Modifier.fillMaxSize()) {
                     if (documents.generator) Column {
+                        BackHandler { generator.lock(); documents.generator = false }
                         TextButton({ documents.generator = false }) { Text(stringResource(R.string.library)) }
                         if (documents.entry != null && generator.generated.isNotEmpty()) TextButton({
                             documents.edit(dev.taypeer.bridge.EntryTextField.PASSWORD, generator.generated)

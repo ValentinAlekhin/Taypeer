@@ -28,7 +28,7 @@ pub struct EditorView {
     /// Existing target, absent for creation.
     pub entry: Option<EntryId>,
     /// Owning group.
-    pub group: Option<GroupId>,
+    pub group: GroupId,
     /// Ordinary form values; password and protected attribute values are masked.
     pub fields: EditableEntry,
     /// Distinguishes an absent password from an explicitly empty password.
@@ -130,9 +130,7 @@ impl DatabaseService {
         let doc = self.checked(session)?.document();
         let mut counts = std::collections::BTreeMap::<GroupId, usize>::new();
         for entry in self.entries(session, None, "")?.value {
-            if let Some(group) = entry.group_id {
-                *counts.entry(group).or_default() += 1;
-            }
+            *counts.entry(entry.group_id).or_default() += 1;
         }
         self.groups(session)?
             .value

@@ -24,7 +24,7 @@ impl WorkspaceStore {
                         this.saving = false;
                         match result {
                             Ok(view) => {
-                                this.state.group = view.group.clone();
+                                this.state.group = Some(view.group.clone());
                                 this.state.selected = view.entry.clone();
                                 this.editor =
                                     Some(cx.new(|_| EditorStore::from_view(connection, view)));
@@ -72,20 +72,32 @@ impl WorkspaceStore {
         });
         if form.update(cx, |form, _| form.take_confirmed()) {
             self.refresh(cx);
-        }
-        if self.state.pending.is_some() && !form.read(cx).closing() {
-            self.state.pending = None;
-            self.save_requested = false;
-        }
-        if form.read(cx).closing() && form.read(cx).settled() {
-            if let taypeer_services::DraftTarget::Group(group) = form.read(cx).target() {
-                self.state.group = Some(group.clone());
+            if form.read(cx).closing() && form.read(cx).settled() {
+                if let taypeer_services::DraftTarget::Group(group) = form.read(cx).target() {
+                    self.state.group = Some(group.clone());
+                }
+                self.discard_requested = true;
+            } else {
+                form.update(cx, |form, _| form.stay());
+                if self.navigation_waiting_for_save
+                    && self.state.pending.is_some()
+                    && !self.discard_requested
+                {
+                    self.confirm_navigation(window, cx);
+                } else if !self.discard_requested {
+                    self.state.pending = None;
+                }
             }
-            self.metadata = None;
-            self.save_requested = false;
-            window.close_dialog(cx);
-            self.continue_navigation(window, cx);
-            cx.notify();
+            self.navigation_waiting_for_save = false;
+        }
+        if form.update(cx, |form, _| form.take_failed()) && !self.discard_requested {
+            self.state.pending = None;
+            self.navigation_waiting_for_save = false;
+        }
+        if form.update(cx, |form, _| form.take_discard()) {
+            self.cancel_edit(cx);
+        } else if form.update(cx, |form, _| form.take_leave()) {
+            self.navigate(Destination::CancelEdit, window, cx);
         }
     }
     pub(super) fn resume_active_draft(&mut self, _cx: &mut Context<Self>) {
@@ -192,15 +204,30 @@ impl WorkspaceStore {
             self.start_editor(Command::BeginEdit(id), cx);
         }
     }
-    /// Cmd+S flushes the current immutable snapshot while keeping the editor open.
+    /// Save exactly the current queued input; close only after durable confirmation without new input.
     pub fn save(&mut self, cx: &mut Context<Self>) {
-        self.save_requested = self.editor.is_some();
-        if let Some(editor) = &self.editor {
-            editor.update(cx, |editor, cx| {
-                if editor.start_snapshot(true) {
+        if self.saving || self.opening || self.discard_requested {
+            return;
+        }
+        if let Some(form) = &self.metadata {
+            form.update(cx, |form, cx| {
+                form.request_save(cx);
+                cx.notify();
+            });
+            if !form.read(cx).closing() {
+                self.state.pending = None;
+            }
+        } else if let Some(editor) = &self.editor
+            && !editor.update(cx, |editor, cx| {
+                let started = editor.start_snapshot();
+                if started {
                     cx.notify();
                 }
-            });
+                started
+            })
+            && !editor.read(cx).saving()
+        {
+            self.state.pending = None;
         }
         cx.notify();
     }

@@ -185,6 +185,9 @@ impl Document {
             return Ok(result);
         }
         let source = self.late_source(&request.source)?;
+        if matches!(source.address.object, ObjectId::Entry(_)) && request.destination.is_none() {
+            return Err(Error::InvalidContext);
+        }
         let processed = object(&self.doc, &ROOT, "recoveries")?;
         if !self.doc.get_all(processed, &source.id)?.is_empty() {
             return Err(Error::InvalidContext);
@@ -318,7 +321,7 @@ impl Document {
                     &mut tx,
                     &target,
                     &fields,
-                    destination.as_ref(),
+                    destination.as_ref().ok_or(Error::InvalidContext)?,
                     created,
                     &revision,
                 )?;

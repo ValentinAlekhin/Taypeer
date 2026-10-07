@@ -461,7 +461,7 @@ impl Render for AppView {
                 }
             }))
             .on_action(cx.listener(|this, _: &SaveEntry, window, cx| {
-                if window.has_active_dialog(cx) {
+                if window.has_active_dialog(cx) && !this.store.read(cx).is_metadata_editing() {
                     return;
                 }
                 this.store.update(cx, |store, cx| {

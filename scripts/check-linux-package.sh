@@ -3,11 +3,9 @@
 set -eu
 package=${1:-result}
 [ -x "$package/bin/taypeer" ]
-[ -x "$package/bin/taypeer-cli" ]
+[ ! -e "$package/bin/taypeer-cli" ]
 [ ! -e "$package/bin/taypeer-ui-worker" ]
 [ -f "$package/share/applications/io.taypeer.Taypeer.desktop" ]
-# The installed CLI must start without acquiring credentials.
-"$package/bin/taypeer-cli" --help >/dev/null
 # The production worker rejects malformed private IPC.
 worker_status=0
 printf '%s\n' 'PUBLIC malformed worker frame' | "$package/bin/taypeer" __worker >/dev/null 2>&1 || worker_status=$?

@@ -182,18 +182,18 @@ impl DocumentSession {
         self.editor()
     }
     /// Restore a reviewed accessible entry version as a new confirmed version.
-    /// The UI first flushes its form and retains this explicit confirmation.
+    /// The UI resolves unsaved changes first and retains this explicit confirmation.
     pub fn restore_revision(
         &self,
         entry: String,
         revision: String,
-        group: Option<String>,
+        group: String,
         operation: String,
     ) -> Result<String, AndroidError> {
         let value: serde_json::Value = self.command(Command::RestoreRevision {
             entry: EntryId::new(identifier(entry)?),
             revision: RevisionId::new(identifier(revision)?),
-            group: group.map(identifier).transpose()?.map(GroupId::new),
+            group: GroupId::new(identifier(group)?),
             operation: OperationId::new(identifier(operation)?),
         })?;
         serde_json::from_value::<EntryId>(value)

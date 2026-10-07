@@ -31,10 +31,10 @@ pub(super) fn read_entry_generation<R: ReadDoc>(
         return Err(Error::InvalidContext);
     };
     let entry = super::objects::generation_object(read, address)?;
-    let mut placement_alternatives: Vec<Option<GroupRef>> = Vec::new();
+    let mut placement_alternatives: Vec<GroupRef> = Vec::new();
     let mut selected_placement = None;
     for (value, operation) in read.get_all(&entry, "group")? {
-        let destination: Option<GroupRef> = super::decode(&value)?;
+        let destination: GroupRef = super::decode(&value)?;
         if !placement_alternatives.contains(&destination) {
             placement_alternatives.push(destination.clone());
         }
@@ -46,8 +46,8 @@ pub(super) fn read_entry_generation<R: ReadDoc>(
         }
     }
     let placement = selected_placement.ok_or(Error::InvalidDocument)?.0;
-    let group_id = placement.as_ref().map(|group| group.id.clone());
-    let placements = placement_alternatives.iter().flatten().cloned().collect();
+    let group_id = placement.id.clone();
+    let placements = placement_alternatives.clone();
     placement_alternatives.sort();
     let created_at = unique(read, &entry, "created_at")?
         .to_i64()
@@ -234,6 +234,6 @@ pub(super) fn selected_snapshot(mut snapshot: EntrySnapshot) -> Result<EntrySnap
     }
     snapshot.conflicts.clear();
     snapshot.placement_alternatives = vec![snapshot.placement.clone()];
-    snapshot.placements = snapshot.placement.iter().cloned().collect();
+    snapshot.placements = vec![snapshot.placement.clone()];
     Ok(snapshot)
 }

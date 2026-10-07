@@ -7,6 +7,7 @@ use std::{
 
 #[derive(Default)]
 struct Failures {
+    uncertain_before_commit: AtomicBool,
     uncertain_commit: AtomicBool,
     local_after_commit: AtomicBool,
     deny_local: AtomicBool,
@@ -22,6 +23,13 @@ impl CipherPersistence for Port {
         self.inner.snapshot()
     }
     fn commit(&self, request: PreparedCommit) -> Result<ArchiveSnapshot, StorageError> {
+        if self
+            .failures
+            .uncertain_before_commit
+            .swap(false, Ordering::SeqCst)
+        {
+            return Err(StorageError::CommitUncertain);
+        }
         let saved = self.inner.commit(request)?;
         if self
             .failures
@@ -78,6 +86,94 @@ fn reopen(
     (service, session)
 }
 
+fn begin_entry(service: &mut DatabaseService, session: &SessionToken) {
+    let group = service
+        .create_group(
+            session,
+            "PUBLIC draft fixture group".into(),
+            None,
+            &crate::new_operation_id().unwrap(),
+        )
+        .unwrap()
+        .value
+        .id;
+    service.start_create_entry(session, group).unwrap();
+}
+
+#[test]
+fn discarding_an_uncertain_snapshot_reconciles_without_retrying_the_write() {
+    for already_committed in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let profile = Profile::new(38);
+        let path = directory.path().join("PUBLIC uncertain discard.taypeer");
+        let (mut seed, session) = create(&profile, path.clone());
+        let database = session.database.clone();
+        seed.lock(&session).unwrap();
+        drop(seed);
+        let failures = Arc::new(Failures::default());
+        let (mut service, session) = reopen(
+            &profile,
+            path.clone(),
+            database.clone(),
+            Arc::clone(&failures),
+        );
+        begin_entry(&mut service, &session);
+        service
+            .patch_draft(
+                &session,
+                EntryPatch {
+                    title: FieldUpdate::Set("PUBLIC discard outcome".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let identity = service.editor_view(&session).unwrap().identity;
+        let operation = crate::new_operation_id().unwrap();
+        let before = std::fs::read(&path).unwrap();
+        if already_committed {
+            failures.uncertain_commit.store(true, Ordering::SeqCst);
+        } else {
+            failures
+                .uncertain_before_commit
+                .store(true, Ordering::SeqCst);
+        }
+        assert_eq!(
+            service
+                .save_draft_snapshot(&session, &identity.draft, identity.revision, &operation)
+                .unwrap_err(),
+            ServiceError::Storage(StorageError::CommitUncertain)
+        );
+        let published = std::fs::read(&path).unwrap();
+        assert_eq!(published != before, already_committed);
+        service.delete_draft(&session, &identity.draft).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), published);
+        assert!(service.drafts(&session).unwrap().value.is_empty());
+        service.lock(&session).unwrap();
+        drop(service);
+        let (mut service, session) = reopen(&profile, path, database, failures);
+        let entries = service.entries(&session, None, "").unwrap().value;
+        assert_eq!(entries.len(), usize::from(already_committed));
+        if already_committed {
+            assert_eq!(
+                service
+                    .history(&session, &entries[0].id)
+                    .unwrap()
+                    .value
+                    .len(),
+                1
+            );
+        } else {
+            assert_eq!(
+                service
+                    .save_draft_snapshot(&session, &identity.draft, identity.revision, &operation)
+                    .unwrap_err(),
+                ServiceError::OperationConflict
+            );
+        }
+        assert!(service.drafts(&session).unwrap().value.is_empty());
+    }
+}
+
 #[test]
 fn uncertain_snapshot_reconciles_the_exact_durable_receipt_without_reauthenticating() {
     let directory = tempfile::tempdir().unwrap();
@@ -94,7 +190,7 @@ fn uncertain_snapshot_reconciles_the_exact_durable_receipt_without_reauthenticat
         database.clone(),
         Arc::clone(&failures),
     );
-    service.start_create_entry_ungrouped(&session).unwrap();
+    begin_entry(&mut service, &session);
     service
         .patch_draft(
             &session,
@@ -175,7 +271,7 @@ fn confirmed_snapshot_survives_failed_local_cleanup_and_lost_reply() {
         database.clone(),
         Arc::clone(&failures),
     );
-    service.start_create_entry_ungrouped(&session).unwrap();
+    begin_entry(&mut service, &session);
     service
         .patch_draft(
             &session,
@@ -237,7 +333,7 @@ fn received_apply_reconciles_uncertainty_before_retry_and_preserves_local_forms(
     drop(seed);
     let failures = Arc::new(Failures::default());
     let (mut service, session) = reopen(&profile, path, database.clone(), Arc::clone(&failures));
-    service.start_create_entry_ungrouped(&session).unwrap();
+    begin_entry(&mut service, &session);
     service
         .patch_draft(
             &session,
@@ -256,11 +352,14 @@ fn received_apply_reconciles_uncertainty_before_retry_and_preserves_local_forms(
     );
     service.apply_received(&session).unwrap();
     let groups = service.groups(&session).unwrap().value;
-    assert_eq!(groups.len(), 1);
-    assert_eq!(groups[0].name, "PUBLIC received once");
+    assert_eq!(groups.len(), 2);
+    let received = groups
+        .iter()
+        .find(|group| group.name == "PUBLIC received once")
+        .unwrap();
     assert_eq!(
         service
-            .group_history(&session, &groups[0].id)
+            .group_history(&session, &received.id)
             .unwrap()
             .value
             .len(),

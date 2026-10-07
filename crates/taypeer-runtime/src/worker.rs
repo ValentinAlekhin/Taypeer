@@ -613,7 +613,7 @@ pub(crate) fn dispatch(
             operation,
         } => value(
             &service
-                .extract_received_in(session, &change, &entry, group, &operation)?
+                .extract_received(session, &change, &entry, group, &operation)?
                 .value,
         )?,
         Command::Authority => value(&service.authority(session)?)?,
@@ -730,7 +730,7 @@ pub(crate) fn dispatch(
             operation,
         } => value(
             &service
-                .move_entry_to(session, &entry, group, review, &operation)?
+                .move_entry(session, &entry, group, review, &operation)?
                 .value,
         )?,
         Command::CloneGroup {
@@ -795,10 +795,6 @@ pub(crate) fn dispatch(
                 .save_draft_snapshot(session, &draft, revision, &operation)?
                 .value,
         )?,
-        Command::BeginCreateUngrouped => {
-            service.start_create_entry_ungrouped(session)?;
-            Value::Null
-        }
         Command::BeginEditGroup(group) => value(&service.start_edit_group(session, &group)?.value)?,
         Command::BeginCreateGroup(parent) => {
             value(&service.start_create_group(session, parent)?.value)?
@@ -888,7 +884,7 @@ pub(crate) fn dispatch(
             operation,
         } => value(
             &service
-                .create_entry_in(session, group, patch, &operation)?
+                .create_entry(session, group, patch, &operation)?
                 .value,
         )?,
         Command::UpdateEntry {
@@ -933,7 +929,7 @@ pub(crate) fn dispatch(
             operation,
         } => value(
             &service
-                .clone_entry_in(session, &entry, group, title, &operation)?
+                .clone_entry(session, &entry, group, title, &operation)?
                 .value,
         )?,
         Command::RestoreRevision {
@@ -943,7 +939,7 @@ pub(crate) fn dispatch(
             operation,
         } => value(
             &service
-                .restore_revision_in(session, &entry, &revision, group, &operation)?
+                .restore_revision(session, &entry, &revision, group, &operation)?
                 .value,
         )?,
         Command::PurgeHistory {

@@ -147,84 +147,109 @@ fn protected_branch_wins_concurrently_and_later_explicit_unprotection_is_allowed
 }
 
 #[test]
-fn ungrouped_entries_survive_reload_and_group_moves_preserve_their_identity() {
-    let mut document = Document::new("PUBLIC no group", 1).unwrap();
-    let mut draft = document.begin_create_entry_ungrouped().unwrap();
-    assert_eq!(draft.group_id(), None);
-    draft.fields_mut().title = "PUBLIC ungrouped entry".into();
-    let entry = document.save_entry(draft, 2).unwrap();
-    document = Document::load(&document.export()).unwrap();
-    assert_eq!(document.entries().unwrap().len(), 1);
-    assert_eq!(document.entry(&entry).unwrap().group_id, None);
-    let group = document
-        .create_group("PUBLIC destination".into(), None, 3)
+fn entry_group_is_required_and_moves_preserve_the_entry_identity() {
+    let mut document = Document::new("PUBLIC grouped entries", 1).unwrap();
+    let initial = document
+        .create_group("PUBLIC source group".into(), None, 2)
         .unwrap()
         .id;
+    let mut draft = document.begin_create_entry(initial.clone()).unwrap();
+    assert_eq!(draft.group_id(), &initial);
+    draft.fields_mut().title = "PUBLIC grouped entry".into();
+    let entry = document.save_entry(draft, 3).unwrap();
+    document = Document::load(&document.export()).unwrap();
+    assert_eq!(document.entries().unwrap().len(), 1);
+    assert_eq!(document.entry(&entry).unwrap().group_id, initial);
+    let destination = document
+        .create_group("PUBLIC destination".into(), None, 4)
+        .unwrap()
+        .id;
+    let before = document.export();
+    assert_eq!(
+        document
+            .move_entry(
+                &entry,
+                GroupId::new("PUBLIC missing destination"),
+                None,
+                &OperationId::new("PUBLIC missing move"),
+                5,
+            )
+            .unwrap_err(),
+        Error::NotFound
+    );
+    assert_eq!(document.export(), before);
     document
         .move_entry(
             &entry,
-            group.clone(),
+            destination.clone(),
             None,
-            &OperationId::new("PUBLIC into group"),
-            4,
+            &OperationId::new("PUBLIC into destination"),
+            6,
         )
-        .unwrap();
-    document
-        .move_entry_to(&entry, None, None, &OperationId::new("PUBLIC ungroup"), 5)
         .unwrap();
     let mut edit = document.begin_edit_entry(&entry).unwrap();
     edit.fields_mut().notes = Some("PUBLIC still editable".into());
-    document.save_entry(edit, 6).unwrap();
+    document.save_entry(edit, 7).unwrap();
     assert_eq!(document.entries().unwrap()[0].id, entry);
-    assert_eq!(document.entry(&entry).unwrap().group_id, None);
-    assert_eq!(document.history(&entry).unwrap().len(), 4);
+    assert_eq!(document.entry(&entry).unwrap().group_id, destination);
+    assert_eq!(document.history(&entry).unwrap().len(), 3);
 }
 
 #[test]
-fn cloning_restoring_and_extracting_ungrouped_entries_need_no_implicit_group() {
-    let mut document = Document::new("PUBLIC ungrouped operations", 1).unwrap();
-    let mut draft = document.begin_create_entry_ungrouped().unwrap();
+fn cloning_restoring_and_extracting_entries_keep_an_explicit_group() {
+    let mut document = Document::new("PUBLIC grouped operations", 1).unwrap();
+    let group = document
+        .create_group("PUBLIC destination".into(), None, 2)
+        .unwrap()
+        .id;
+    let mut draft = document.begin_create_entry(group.clone()).unwrap();
     draft.fields_mut().title = "PUBLIC original".into();
-    let entry = document.save_entry(draft, 2).unwrap();
+    let entry = document.save_entry(draft, 3).unwrap();
     let first = document.history(&entry).unwrap()[0].id.clone();
     let cloned = document
-        .clone_entry_in(
+        .clone_entry(
             &entry,
+            group.clone(),
             None,
-            None,
-            &OperationId::new("PUBLIC ungrouped clone"),
-            3,
+            &OperationId::new("PUBLIC grouped clone"),
+            4,
         )
         .unwrap();
     let mut draft = document.begin_edit_entry(&entry).unwrap();
     draft.fields_mut().notes = Some("PUBLIC later note".into());
-    document.save_entry(draft, 4).unwrap();
+    document.save_entry(draft, 5).unwrap();
     document
-        .restore_revision_in(
+        .restore_revision(
             &entry,
             &first,
-            None,
-            &OperationId::new("PUBLIC ungrouped restore"),
-            5,
+            group.clone(),
+            &OperationId::new("PUBLIC grouped restore"),
+            6,
         )
         .unwrap();
     assert_eq!(document.entry(&entry).unwrap().fields.unwrap().notes, None);
     let source = document.clone();
     let source_hash = source.heads()[0].clone();
-    let operation = OperationId::new("PUBLIC ungrouped extract");
+    let operation = OperationId::new("PUBLIC grouped extract");
     let extracted = document
-        .extract_entry_in(&source, (&entry, &source_hash), None, &operation, 6)
+        .extract_entry(
+            &source,
+            (&entry, &source_hash),
+            group.clone(),
+            &operation,
+            7,
+        )
         .unwrap();
     assert_eq!(
         document
-            .extracted_entry_in(&entry, &source_hash, None, &operation)
+            .extracted_entry(&entry, &source_hash, &group, &operation)
             .unwrap(),
         Some(extracted.clone())
     );
     for id in [entry, cloned, extracted] {
-        assert_eq!(document.entry(&id).unwrap().group_id, None);
+        assert_eq!(document.entry(&id).unwrap().group_id, group);
     }
-    assert!(document.groups().unwrap().is_empty());
+    assert_eq!(document.groups().unwrap().len(), 1);
     assert_eq!(
         Document::load(&document.export())
             .unwrap()

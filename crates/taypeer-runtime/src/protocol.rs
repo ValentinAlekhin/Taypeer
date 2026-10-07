@@ -83,8 +83,6 @@ pub enum Command {
         /// Same identity must be reused when retrying this snapshot.
         operation: OperationId,
     },
-    /// Begin an unfinished entry outside every group.
-    BeginCreateUngrouped,
     /// Begin or continue a group's local form.
     BeginEditGroup(GroupId),
     /// Begin an unfinished group in the selected parent, or at the root.
@@ -182,7 +180,7 @@ pub enum Command {
         /// Selected entry at that causal state.
         entry: EntryId,
         /// Current destination group.
-        group: Option<GroupId>,
+        group: GroupId,
         /// Durable exact-intent retry identity.
         operation: OperationId,
     },
@@ -346,7 +344,7 @@ pub enum Command {
         /// Entry identity.
         entry: EntryId,
         /// Current destination.
-        group: Option<GroupId>,
+        group: GroupId,
         /// Optional conflict review context.
         review: Option<Vec<String>>,
         /// Durable idempotency key.
@@ -415,7 +413,7 @@ pub enum Command {
         /// Stable identity for retries of this exact request.
         operation: OperationId,
         /// Destination.
-        group: Option<GroupId>,
+        group: GroupId,
         /// Initial fields.
         patch: EntryPatch,
     },
@@ -459,7 +457,7 @@ pub enum Command {
         /// Source entry.
         entry: EntryId,
         /// Destination group.
-        group: Option<GroupId>,
+        group: GroupId,
         /// Optional replacement title.
         title: Option<String>,
         /// Idempotency key.
@@ -472,7 +470,7 @@ pub enum Command {
         /// Source revision.
         revision: RevisionId,
         /// Explicit destination.
-        group: Option<GroupId>,
+        group: GroupId,
         /// Idempotency key.
         operation: OperationId,
     },

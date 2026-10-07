@@ -8,12 +8,12 @@ model {
     }
     workspace = component 'Работа с БД' {
       #partial
-      description 'Навигация, поиск и перенос групп через DnD. Сохраняет черновики перед переходом или переносом; отображает изменение дерева после подтверждения сервисом.'
+      description 'Навигация, поиск и перенос групп через DnD. При несохранённых правках спрашивает Сохранить / Не сохранять / Остаться; отображает изменение дерева после подтверждения сервисом.'
       metadata { source 'apps/taypeer/crates/taypeer-database-ui/src/ui/workspace.rs'; contract 'docs/macos-ui.md' }
     }
     editor = component 'Черновик UI' {
       #partial
-      description 'Ввод трёх вкладок и tickets снимков. Целевое автосохранение не закрывает редактор и не заменяет свежий ввод; открытые копии удаляются при блокировке.'
+      description 'Ввод трёх вкладок и tickets снимков. Ручное сохранение закрывает чистый редактор после подтверждения; свежий ввод остаётся несохранённым, открытые копии удаляются при блокировке.'
       metadata { source 'apps/taypeer/crates/taypeer-database-ui/src/ui_state/draft.rs'; contract 'docs/macos-ui.md' }
     }
     catalog = store 'Загруженные представления UI' {
@@ -82,17 +82,17 @@ views 'macOS UI' {
     autoLayout LeftRight
   }
   dynamic view uiEdit {
-    title 'Автосохранение правок desktop UI'
+    title 'Сохранение правок desktop UI по кнопке'
     taypeer.desktop.ui -> taypeer.desktop.workspace 'Открыть запись'
     taypeer.desktop.workspace -> taypeer.desktop.runtime 'Начать сервисный черновик'
     taypeer.desktop.workspace -> taypeer.desktop.editor 'Создать общий черновик вкладок'
     taypeer.desktop.ui -> taypeer.desktop.editor 'Изменить поля'
-    taypeer.desktop.ui -> taypeer.desktop.workspace '500 мс без ввода или переход'
+    taypeer.desktop.ui -> taypeer.desktop.workspace 'Нажать Сохранить либо подтвердить сохранение при переходе'
     taypeer.desktop.workspace -> taypeer.desktop.editor 'Зафиксировать ревизию снимка; ввод продолжается'
     taypeer.desktop.workspace -> taypeer.desktop.runtime 'Доставить ввод и подтвердить надёжное сохранение'
     taypeer.desktop.runtime -> taypeer.secretWorker 'Команды текущего поколения'
     taypeer.desktop.workspace -> taypeer.desktop.catalog 'Обновить подтверждённое состояние без замены ввода'
-    taypeer.desktop.ui <- taypeer.desktop.workspace 'Показать актуальное состояние'
+    taypeer.desktop.ui <- taypeer.desktop.workspace 'Вернуть к просмотру только при отсутствии нового ввода'
   }
   dynamic view macosJoin {
     title 'Подключение БД в macOS'
@@ -108,7 +108,7 @@ views 'macOS UI' {
   dynamic view uiGroupMove {
     title 'Перенос группы через desktop DnD'
     taypeer.desktop.ui -> taypeer.desktop.workspace 'Drop: группа, родитель и позиция; проверить текущую сессию'
-    taypeer.desktop.workspace -> taypeer.desktop.editor 'Сохранить текущий черновик перед переносом'
+    taypeer.desktop.workspace -> taypeer.desktop.editor 'Разрешить несохранённые правки перед переносом'
     taypeer.desktop.workspace -> taypeer.desktop.runtime 'MoveGroup с ID операции; без оптимистической правки дерева'
     taypeer.desktop.runtime -> taypeer.secretWorker 'Проверить права, вложенность и порядок; надёжно сохранить'
     taypeer.desktop.runtime -> taypeer.desktop.workspace 'Подтверждение или ошибка текущей сессии'

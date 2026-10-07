@@ -377,10 +377,20 @@ fn three_peers_restart_resume_internal_copy_and_exchange_original_edits() {
         .host
         .open_local(&mut writer, &forward_path, PASSWORD, None)
         .unwrap();
-    let entry = writer
-        .create_entry_in(
+    let group = writer
+        .create_group(
             &writer_session,
+            "PUBLIC forwarded entry group".into(),
             None,
+            &OperationId::new("PUBLIC forwarded group create"),
+        )
+        .unwrap()
+        .value
+        .id;
+    let entry = writer
+        .create_entry(
+            &writer_session,
+            group,
             EntryPatch {
                 title: FieldUpdate::Set("PUBLIC original forwarded entry".into()),
                 password: FieldUpdate::Set("PUBLIC protected forwarded marker".into()),

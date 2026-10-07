@@ -7,9 +7,6 @@ use taypeer_core::{
     BlobId, DatabaseMetadataPatch, DraftId, GroupMetadataPatch, IconRef, OperationId,
 };
 
-/// Quiet interval shared by desktop and Android autosave clients.
-pub const AUTOSAVE_DELAY_MILLIS: u64 = 500;
-
 /// Monotonic input revision within one local draft, independent of document history.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -20,12 +17,12 @@ pub struct DraftRevision(pub u64);
 pub enum DraftTarget {
     /// Existing entry.
     Entry(EntryId),
-    /// Unsaved entry with a reserved identity and optional destination.
+    /// Unsaved entry with a reserved identity and owning user-created group.
     NewEntry {
         /// Reserved entry identity.
         entry: EntryId,
-        /// Destination, absent for an ungrouped entry.
-        group: Option<GroupId>,
+        /// Required user-created destination group.
+        group: GroupId,
     },
     /// Existing group.
     Group(GroupId),
@@ -68,13 +65,6 @@ pub enum DraftSaveOutcome {
         /// Identity captured before the commit.
         identity: DraftIdentity,
         /// Stable idempotency key for that snapshot.
-        operation: OperationId,
-    },
-    /// Incomplete input was durably stored locally, without a document revision.
-    LocalDraftSaved {
-        /// Exact locally retained form.
-        identity: DraftIdentity,
-        /// Stable idempotency key.
         operation: OperationId,
     },
     /// No changed input required a document revision.
@@ -261,6 +251,27 @@ pub(super) enum CapturedDraft {
     Metadata(Box<MetadataDraft>),
 }
 
+impl CapturedDraft {
+    fn is_dirty(&self) -> bool {
+        match self {
+            Self::Entry(draft) => draft.is_dirty(),
+            Self::Metadata(draft) => draft.fields != draft.baseline,
+        }
+    }
+
+    fn validate_for_confirmation(&self) -> Result<(), ServiceError> {
+        let valid = match self {
+            Self::Entry(draft) => draft.can_save(),
+            Self::Metadata(draft) => !draft.fields.name.is_empty(),
+        };
+        if valid {
+            Ok(())
+        } else {
+            Err(ServiceError::InvalidInput)
+        }
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub(super) struct SnapshotAttempt {
     identity: DraftIdentity,
@@ -290,7 +301,7 @@ pub(super) struct DraftCollection {
 impl DraftCollection {
     pub(super) fn new(database: DatabaseId) -> Self {
         Self {
-            version: 1,
+            version: 2,
             database,
             entry: None,
             entries: BTreeMap::new(),
@@ -302,7 +313,7 @@ impl DraftCollection {
         }
     }
     pub(super) fn validate(&self, database: &DatabaseId) -> Result<(), ServiceError> {
-        if self.version != 1 {
+        if self.version != 2 {
             return Err(ServiceError::ReadCompatibility);
         }
         if &self.database != database
@@ -363,10 +374,6 @@ impl DraftCollection {
                             operation,
                         }
                         | DraftSaveOutcome::Unchanged {
-                            identity,
-                            operation,
-                        }
-                        | DraftSaveOutcome::LocalDraftSaved {
                             identity,
                             operation,
                         } => (identity, operation),
@@ -772,6 +779,9 @@ impl DatabaseService {
         session: &SessionToken,
         id: &DraftId,
     ) -> Result<SessionValue<()>, ServiceError> {
+        // Discard may follow an uncertain save. Read its receipt without retrying
+        // the write; a snapshot that did not commit must remain discarded.
+        self.reconcile_uncertain(session)?;
         let state = self.checked_mut(session)?;
         let mut collection = state.drafts.clone();
         let active = collection
@@ -992,7 +1002,8 @@ impl DatabaseService {
     }
 
     /// Save an immutable captured revision, preserving the editor and all later input.
-    /// Invalid/unfinished form values are encrypted locally instead of committed.
+    /// Invalid/unfinished values, including untouched new forms, are rejected
+    /// without closing the editor or reserving the operation identity.
     /// Retries use the same operation and revision; changed intent is rejected.
     pub fn save_draft_snapshot(
         &mut self,
@@ -1034,8 +1045,9 @@ impl DatabaseService {
             if identity.revision != revision {
                 return Err(ServiceError::InvalidContext);
             }
+            captured.validate_for_confirmation()?;
             let fingerprint = commands::fingerprint(&(&identity, &captured))?;
-            // Check the portable namespace even for incomplete/no-op local attempts.
+            // Check the portable namespace even for unchanged local attempts.
             if state
                 .document()
                 .command_receipt(operation, "save_draft_snapshot")
@@ -1067,24 +1079,10 @@ impl DatabaseService {
             .captured
             .as_ref()
             .ok_or(ServiceError::InvalidDocument)?;
-        let (dirty, valid) = match captured {
-            CapturedDraft::Entry(draft) => (draft.is_dirty(), draft.can_save()),
-            CapturedDraft::Metadata(draft) => (
-                draft.fields != draft.baseline,
-                !draft.fields.name.is_empty(),
-            ),
-        };
-        if !dirty || !valid {
-            let outcome = if dirty {
-                DraftSaveOutcome::LocalDraftSaved {
-                    identity: attempt.identity,
-                    operation: operation.clone(),
-                }
-            } else {
-                DraftSaveOutcome::Unchanged {
-                    identity: attempt.identity,
-                    operation: operation.clone(),
-                }
+        if !captured.is_dirty() {
+            let outcome = DraftSaveOutcome::Unchanged {
+                identity: attempt.identity,
+                operation: operation.clone(),
             };
             let mut collection = state.drafts.clone();
             let stored = collection

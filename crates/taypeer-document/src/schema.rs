@@ -1,7 +1,7 @@
-//! Creation and decoding are separate: selecting a new writer must not remove a reader.
+//! Explicit development-schema creation and decoding; unsupported versions are rejected.
 use super::*;
 
-const VERSION: u16 = 6;
+const VERSION: u16 = 7;
 
 pub(super) fn initialize(
     doc: &mut Automerge,
@@ -11,11 +11,11 @@ pub(super) fn initialize(
 ) -> Result<(), Error> {
     // Development schemas are rejected rather than relabelled or migrated in place.
     match taypeer_core::CURRENT_SCHEMA {
-        6 => initialize_v6(doc, database_id, name, now),
+        7 => initialize_v7(doc, database_id, name, now),
         _ => Err(Error::UnsupportedSchema),
     }
 }
-fn initialize_v6(
+fn initialize_v7(
     doc: &mut Automerge,
     database_id: &DatabaseId,
     name: &str,
@@ -53,12 +53,12 @@ pub(super) fn load(bytes: &[u8]) -> Result<Document, Error> {
         .filter(|value| *value > 0 && *value <= u64::from(u16::MAX))
         .ok_or(Error::InvalidDocument)?;
     match schema {
-        6 => load_v6(doc),
+        7 => load_v7(doc),
         _ => Err(Error::UnsupportedSchema),
     }
 }
 
-fn load_v6(doc: Automerge) -> Result<Document, Error> {
+fn load_v7(doc: Automerge) -> Result<Document, Error> {
     let database_id = DatabaseId::new(
         unique(&doc, &ROOT, "database_id")?
             .to_str()
@@ -90,7 +90,7 @@ impl Document {
             return Err(Error::UnsupportedSchema);
         }
         match descriptor.schema_version() {
-            6 => self.validate_v6_structure(),
+            7 => self.validate_v7_structure(),
             _ => Err(Error::UnsupportedSchema),
         }
     }

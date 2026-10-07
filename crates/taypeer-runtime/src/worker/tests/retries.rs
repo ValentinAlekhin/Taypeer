@@ -154,7 +154,7 @@ fn all_six_commands_return_original_results_in_a_new_process() {
         operation: operation(),
     };
     let create = Command::CreateEntry {
-        group: Some(group.id.clone()),
+        group: group.id.clone(),
         patch: EntryPatch {
             title: FieldUpdate::Set("PUBLIC original entry".into()),
             ..Default::default()

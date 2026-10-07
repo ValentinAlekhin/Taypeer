@@ -68,7 +68,7 @@ class P2PTest {
             }
             val (first, second, third) = replicas
             val authority = first.documents.create("PUBLIC exchange", null, "PUBLIC p2p create", password)
-            authority.beginEntry(null, null)
+            beginPublicEntry(authority)
             save(authority, EntryTextField.TITLE, "PUBLIC initial", "PUBLIC initial snapshot")
             val database = authority.databaseId()
             val entry = authority.overview("").entries.single().id
@@ -106,7 +106,7 @@ class P2PTest {
             }
             val reopenedThird = third.documents.open(thirdFile.path, password)
             assertEquals("PUBLIC received in background", reopenedThird.entry(entry).title)
-            reopenedSecond.beginEntry(entry, null)
+            reopenedSecond.beginEditEntry(entry)
             save(reopenedSecond, EntryTextField.USERNAME, "PUBLIC peer edit", "PUBLIC peer snapshot")
             until("PUBLIC three replicas converge") {
                 replicas.forEach { it.host.wakeExchange() }

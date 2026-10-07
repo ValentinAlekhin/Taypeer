@@ -64,17 +64,16 @@ private fun LibraryContent(state: DocumentState, attachments: AttachmentActions,
         state.databaseImport?.let { authentication = Authentication.Import(it) }
     }
     BackHandler(enabled = state.history == null && state.exchange == null && (state.entry != null || state.metadata != null || state.inspectedEntry != null)) {
-        state.chooseGroup(state.selectedGroup, state.ungrouped)
+        state.chooseGroup(state.selectedGroup)
     }
     ModalNavigationDrawer(drawerState = drawer, gesturesEnabled = state.entry == null && state.metadata == null && state.inspectedEntry == null, drawerContent = {
         ModalDrawerSheet(Modifier.width(288.dp).verticalScroll(rememberScrollState())) {
             Text(stringResource(R.string.groups), Modifier.padding(16.dp), style = MaterialTheme.typography.titleLarge)
             TextButton({ state.chooseGroup(null); scope.launch { drawer.close() } }) { Text(stringResource(R.string.all_entries)) }
-            TextButton({ state.chooseGroup(null, true); scope.launch { drawer.close() } }) { Text(stringResource(R.string.ungrouped)) }
             state.overview?.groups?.forEach { group ->
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     TextButton({ state.chooseGroup(group.id); scope.launch { drawer.close() } }, Modifier.weight(1f)) { Text(group.name) }
-                    TextButton({ state.beginMetadata(FormKind.GROUP, group.id); scope.launch { drawer.close() } }, enabled = state.overview?.writable == true) { Text(stringResource(R.string.edit)) }
+                    TextButton({ state.beginMetadata(FormKind.GROUP, group.id); scope.launch { drawer.close() } }, enabled = state.overview?.writable == true, modifier = Modifier.testTag("edit-group-${group.id}")) { Text(stringResource(R.string.edit)) }
                 }
             }
             TextButton({ state.beginMetadata(FormKind.NEW_GROUP); scope.launch { drawer.close() } }, enabled = state.overview?.writable == true) { Text(stringResource(R.string.add_group)) }
@@ -87,20 +86,22 @@ private fun LibraryContent(state: DocumentState, attachments: AttachmentActions,
             TopAppBar(title = { Text(state.overview?.name ?: stringResource(R.string.app_name)) }, navigationIcon = {
                 if (state.overview != null) TextButton({ scope.launch { drawer.open() } }, Modifier.testTag("group-menu").semantics { contentDescription = groupsLabel }) { Text("☰") }
             }, actions = {
-                TextButton({ state.saveNow(); state.generator = true }) { Text(stringResource(R.string.generator_short)) }
+                TextButton({ state.generator = true }, Modifier.testTag("open-generator")) { Text(stringResource(R.string.generator_short)) }
                 TextButton(::exchange) { Text(stringResource(R.string.sync)) }
                 if (state.overview != null) TextButton(state::lock) { Text(stringResource(R.string.lock)) }
             })
         }, bottomBar = {
             if (state.activeForm != null) Row(Modifier.fillMaxWidth().imePadding().padding(horizontal = 16.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(stringResource(saveText(state.saveLabel)), Modifier.weight(1f).testTag("save-status"))
-                if (state.saveLabel == SaveLabel.FAILED) TextButton(state::saveNow) { Text(stringResource(R.string.retry)) }
+                TextButton(state::cancelForm, enabled = !state.editingBlocked, modifier = Modifier.testTag("cancel-form")) { Text(stringResource(R.string.cancel)) }
+                Button(state::saveNow, enabled = !state.editingBlocked && state.saveLabel != SaveLabel.SAVING && state.overview?.writable == true, modifier = Modifier.testTag("save-form")) { Text(stringResource(R.string.save)) }
             }
         }) { padding ->
             Column(Modifier.fillMaxSize().padding(padding)) {
             if (state.entry != null || state.inspectedEntry != null) EntryTabs(state)
             Column(Modifier.weight(1f).padding(horizontal = 16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 if (state.error) Text(stringResource(R.string.operation_failed), color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("document-error"))
+                if (state.invalidInput) Text(stringResource(R.string.invalid_form), color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("invalid-form"))
                 PendingAttachment(state)
                 if (state.opening || state.navigating) LinearProgressIndicator(Modifier.fillMaxWidth())
                 if (state.overview == null) {
@@ -126,10 +127,12 @@ private fun LibraryContent(state: DocumentState, attachments: AttachmentActions,
                 } else {
                     val overview = state.overview ?: return@Column
                     OutlinedTextField(state.query, state::search, Modifier.fillMaxWidth().testTag("entry-search"), singleLine = true, label = { Text(stringResource(R.string.search)) })
-                    Text(if (state.ungrouped) stringResource(R.string.ungrouped) else overview.groups.firstOrNull { it.id == state.selectedGroup }?.name ?: stringResource(R.string.all_entries))
+                    Text(overview.groups.firstOrNull { it.id == state.selectedGroup }?.name ?: stringResource(R.string.all_entries))
                     if (!overview.writable) Text(stringResource(R.string.read_only))
-                    Button({ state.beginEntry() }, enabled = overview.writable, modifier = Modifier.testTag("add-entry")) { Text(stringResource(R.string.add_entry)) }
-                    val rows = overview.entries.filter { if (state.ungrouped) it.group == null else state.selectedGroup == null || it.group == state.selectedGroup }
+                    if (overview.groups.isEmpty()) Text(stringResource(R.string.create_group_first), Modifier.testTag("create-group-first"))
+                    OutlinedButton({ state.beginMetadata(FormKind.NEW_GROUP) }, enabled = overview.writable, modifier = Modifier.testTag("add-group")) { Text(stringResource(R.string.add_group)) }
+                    Button({ state.beginEntry() }, enabled = overview.writable && overview.groups.any { it.id == state.selectedGroup }, modifier = Modifier.testTag("add-entry")) { Text(stringResource(R.string.add_entry)) }
+                    val rows = overview.entries.filter { state.selectedGroup == null || it.group == state.selectedGroup }
                     if (rows.isEmpty()) Text(stringResource(R.string.no_entries))
                     rows.forEach { row ->
                         TextButton({ state.selectEntry(row.id) }, Modifier.fillMaxWidth().testTag("entry-${row.id}")) {
@@ -162,13 +165,28 @@ private fun LibraryContent(state: DocumentState, attachments: AttachmentActions,
     state.history?.let { HistoryDialog(state, attachments, it, copy) }
     state.exchange?.let { ExchangeDialog(state, it, copy) }
     state.policy?.let { PolicyDialog(state, it) }
+    if (state.navigationDecision) AlertDialog(
+        onDismissRequest = state::stay,
+        modifier = Modifier.testTag("unsaved-changes"),
+        title = { Text(stringResource(R.string.unsaved_changes)) },
+        text = { Column {
+            Text(stringResource(R.string.unsaved_changes_message))
+            if (state.invalidInput) Text(stringResource(R.string.invalid_form), color = MaterialTheme.colorScheme.error)
+            if (state.error) Text(stringResource(R.string.operation_failed), color = MaterialTheme.colorScheme.error)
+        } },
+        confirmButton = { TextButton(state::saveNavigation, enabled = !state.navigating, modifier = Modifier.testTag("navigation-save")) { Text(stringResource(R.string.save)) } },
+        dismissButton = { Row {
+            TextButton(state::discardNavigation, enabled = !state.navigating, modifier = Modifier.testTag("navigation-discard")) { Text(stringResource(R.string.do_not_save)) }
+            TextButton(state::stay, enabled = !state.navigating, modifier = Modifier.testTag("navigation-stay")) { Text(stringResource(R.string.stay)) }
+        } },
+    )
 }
 
 @Composable
 private fun EntryDetails(state: DocumentState, attachments: AttachmentActions, copy: (String) -> Unit) {
     val entry = state.inspectedEntry ?: return
     Row(Modifier.horizontalScroll(rememberScrollState())) {
-        TextButton({ state.chooseGroup(state.selectedGroup, state.ungrouped) }) { Text(stringResource(R.string.back)) }
+        TextButton({ state.chooseGroup(state.selectedGroup) }) { Text(stringResource(R.string.back)) }
         TextButton({ state.beginEntry(entry.id) }, enabled = state.overview?.writable == true, modifier = Modifier.testTag("edit-entry")) { Text(stringResource(R.string.edit)) }
         TextButton({ state.showHistory(FormKind.ENTRY, entry.id) }) { Text(stringResource(R.string.history)) }
         TextButton({ state.trash(FormKind.ENTRY, entry.id, entry.group) }, enabled = state.overview?.writable == true) { Text(stringResource(R.string.trash)) }
@@ -233,31 +251,31 @@ private fun EntryForm(state: DocumentState, attachments: AttachmentActions, copy
         var attribute by remember { mutableStateOf<AttributeRow?>(null) }
         var addAttribute by remember { mutableStateOf(false) }
         Row(Modifier.horizontalScroll(rememberScrollState())) {
-            TextButton({ state.chooseGroup(state.selectedGroup, state.ungrouped) }) { Text(stringResource(R.string.back)) }
+            TextButton({ state.chooseGroup(state.selectedGroup) }) { Text(stringResource(R.string.back)) }
             input.source.entry?.let { id ->
                 TextButton({ state.showHistory(FormKind.ENTRY, id) }) { Text(stringResource(R.string.history)) }
                 TextButton({ state.trash(FormKind.ENTRY, id, input.source.group) }) { Text(stringResource(R.string.trash)) }
             }
         }
         if (state.entryTab == 0) {
-            Field(input.title, R.string.title, "entry-title", !state.navigating && state.overview?.writable == true) { state.edit(EntryTextField.TITLE, it) }
-            Field(input.username, R.string.username, "entry-username", !state.navigating && state.overview?.writable == true) { state.edit(EntryTextField.USERNAME, it) }
-            OutlinedTextField(input.password, { state.edit(EntryTextField.PASSWORD, it) }, Modifier.fillMaxWidth().testTag("entry-password"), enabled = !state.navigating && state.overview?.writable == true,
+            Field(input.title, R.string.title, "entry-title", !state.editingBlocked && state.overview?.writable == true) { state.edit(EntryTextField.TITLE, it) }
+            Field(input.username, R.string.username, "entry-username", !state.editingBlocked && state.overview?.writable == true) { state.edit(EntryTextField.USERNAME, it) }
+            OutlinedTextField(input.password, { state.edit(EntryTextField.PASSWORD, it) }, Modifier.fillMaxWidth().testTag("entry-password"), enabled = !state.editingBlocked && state.overview?.writable == true,
                 label = { Text(stringResource(R.string.password)) }, placeholder = { if (input.source.hasPassword) Text(stringResource(R.string.password_retained)) }, visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password))
             Row {
                 if (input.source.entry != null && input.source.hasPassword) TextButton({ state.reveal() }) { Text(stringResource(R.string.reveal)) }
                 TextButton({ state.edit(EntryTextField.PASSWORD, "", true) }, enabled = state.overview?.writable == true) { Text(stringResource(R.string.clear)) }
-                TextButton({ state.saveNow(); state.generator = true }) { Text(stringResource(R.string.generator)) }
+                TextButton({ state.generator = true }) { Text(stringResource(R.string.generator)) }
             }
             if (state.revealed.isNotEmpty()) SecretValue(state.revealed, state::hideSecrets, copy)
-            Field(input.url, R.string.url, "entry-url", !state.navigating && state.overview?.writable == true) { state.edit(EntryTextField.URL, it) }
-            Field(input.tags, R.string.tags, "entry-tags", !state.navigating && state.overview?.writable == true, false) { state.editTags(it) }
+            Field(input.url, R.string.url, "entry-url", !state.editingBlocked && state.overview?.writable == true) { state.edit(EntryTextField.URL, it) }
+            Field(input.tags, R.string.tags, "entry-tags", !state.editingBlocked && state.overview?.writable == true, false) { state.editTags(it) }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(stringResource(R.string.expiry), Modifier.weight(1f))
-                Switch(input.expiryEnabled, state::enableExpiry, enabled = !state.navigating && state.overview?.writable == true)
+                Switch(input.expiryEnabled, state::enableExpiry, enabled = !state.editingBlocked && state.overview?.writable == true)
             }
-            if (input.expiryEnabled) Field(input.expiry, R.string.expiry, "entry-expiry", !state.navigating && state.overview?.writable == true) { state.editExpiry(it) }
-            Field(input.notes, R.string.notes, "entry-notes", !state.navigating && state.overview?.writable == true, false) { state.edit(EntryTextField.NOTES, it) }
+            if (input.expiryEnabled) Field(input.expiry, R.string.expiry, "entry-expiry", !state.editingBlocked && state.overview?.writable == true) { state.editExpiry(it) }
+            Field(input.notes, R.string.notes, "entry-notes", !state.editingBlocked && state.overview?.writable == true, false) { state.edit(EntryTextField.NOTES, it) }
         } else if (state.entryTab == 1) {
             input.source.attributes.forEach { row ->
                 key(row.id ?: row.name) { EditableAttribute(state, row) { attribute = it } }
@@ -293,7 +311,7 @@ private fun EditableAttribute(state: DocumentState, row: AttributeRow, rename: (
     var value by remember { mutableStateOf(row.value.orEmpty()) }
     var protected by remember { mutableStateOf(row.protected) }
     var typed by remember { mutableStateOf(false) }
-    val enabled = !state.navigating && state.overview?.writable == true
+    val enabled = !state.editingBlocked && state.overview?.writable == true
     LaunchedEffect(row.value, protected) {
         // Removing protection is an explicit user action; its acknowledged unmasked
         // value can fill untouched input, while later typing retains focus and text.
@@ -321,15 +339,15 @@ private fun EditableAttribute(state: DocumentState, row: AttributeRow, rename: (
 private fun MetadataForm(state: DocumentState) {
     val input = state.metadata ?: return
     Row(Modifier.horizontalScroll(rememberScrollState())) {
-        TextButton({ state.chooseGroup(state.selectedGroup, state.ungrouped) }) { Text(stringResource(R.string.back)) }
+        TextButton({ state.chooseGroup(state.selectedGroup) }) { Text(stringResource(R.string.back)) }
         if (input.source.form.kind == FormKind.GROUP || input.source.form.kind == FormKind.DATABASE) {
             TextButton({ state.showHistory(input.source.form.kind, input.source.form.target) }) { Text(stringResource(R.string.history)) }
         }
         if (input.source.form.kind == FormKind.GROUP && input.source.form.target != null) TextButton({ state.trash(FormKind.GROUP, input.source.form.target!!, null) }) { Text(stringResource(R.string.trash)) }
         if (input.source.form.kind == FormKind.DATABASE && state.overview?.managing == true) TextButton(state::showPolicy) { Text(stringResource(R.string.policy)) }
     }
-    Field(input.name, R.string.name, "metadata-name", !state.navigating) { state.editMetadata(name = it) }
-    Field(input.description, R.string.description, "metadata-description", !state.navigating, false) { state.editMetadata(description = it) }
+    Field(input.name, R.string.name, "metadata-name", !state.editingBlocked) { state.editMetadata(name = it) }
+    Field(input.description, R.string.description, "metadata-description", !state.editingBlocked, false) { state.editMetadata(description = it) }
     TextButton({ state.editMetadata(description = "", clearDescription = true) }) { Text(stringResource(R.string.clear_description)) }
     if (input.source.form.kind == FormKind.GROUP || input.source.form.kind == FormKind.NEW_GROUP) IconPicker(null, state::setGroupIcon)
 }
@@ -566,7 +584,6 @@ private fun saveText(label: SaveLabel) = when (label) {
     SaveLabel.DIRTY -> R.string.save_dirty
     SaveLabel.SAVING -> R.string.save_running
     SaveLabel.SAVED -> R.string.save_saved
-    SaveLabel.LOCAL -> R.string.save_local
     SaveLabel.FAILED -> R.string.save_failed
 }
 private fun formText(kind: FormKind) = when (kind) {

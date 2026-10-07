@@ -5,7 +5,33 @@ use taypeer_services::{
     DraftTarget, EntryPatch, FieldUpdate, GroupForm, ServiceError, new_operation_id,
 };
 
-const PASSWORD: &[u8] = b"PUBLIC autosave master password";
+const PASSWORD: &[u8] = b"PUBLIC snapshot master password";
+
+fn new_entry_form(
+    service: &mut DatabaseService,
+    session: &taypeer_services::SessionToken,
+) -> taypeer_services::DraftView {
+    let group = service
+        .groups(session)
+        .unwrap()
+        .value
+        .into_iter()
+        .next()
+        .map(|group| group.id)
+        .unwrap_or_else(|| {
+            service
+                .create_group(
+                    session,
+                    "PUBLIC fixture group".into(),
+                    None,
+                    &new_operation_id().unwrap(),
+                )
+                .unwrap()
+                .value
+                .id
+        });
+    service.start_create_entry(session, group).unwrap().value
+}
 
 #[test]
 fn complete_group_forms_retry_the_same_receipt_before_and_after_restart() {
@@ -100,6 +126,192 @@ fn title(value: &str) -> EntryPatch {
 }
 
 #[test]
+fn invalid_entry_snapshots_do_not_bind_an_operation_or_create_a_saved_revision() {
+    for invalid_date in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("PUBLIC rejected form.taypeer");
+        let mut service = DatabaseService::new();
+        let session = service
+            .create_file(&path, "PUBLIC rejected form".into(), PASSWORD)
+            .unwrap();
+        let form = new_entry_form(&mut service, &session);
+        service
+            .patch_draft(
+                &session,
+                EntryPatch {
+                    title: if invalid_date {
+                        FieldUpdate::Set("PUBLIC valid title".into())
+                    } else {
+                        FieldUpdate::Keep
+                    },
+                    password: FieldUpdate::Set("PUBLIC retained secret".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        if invalid_date {
+            service
+                .set_draft_expiry_input(&session, Some("PUBLIC unfinished date".into()))
+                .unwrap();
+        }
+        let rejected = service.editor_view(&session).unwrap();
+        let operation = new_operation_id().unwrap();
+        let before = std::fs::read(&path).unwrap();
+        assert_eq!(
+            service
+                .save_draft_snapshot(
+                    &session,
+                    &rejected.identity.draft,
+                    rejected.identity.revision,
+                    &operation,
+                )
+                .unwrap_err(),
+            ServiceError::InvalidInput
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        assert!(service.editor_view(&session).unwrap().dirty);
+        assert!(
+            service
+                .entries(&session, None, "")
+                .unwrap()
+                .value
+                .is_empty()
+        );
+        service.persist_drafts(&session).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        service.lock(&session).unwrap();
+        drop(service);
+
+        let mut service = DatabaseService::new();
+        let session = service.open_file(&path, PASSWORD).unwrap();
+        service
+            .resume_draft(&session, &form.identity.draft)
+            .unwrap();
+        assert_eq!(
+            service.reveal_editor(&session, None).unwrap().expose(),
+            "PUBLIC retained secret"
+        );
+        if invalid_date {
+            service.set_draft_expiry_input(&session, None).unwrap();
+        } else {
+            service
+                .patch_draft(&session, title("PUBLIC completed"))
+                .unwrap();
+        }
+        let corrected = service.editor_view(&session).unwrap();
+        assert!(corrected.identity.revision > rejected.identity.revision);
+        assert!(matches!(
+            service
+                .save_draft_snapshot(
+                    &session,
+                    &corrected.identity.draft,
+                    corrected.identity.revision,
+                    &operation,
+                )
+                .unwrap()
+                .value,
+            DraftSaveOutcome::Saved { .. }
+        ));
+        let entry = service.editor_view(&session).unwrap().entry.unwrap();
+        assert_eq!(service.history(&session, &entry).unwrap().value.len(), 1);
+        assert!(!service.editor_view(&session).unwrap().dirty);
+    }
+}
+
+#[test]
+fn invalid_group_and_database_names_keep_their_forms_without_confirming_metadata() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("PUBLIC rejected metadata.taypeer");
+    let mut service = DatabaseService::new();
+    let session = service
+        .create_file(&path, "PUBLIC initial database".into(), PASSWORD)
+        .unwrap();
+    let group = service.start_create_group(&session, None).unwrap().value;
+    service
+        .patch_group_draft(
+            &session,
+            &group.identity.draft,
+            GroupMetadataPatch {
+                description: FieldUpdate::Set("PUBLIC unfinished description".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let identity = service
+        .metadata_draft(&session, &group.identity.draft)
+        .unwrap()
+        .value
+        .identity;
+    let before = std::fs::read(&path).unwrap();
+    assert_eq!(
+        service
+            .save_draft_snapshot(
+                &session,
+                &identity.draft,
+                identity.revision,
+                &new_operation_id().unwrap()
+            )
+            .unwrap_err(),
+        ServiceError::InvalidInput
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    assert!(service.groups(&session).unwrap().value.is_empty());
+    assert!(
+        service
+            .metadata_draft(&session, &identity.draft)
+            .unwrap()
+            .value
+            .dirty
+    );
+    service.delete_draft(&session, &identity.draft).unwrap();
+
+    let database = service.start_edit_database_info(&session).unwrap().value;
+    service
+        .patch_database_draft(
+            &session,
+            &database.identity.draft,
+            DatabaseMetadataPatch {
+                name: FieldUpdate::Set(String::new()),
+                description: FieldUpdate::Set("PUBLIC retained database description".into()),
+            },
+        )
+        .unwrap();
+    let identity = service
+        .metadata_draft(&session, &database.identity.draft)
+        .unwrap()
+        .value
+        .identity;
+    let history = service.database_history(&session).unwrap().value.len();
+    assert_eq!(
+        service
+            .save_draft_snapshot(
+                &session,
+                &identity.draft,
+                identity.revision,
+                &new_operation_id().unwrap()
+            )
+            .unwrap_err(),
+        ServiceError::InvalidInput
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    assert_eq!(
+        service.database_history(&session).unwrap().value.len(),
+        history
+    );
+    assert_eq!(
+        service.database_info(&session).unwrap().name,
+        "PUBLIC initial database"
+    );
+    assert!(
+        service
+            .metadata_draft(&session, &identity.draft)
+            .unwrap()
+            .value
+            .dirty
+    );
+}
+
+#[test]
 fn every_parked_draft_retains_its_binary_contents_through_collection_and_restart() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("PUBLIC binary forms.taypeer");
@@ -114,7 +326,7 @@ fn every_parked_draft_retains_its_binary_contents_through_collection_and_restart
     ] {
         let source = directory.path().join("PUBLIC source");
         std::fs::write(&source, contents).unwrap();
-        service.start_create_entry_ungrouped(&session).unwrap();
+        new_entry_form(&mut service, &session);
         service
             .edit_binary(
                 &session,
@@ -174,9 +386,10 @@ fn untouched_empty_forms_create_no_object_history_or_recoverable_draft() {
     let session = service
         .create_file(&path, "PUBLIC untouched".into(), PASSWORD)
         .unwrap();
-    service.start_create_entry_ungrouped(&session).unwrap();
+    new_entry_form(&mut service, &session);
     let identity = service.editor_view(&session).unwrap().identity;
-    assert!(matches!(
+    let before = std::fs::read(&path).unwrap();
+    assert_eq!(
         service
             .save_draft_snapshot(
                 &session,
@@ -184,11 +397,32 @@ fn untouched_empty_forms_create_no_object_history_or_recoverable_draft() {
                 identity.revision,
                 &new_operation_id().unwrap()
             )
+            .unwrap_err(),
+        ServiceError::InvalidInput
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    assert_eq!(service.editor_view(&session).unwrap().identity, identity);
+    let group = service.start_create_group(&session, None).unwrap().value;
+    assert_eq!(
+        service
+            .save_draft_snapshot(
+                &session,
+                &group.identity.draft,
+                group.identity.revision,
+                &new_operation_id().unwrap(),
+            )
+            .unwrap_err(),
+        ServiceError::InvalidInput
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    assert_eq!(
+        service
+            .metadata_draft(&session, &group.identity.draft)
             .unwrap()
-            .value,
-        DraftSaveOutcome::Unchanged { .. }
-    ));
-    service.start_create_group(&session, None).unwrap();
+            .value
+            .identity,
+        group.identity
+    );
     service.persist_drafts(&session).unwrap();
     assert!(service.drafts(&session).unwrap().value.is_empty());
     service.lock(&session).unwrap();
@@ -202,8 +436,164 @@ fn untouched_empty_forms_create_no_object_history_or_recoverable_draft() {
             .value
             .is_empty()
     );
-    assert!(service.groups(&session).unwrap().value.is_empty());
+    assert_eq!(service.groups(&session).unwrap().value.len(), 1);
     assert!(service.drafts(&session).unwrap().value.is_empty());
+}
+
+#[test]
+fn untouched_new_forms_validate_before_binding_operations_and_existing_forms_stay_noops() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("PUBLIC clean invalid forms.taypeer");
+    let mut service = DatabaseService::new();
+    let session = service
+        .create_file(&path, "PUBLIC clean invalid forms".into(), PASSWORD)
+        .unwrap();
+    let empty = new_entry_form(&mut service, &session);
+    let entry = match &empty.identity.target {
+        DraftTarget::NewEntry { entry, .. } => entry.clone(),
+        _ => panic!("expected PUBLIC reserved entry identity"),
+    };
+    let operation = new_operation_id().unwrap();
+    let before = std::fs::read(&path).unwrap();
+    assert!(!service.editor_view(&session).unwrap().dirty);
+    assert_eq!(
+        service
+            .save_draft_snapshot(
+                &session,
+                &empty.identity.draft,
+                empty.identity.revision,
+                &operation
+            )
+            .unwrap_err(),
+        ServiceError::InvalidInput
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    assert!(
+        service
+            .entries(&session, None, "")
+            .unwrap()
+            .value
+            .is_empty()
+    );
+    assert_eq!(
+        service.history(&session, &entry).unwrap_err(),
+        ServiceError::NotFound
+    );
+    assert_eq!(
+        service.editor_view(&session).unwrap().identity,
+        empty.identity
+    );
+    service
+        .patch_draft(&session, title("PUBLIC completed initial form"))
+        .unwrap();
+    let corrected = service.editor_view(&session).unwrap().identity;
+    assert!(matches!(
+        service
+            .save_draft_snapshot(&session, &corrected.draft, corrected.revision, &operation)
+            .unwrap()
+            .value,
+        DraftSaveOutcome::Saved { .. }
+    ));
+    assert_eq!(service.history(&session, &entry).unwrap().value.len(), 1);
+    let clean = service.editor_view(&session).unwrap().identity;
+    let before = std::fs::read(&path).unwrap();
+    assert!(matches!(
+        service
+            .save_draft_snapshot(
+                &session,
+                &clean.draft,
+                clean.revision,
+                &new_operation_id().unwrap()
+            )
+            .unwrap()
+            .value,
+        DraftSaveOutcome::Unchanged { .. }
+    ));
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    service.delete_draft(&session, &clean.draft).unwrap();
+
+    let empty = service.start_create_group(&session, None).unwrap().value;
+    let group = match &empty.identity.target {
+        DraftTarget::NewGroup { group, .. } => group.clone(),
+        _ => panic!("expected PUBLIC reserved group identity"),
+    };
+    let operation = new_operation_id().unwrap();
+    let before = std::fs::read(&path).unwrap();
+    assert!(!empty.dirty);
+    assert_eq!(
+        service
+            .save_draft_snapshot(
+                &session,
+                &empty.identity.draft,
+                empty.identity.revision,
+                &operation
+            )
+            .unwrap_err(),
+        ServiceError::InvalidInput
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    assert_eq!(service.groups(&session).unwrap().value.len(), 1);
+    assert_eq!(
+        service.group_history(&session, &group).unwrap_err(),
+        ServiceError::NotFound
+    );
+    assert_eq!(
+        service
+            .metadata_draft(&session, &empty.identity.draft)
+            .unwrap()
+            .value
+            .identity,
+        empty.identity
+    );
+    service
+        .patch_group_draft(
+            &session,
+            &empty.identity.draft,
+            GroupMetadataPatch {
+                name: FieldUpdate::Set("PUBLIC completed initial group".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let corrected = service
+        .metadata_draft(&session, &empty.identity.draft)
+        .unwrap()
+        .value
+        .identity;
+    assert!(matches!(
+        service
+            .save_draft_snapshot(&session, &corrected.draft, corrected.revision, &operation)
+            .unwrap()
+            .value,
+        DraftSaveOutcome::Saved { .. }
+    ));
+    assert_eq!(
+        service.group_history(&session, &group).unwrap().value.len(),
+        1
+    );
+    let clean = service
+        .metadata_draft(&session, &empty.identity.draft)
+        .unwrap()
+        .value
+        .identity;
+    let before = std::fs::read(&path).unwrap();
+    assert!(matches!(
+        service
+            .save_draft_snapshot(
+                &session,
+                &clean.draft,
+                clean.revision,
+                &new_operation_id().unwrap()
+            )
+            .unwrap()
+            .value,
+        DraftSaveOutcome::Unchanged { .. }
+    ));
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    assert_eq!(
+        service.group_history(&session, &group).unwrap().value.len(),
+        1
+    );
 }
 
 #[test]
@@ -214,14 +604,14 @@ fn snapshots_keep_the_editor_and_retry_only_the_captured_revision() {
     let session = service
         .create_file(&path, "PUBLIC database".into(), PASSWORD)
         .unwrap();
-    service.start_create_entry_ungrouped(&session).unwrap();
+    new_entry_form(&mut service, &session);
     service
         .patch_draft(&session, title("PUBLIC first"))
         .unwrap();
     let first = service.editor_view(&session).unwrap().identity;
     let entry = match &first.target {
-        DraftTarget::NewEntry { entry, group: None } => entry.clone(),
-        _ => panic!("expected an ungrouped new form"),
+        DraftTarget::NewEntry { entry, .. } => entry.clone(),
+        _ => panic!("expected a grouped new form"),
     };
     let operation = new_operation_id().unwrap();
     let saved = service
@@ -276,7 +666,7 @@ fn snapshots_keep_the_editor_and_retry_only_the_captured_revision() {
     assert_eq!(service.history(&session, &entry).unwrap().value.len(), 2);
     let search = service.search_unlocked("PUBLIC second").unwrap();
     assert_eq!(search.len(), 1);
-    assert!(search[0].value.group_name.is_none());
+    assert_eq!(search[0].value.group_name, "PUBLIC fixture group");
     service.lock(&session).unwrap();
     drop(service);
     let mut reopened = DatabaseService::new();
@@ -303,7 +693,7 @@ fn one_collection_retains_multiple_incomplete_forms_and_masks_resumption() {
     let session = service
         .create_file(&path, "PUBLIC database".into(), PASSWORD)
         .unwrap();
-    service.start_create_entry_ungrouped(&session).unwrap();
+    new_entry_form(&mut service, &session);
     service
         .patch_draft(
             &session,
@@ -314,17 +704,19 @@ fn one_collection_retains_multiple_incomplete_forms_and_masks_resumption() {
         )
         .unwrap();
     let first = service.editor_view(&session).unwrap().identity;
-    let result = service
-        .save_draft_snapshot(
-            &session,
-            &first.draft,
-            first.revision,
-            &new_operation_id().unwrap(),
-        )
-        .unwrap()
-        .value;
-    assert!(matches!(result, DraftSaveOutcome::LocalDraftSaved { .. }));
-    service.start_create_entry_ungrouped(&session).unwrap();
+    assert_eq!(
+        service
+            .save_draft_snapshot(
+                &session,
+                &first.draft,
+                first.revision,
+                &new_operation_id().unwrap(),
+            )
+            .unwrap_err(),
+        ServiceError::InvalidInput
+    );
+    service.persist_drafts(&session).unwrap();
+    new_entry_form(&mut service, &session);
     service
         .patch_draft(&session, title("PUBLIC date form"))
         .unwrap();
@@ -373,7 +765,7 @@ fn one_collection_retains_multiple_incomplete_forms_and_masks_resumption() {
             .value
             .is_empty()
     );
-    assert!(reopened.groups(&session).unwrap().value.is_empty());
+    assert_eq!(reopened.groups(&session).unwrap().value.len(), 1);
     reopened.resume_draft(&session, &first.draft).unwrap();
     let view = reopened.editor_view(&session).unwrap();
     assert!(view.has_password);
@@ -533,7 +925,7 @@ fn failed_snapshot_retries_its_old_input_then_preserves_the_newer_revision() {
     let session = service
         .create_file(&path, "PUBLIC database".into(), PASSWORD)
         .unwrap();
-    service.start_create_entry_ungrouped(&session).unwrap();
+    new_entry_form(&mut service, &session);
     service
         .patch_draft(&session, title("PUBLIC captured"))
         .unwrap();
@@ -593,7 +985,7 @@ fn local_fallback_reports_its_own_failure_and_deleted_attempts_cannot_resurrect(
     let session = service
         .create_file(&path, "PUBLIC fallback".into(), PASSWORD)
         .unwrap();
-    service.start_create_entry_ungrouped(&session).unwrap();
+    new_entry_form(&mut service, &session);
     service
         .patch_draft(&session, title("PUBLIC unconfirmed fallback"))
         .unwrap();
@@ -658,11 +1050,7 @@ fn picker_pin_keeps_a_clean_exact_form_through_restart_and_unpin_preserves_live_
     let session = service
         .create_file(&path, "PUBLIC picker database".into(), PASSWORD)
         .unwrap();
-    let identity = service
-        .start_create_entry_ungrouped(&session)
-        .unwrap()
-        .value
-        .identity;
+    let identity = new_entry_form(&mut service, &session).identity;
     let committed = std::fs::read(&path).unwrap();
     assert!(!service.editor_view(&session).unwrap().dirty);
     assert_eq!(service.pin_active_form(&session).unwrap().value, identity);
@@ -707,11 +1095,7 @@ fn picker_pin_keeps_a_clean_exact_form_through_restart_and_unpin_preserves_live_
             .value
             .is_empty()
     );
-    let identity = service
-        .start_create_entry_ungrouped(&session)
-        .unwrap()
-        .value
-        .identity;
+    let identity = new_entry_form(&mut service, &session).identity;
     service
         .patch_draft(&session, title("PUBLIC changed while picker retained"))
         .unwrap();
@@ -859,7 +1243,7 @@ fn a_new_picker_replaces_an_orphaned_pin_and_old_cleanup_cannot_unpin_it() {
         let session = service
             .create_file(&path, "PUBLIC orphaned picker".into(), PASSWORD)
             .unwrap();
-        service.start_create_entry_ungrouped(&session).unwrap();
+        new_entry_form(&mut service, &session);
         if dirty {
             service
                 .patch_draft(&session, title("PUBLIC retained old input"))
@@ -871,11 +1255,7 @@ fn a_new_picker_replaces_an_orphaned_pin_and_old_cleanup_cannot_unpin_it() {
         let mut service = DatabaseService::new();
         let session = service.open_file(&path, PASSWORD).unwrap();
         // The client lost its former URI and pending operation during restart.
-        let new = service
-            .start_create_entry_ungrouped(&session)
-            .unwrap()
-            .value
-            .identity;
+        let new = new_entry_form(&mut service, &session).identity;
         assert_ne!(old.draft, new.draft);
         assert_eq!(service.pin_active_form(&session).unwrap().value, new);
         service.unpin_form(&session, &old.draft).unwrap();

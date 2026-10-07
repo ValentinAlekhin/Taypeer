@@ -6,7 +6,10 @@ use crate::{
     backend::{Backend, Connection, Query, Ticket},
     ui_state::*,
 };
-use gpui_kit::{component::*, *};
+use gpui_kit::{
+    component::{button::ButtonVariants, *},
+    *,
+};
 use std::{collections::BTreeMap, path::PathBuf};
 use taypeer_runtime::{Command, RuntimeError, session::LockReason};
 type Pending =
@@ -34,7 +37,8 @@ pub struct WorkspaceStore {
     quit_requested: bool,
     settings_requested: bool,
     opening: bool,
-    save_requested: bool,
+    discard_requested: bool,
+    navigation_waiting_for_save: bool,
     operation: u64,
     secret_epoch: u64,
     _catalog_subscription: Subscription,
@@ -46,9 +50,10 @@ impl WorkspaceStore {
     pub fn test_idle(&self, cx: &App) -> bool {
         !self.busy()
             && !self.sync.read(cx).model().busy()
-            && !self.editor.as_ref().is_some_and(|e| {
-                e.read(cx).busy() || (e.read(cx).autosave_pending() && e.read(cx).error().is_none())
-            })
+            && !self
+                .editor
+                .as_ref()
+                .is_some_and(|e| e.read(cx).busy() || e.read(cx).saving())
             && !self
                 .metadata
                 .as_ref()
@@ -129,7 +134,8 @@ impl WorkspaceStore {
             quit_requested: false,
             settings_requested: false,
             opening: false,
-            save_requested: false,
+            discard_requested: false,
+            navigation_waiting_for_save: false,
             operation: 0,
             secret_epoch: 0,
             _catalog_subscription: cx.observe(&catalog, |_, _, cx| cx.notify()),
@@ -222,7 +228,7 @@ impl WorkspaceStore {
         self.notice
     }
     pub(crate) fn busy(&self) -> bool {
-        self.saving || self.opening || self.save_requested
+        self.saving || self.opening || self.discard_requested
     }
     /// Monotonic revocation generation used to reject stale secret results.
     pub fn secret_epoch(&self) -> u64 {
@@ -243,13 +249,11 @@ impl WorkspaceStore {
     }
     /// Whether navigation must resolve an unsaved database draft.
     pub fn dirty(&self, cx: &App) -> bool {
-        self.editor
-            .as_ref()
-            .is_some_and(|e| e.read(cx).autosave_pending())
+        self.editor.as_ref().is_some_and(|e| e.read(cx).dirty())
             || self
                 .metadata
                 .as_ref()
-                .is_some_and(|form| form.read(cx).pending())
+                .is_some_and(|form| form.read(cx).dirty())
     }
     /// Record interaction against the shared session inactivity policy.
     pub fn activity(&self) {
@@ -410,8 +414,9 @@ impl WorkspaceStore {
         {
             cx.notify();
         }
-        self.poll_autosave(window, cx);
+        self.poll_editor_save(window, cx);
         self.poll_metadata(window, cx);
+        self.poll_discard(window, cx);
         let pending = std::mem::take(&mut self.pending);
         for mut job in pending {
             if !job(self, window, cx) {
@@ -472,6 +477,27 @@ impl WorkspaceStore {
                             catalog.apply(&db, snapshot);
                             cx.notify();
                         });
+                        if this.state.database.as_ref() == Some(&db)
+                            && this.state.query.is_empty()
+                            && this.editor.is_none()
+                        {
+                            let groups = &this
+                                .catalog
+                                .read(cx)
+                                .database(&db)
+                                .expect("applied database exists")
+                                .groups;
+                            if this.state.group.as_ref().is_none_or(|selected| {
+                                !groups.iter().any(|group| &group.id == selected)
+                            }) {
+                                let selected = groups.first().map(|group| group.id.clone());
+                                if this.state.group != selected {
+                                    this.state.group = selected;
+                                    this.state.selected = None;
+                                    this.refresh(cx);
+                                }
+                            }
+                        }
                     }
                     Err(error) => this.notice = Some(error_key(&error)),
                 }
@@ -607,7 +633,7 @@ impl WorkspaceStore {
         };
         self.open_file(path, password, None, |_, _, _| {}, window, cx);
     }
-    /// Flush the current form before navigation; only a double durability failure keeps it open.
+    /// Resolve unsaved input before changing the selected object, screen, or application lifetime.
     pub fn navigate(
         &mut self,
         destination: Destination,
@@ -617,121 +643,194 @@ impl WorkspaceStore {
         if self.busy() || self.state.pending.is_some() {
             return;
         }
-        if self.editor.is_some() || self.metadata.is_some() {
-            self.state.pending = Some(destination);
-            self.save_requested = true;
-            if let Some(metadata) = &self.metadata {
-                metadata.update(cx, |form, _| form.request_close());
-            }
-            self.poll_autosave(window, cx);
-        } else {
+        if self.editor.is_none() && self.metadata.is_none() {
             self.perform(destination, window, cx);
+            return;
+        }
+        self.state.pending = Some(destination);
+        if self
+            .editor
+            .as_ref()
+            .is_some_and(|editor| editor.read(cx).saving())
+            || self
+                .metadata
+                .as_ref()
+                .is_some_and(|form| form.read(cx).saving())
+        {
+            self.navigation_waiting_for_save = true;
+            cx.notify();
+            return;
+        }
+        if self.dirty(cx) {
+            self.confirm_navigation(window, cx);
+        } else {
+            self.discard_requested = true;
+            self.poll_discard(window, cx);
         }
         cx.notify();
     }
+    fn confirm_navigation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let store = cx.entity();
+        window.open_dialog(cx, move |dialog, window, _| {
+            let save = store.clone();
+            let discard = store.clone();
+            let stay = store.clone();
+            let cancel = store.clone();
+            dialog
+                .title(super::style::tr("unsaved"))
+                .width(window.rem_size() * 30.)
+                .overlay_closable(false)
+                .close_button(false)
+                .child(div().child(super::style::tr("unsaved_body")))
+                .footer(
+                    h_flex()
+                        .justify_end()
+                        .gap_2()
+                        .child(
+                            button::Button::new("unsaved-stay")
+                                .label(super::style::tr("stay"))
+                                .on_click(move |_, window, cx| {
+                                    window.close_dialog(cx);
+                                    stay.update(cx, |store, cx| {
+                                        store.state.pending = None;
+                                        cx.notify();
+                                    });
+                                }),
+                        )
+                        .child(
+                            button::Button::new("unsaved-discard")
+                                .label(super::style::tr("discard"))
+                                .on_click(move |_, window, cx| {
+                                    window.close_dialog(cx);
+                                    discard.update(cx, |store, cx| {
+                                        store.discard_requested = true;
+                                        cx.notify();
+                                    });
+                                }),
+                        )
+                        .child(
+                            button::Button::new("unsaved-save")
+                                .primary()
+                                .label(super::style::tr("save"))
+                                .on_click(move |_, window, cx| {
+                                    window.close_dialog(cx);
+                                    save.update(cx, |store, cx| store.save(cx));
+                                }),
+                        ),
+                )
+                .on_cancel(move |_, _, cx| {
+                    cancel.update(cx, |store, cx| {
+                        store.state.pending = None;
+                        cx.notify();
+                    });
+                    true
+                })
+        });
+    }
     fn continue_navigation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.metadata.is_some() {
+        if self.metadata.is_some() || self.editor.is_some() {
             return;
         }
         if let Some(destination) = self.state.pending.take() {
-            self.editor = None;
             self.perform(destination, window, cx);
         }
     }
-    fn poll_autosave(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn poll_editor_save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(editor) = self.editor.clone() else {
-            self.save_requested = false;
             return;
         };
-        if editor.read(cx).save_blocked() && self.state.pending.is_some() {
-            self.state.pending = None;
-            self.save_requested = false;
-            self.notice = Some(
-                editor
-                    .read(cx)
-                    .error()
-                    .map_or("ui.operation_failed", |error| error.key()),
-            );
-            return;
-        }
-        let event = editor.update(cx, |editor, _| editor.take_save_event());
-        match event {
+        match editor.update(cx, |editor, _| editor.take_save_event()) {
             Some(SaveEvent::Confirmed(outcome)) => {
                 let identity = match &outcome {
                     taypeer_services::DraftSaveOutcome::Saved { identity, .. }
-                    | taypeer_services::DraftSaveOutcome::LocalDraftSaved { identity, .. }
                     | taypeer_services::DraftSaveOutcome::Unchanged { identity, .. } => identity,
                 };
-                if matches!(outcome, taypeer_services::DraftSaveOutcome::Saved { .. }) {
-                    if let taypeer_services::DraftTarget::Entry(id)
-                    | taypeer_services::DraftTarget::NewEntry { entry: id, .. } =
-                        &identity.target
-                    {
-                        self.state.selected = Some(id.clone());
-                    }
-                    self.notice = Some("ui.saved");
-                } else {
-                    self.notice = Some("ui.draft_saved");
+                if let taypeer_services::DraftTarget::Entry(id)
+                | taypeer_services::DraftTarget::NewEntry { entry: id, .. } = &identity.target
+                {
+                    self.state.selected = Some(id.clone());
                 }
+                self.notice = Some("ui.saved");
                 self.refresh(cx);
+                if editor.read(cx).durably_current() && editor.read(cx).error().is_none() {
+                    self.discard_requested = true;
+                } else if !self.discard_requested {
+                    if self.navigation_waiting_for_save && self.state.pending.is_some() {
+                        self.confirm_navigation(window, cx);
+                    } else {
+                        // A save confirms only its snapshot; newer input needs another explicit action.
+                        self.state.pending = None;
+                    }
+                }
+                self.navigation_waiting_for_save = false;
             }
             Some(SaveEvent::Failed(error)) => {
                 self.notice = Some(error_key(&error));
-                if self.state.pending.is_none() {
-                    self.save_requested = false;
-                }
-                if self.state.pending.is_some() && !self.saving {
-                    if editor.read(cx).save_blocked() {
-                        self.state.pending = None;
-                    } else {
-                        let revision = editor.read(cx).input_revision();
-                        let connection = editor.read(cx).connection().clone();
-                        let expected = editor.entity_id();
-                        self.saving = true;
-                        self.watch(
-                            connection.command::<()>(Command::PersistDrafts),
-                            move |this, result, _, cx| {
-                                this.saving = false;
-                                if this
-                                    .editor
-                                    .as_ref()
-                                    .is_none_or(|editor| editor.entity_id() != expected)
-                                {
-                                    return;
-                                }
-                                match result {
-                                    Ok(()) => editor.update(cx, |editor, cx| {
-                                        editor.confirm_local_fallback(revision);
-                                        cx.notify();
-                                    }),
-                                    Err(error) => {
-                                        this.state.pending = None;
-                                        this.notice = Some(error_key(&error));
-                                    }
-                                }
-                                cx.notify();
-                            },
-                        );
-                    }
+                self.navigation_waiting_for_save = false;
+                if !self.discard_requested {
+                    self.state.pending = None;
                 }
             }
             None => {}
         }
-        let Some(editor) = self.editor.clone() else {
+    }
+    /// Cancel removes only the current local form after any started publication has finished.
+    pub fn cancel_edit(&mut self, cx: &mut Context<Self>) {
+        if self.saving || self.opening {
+            return;
+        }
+        self.state.pending = Some(Destination::CancelEdit);
+        self.discard_requested = true;
+        cx.notify();
+    }
+    fn poll_discard(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        if !self.discard_requested || self.saving {
+            return;
+        }
+        let draft = if let Some(editor) = &self.editor {
+            let editor = editor.read(cx);
+            if editor.saving() {
+                return;
+            }
+            Some((editor.connection().clone(), editor.draft_id().clone()))
+        } else if let Some(form) = &self.metadata {
+            let form = form.read(cx);
+            if form.saving() {
+                return;
+            }
+            Some((form.connection().clone(), form.draft_id().clone()))
+        } else {
+            None
+        };
+        let Some((connection, draft)) = draft else {
+            self.discard_requested = false;
             return;
         };
-        if editor.read(cx).durably_current() {
-            self.save_requested = false;
-            self.continue_navigation(window, cx);
-            return;
-        }
-        if !self.saving {
-            editor.update(cx, |editor, cx| {
-                if editor.start_snapshot(self.save_requested || self.state.pending.is_some()) {
-                    cx.notify();
+        self.saving = true;
+        let had_metadata = self.metadata.is_some();
+        self.watch_operation(
+            connection.command::<()>(Command::DeleteDraft(draft)),
+            move |store, result, window, cx| {
+                store.saving = false;
+                store.discard_requested = false;
+                match result {
+                    Ok(()) => {
+                        store.editor = None;
+                        store.metadata = None;
+                        if had_metadata {
+                            window.close_dialog(cx);
+                        }
+                        store.refresh(cx);
+                        store.continue_navigation(window, cx);
+                    }
+                    Err(error) => {
+                        store.state.pending = None;
+                        store.notice = Some(error_key(&error));
+                    }
                 }
-            });
-        }
+                cx.notify();
+            },
+        );
     }
     fn perform(&mut self, destination: Destination, window: &mut Window, cx: &mut Context<Self>) {
         self.notice = None;
@@ -745,13 +844,6 @@ impl WorkspaceStore {
                 } else {
                     Route::Settings
                 }
-            }
-            Destination::Ungrouped => {
-                self.state.route = Route::Workspace;
-                self.state.group = None;
-                self.state.selected = None;
-                self.state.query.clear();
-                self.state.bookmark = None;
             }
             Destination::Draft(id) => {
                 self.resume_draft(id, cx);
@@ -838,14 +930,10 @@ impl WorkspaceStore {
                 return;
             }
             Destination::NewEntry => {
-                if self.writable(cx) {
-                    self.start_editor(
-                        self.state
-                            .group
-                            .clone()
-                            .map_or(Command::BeginCreateUngrouped, Command::BeginCreate),
-                        cx,
-                    );
+                if self.writable(cx)
+                    && let Some(group) = self.state.group.clone()
+                {
+                    self.start_editor(Command::BeginCreate(group), cx);
                 }
                 return;
             }
@@ -924,7 +1012,8 @@ impl WorkspaceStore {
             self.operation += 1;
             self.saving = false;
             self.opening = false;
-            self.save_requested = false;
+            self.discard_requested = false;
+            self.navigation_waiting_for_save = false;
             window.close_all_dialogs(cx);
         }
         cx.notify();
@@ -1201,6 +1290,13 @@ impl WorkspaceStore {
     /// Whether the window owns an active entry draft.
     pub fn is_editing(&self) -> bool {
         self.editor.is_some()
+    }
+    pub(in crate::ui) fn has_metadata_form(&self) -> bool {
+        self.metadata.is_some()
+    }
+    /// Whether the window owns a retained group/database form ready for an explicit save action.
+    pub fn is_metadata_editing(&self) -> bool {
+        self.metadata.is_some() && self.state.pending.is_none()
     }
     /// Whether the selected entry or draft needs an inspector.
     pub fn has_inspector(&self) -> bool {

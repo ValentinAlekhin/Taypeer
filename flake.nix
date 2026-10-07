@@ -26,7 +26,7 @@
         cargoLock = { lockFile = ./Cargo.lock; allowBuiltinFetchGit = true; };
         nativeBuildInputs = with pkgs; [ pkg-config makeWrapper imagemagick ];
         buildInputs = libraries;
-        cargoBuildFlags = [ "-p" "taypeer" "-p" "taypeer-cli" "--bin" "taypeer" "--bin" "taypeer-cli" ];
+        cargoBuildFlags = [ "-p" "taypeer" "--bin" "taypeer" ];
         # UI fixture workers and public demo credentials are gated by ui-test-support.
         doCheck = false;
         postInstall = ''

@@ -517,7 +517,7 @@ fn search_and_masked_views_exclude_secrets_and_respect_search_scope() {
     assert!(!debug.contains(PROTECTED));
     let results = service.search_unlocked("русский").unwrap();
     assert_eq!(results.len(), 1);
-    assert_eq!(results[0].value.group_name.as_deref(), Some("Examples"));
+    assert_eq!(results[0].value.group_name.as_str(), "Examples");
     service.lock(&session).unwrap();
     assert!(service.search_unlocked("русский").unwrap().is_empty());
 }
@@ -690,11 +690,13 @@ fn global_search_retains_each_source_and_excludes_independently_locked_databases
     assert!(
         results
             .iter()
-            .any(|row| row.session == first && row.value.group_name.as_deref() == Some("Examples"))
+            .any(|row| row.session == first && row.value.group_name == "Examples")
     );
-    assert!(results.iter().any(
-        |row| row.session == second && row.value.group_name.as_deref() == Some("Second group")
-    ));
+    assert!(
+        results
+            .iter()
+            .any(|row| row.session == second && row.value.group_name == "Second group")
+    );
     service.lock(&first).unwrap();
     let remaining = service.search_unlocked("shared").unwrap();
     assert_eq!(remaining.len(), 1);

@@ -308,16 +308,16 @@ pub type FieldConflict = FieldState;
 pub struct EntrySnapshot {
     /// Stable identity.
     pub id: EntryId,
-    /// Selected group, or no group.
-    pub group_id: Option<GroupId>,
+    /// Selected owning user-created group.
+    pub group_id: GroupId,
     /// State generation containing these fields.
     pub generation: GenerationId,
-    /// Retained actual group destinations; explicit absence is in `placement_alternatives`.
+    /// Retained group destinations.
     pub placements: Vec<GroupRef>,
-    /// Selected destination, or no group.
-    pub placement: Option<GroupRef>,
-    /// Lossless destinations, including explicit absence.
-    pub placement_alternatives: Vec<Option<GroupRef>>,
+    /// Selected exact group destination.
+    pub placement: GroupRef,
+    /// Lossless group destinations.
+    pub placement_alternatives: Vec<GroupRef>,
     /// Selected editable form; concurrent alternatives never prevent ordinary editing.
     pub fields: Option<EntryFields>,
     /// Conflicting fields; all alternatives remain in `values` as well.
