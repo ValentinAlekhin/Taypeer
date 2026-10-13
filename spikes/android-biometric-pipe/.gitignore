@@ -1,0 +1,2 @@
+# Gradle output belongs to local verification, not the spike sources.
+**/build/

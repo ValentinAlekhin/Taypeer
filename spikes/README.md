@@ -8,6 +8,7 @@
 | --- | --- |
 | [Исходная гипотеза общего GPUI](gpui-android/REPORT.md) | Kit работает на macOS; общий набор ревизий с Android не подтверждён. Android-направление заменено решением ниже |
 | [Compose → UniFFI → Rust](android-compose/REPORT.md) | Синтетическая граница проверена на ARM64 AVD; реальный Android, IME и платформенные гарантии требуют приёмки |
+| [Приватный Android key pipe](android-biometric-pipe/README.md) | Отдельный PUBLIC APK проверяет продуктовый JNI и FD ownership; biometric admission и worker integration пока не подтверждены |
 | [Ввод и кадры macOS](gpui-android/MACOS-2026-09-09.md) | Стенд расширен, слой диалогов исправлен; расхождение AX/кадра и полная UI-матрица не закрыты |
 | [Формат и зашифрованный обмен](encrypted-sync/REPORT.md) | Исследованы контейнер v3, ротации, Iroh direct/relay, KDF и хранение. Выявлена неочищенная память Automerge; worker проверен отдельно. Полный rollback, ресурсы, реальные устройства и разбор безопасности остаются открытыми |
 

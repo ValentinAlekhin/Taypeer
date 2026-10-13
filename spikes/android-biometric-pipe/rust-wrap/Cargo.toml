@@ -1,0 +1,18 @@
+[package]
+name = "taypeer-public-biometric-wrap"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+members = ["."]
+resolver = "3"
+
+[dependencies]
+rsa = { version = "=0.9.10", default-features = false, features = ["std", "u64_digit"] }
+sha2 = "=0.10.9"
+sha1 = "=0.10.6"
+rand_core = { version = "=0.6.4", features = ["getrandom"] }
+
+[lints.rust]
+unsafe_code = "forbid"
