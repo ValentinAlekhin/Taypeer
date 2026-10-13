@@ -13,6 +13,8 @@ use taypeer_trust::{AuthorKey, ControlTransition, Identity, ObjectKind};
 
 const PASSWORD: &[u8] = b"PUBLIC archive password";
 
+mod ciphertext_export;
+
 #[test]
 fn host_staging_policy_survives_a_durable_commit() {
     struct Denied;
@@ -280,6 +282,105 @@ fn interrupted_final_marker_reconciles_but_old_file_rollback_is_rejected() {
         ArchiveStore::open(&path, None, Some(marker)),
         Err(Error::Changed)
     ));
+}
+
+#[test]
+fn exact_encrypted_commit_retry_confirms_anchor_without_replacing_the_generation() {
+    let fixture = Fixture::new();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("PUBLIC exact commit.taypeer");
+    let marker = Arc::new(Marker::default());
+    let (candidate, metadata) = fixture.initial();
+    let mut store =
+        ArchiveStore::create(&path, &candidate, metadata, Some(marker.clone())).unwrap();
+    let before = store.snapshot().fingerprint();
+    let mut body = store.snapshot().metadata().manifest.body.clone();
+    body.generation += 1;
+    let candidate = store.snapshot().candidate();
+    let metadata = candidate
+        .metadata(
+            &fixture.chain,
+            &fixture.transport,
+            body,
+            ArchiveJournal::default(),
+        )
+        .unwrap();
+    marker.fail_final.store(true, Ordering::SeqCst);
+    assert_eq!(
+        store.commit(before, &candidate, metadata.clone()),
+        Err(Error::CommitUncertain)
+    );
+    let published = fs::read(&path).unwrap();
+    let fingerprint = store.snapshot().fingerprint();
+    marker.fail_final.store(true, Ordering::SeqCst);
+    assert_eq!(
+        store.commit(before, &candidate, metadata.clone()),
+        Err(Error::CommitUncertain)
+    );
+    assert_eq!(fs::read(&path).unwrap(), published);
+    assert_eq!(store.snapshot().fingerprint(), fingerprint);
+    store.commit(before, &candidate, metadata.clone()).unwrap();
+    assert_eq!(
+        marker.load().unwrap().unwrap(),
+        Anchor {
+            accepted: Some(fingerprint),
+            prepared: None
+        }
+    );
+    assert_eq!(store.snapshot().metadata().manifest.body.generation, 1);
+    assert_eq!(fs::read(&path).unwrap(), published);
+    store.commit(before, &candidate, metadata).unwrap();
+    assert_eq!(fs::read(&path).unwrap(), published);
+}
+
+#[test]
+fn exact_encrypted_commit_retry_refuses_a_different_visible_file_or_anchor() {
+    let fixture = Fixture::new();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("PUBLIC refused exact commit.taypeer");
+    let marker = Arc::new(Marker::default());
+    let (candidate, metadata) = fixture.initial();
+    let mut store =
+        ArchiveStore::create(&path, &candidate, metadata, Some(marker.clone())).unwrap();
+    let original = fs::read(&path).unwrap();
+    let previous = store.snapshot().fingerprint();
+    let mut body = store.snapshot().metadata().manifest.body.clone();
+    body.generation += 1;
+    let candidate = store.snapshot().candidate();
+    let metadata = candidate
+        .metadata(
+            &fixture.chain,
+            &fixture.transport,
+            body,
+            ArchiveJournal::default(),
+        )
+        .unwrap();
+    marker.fail_final.store(true, Ordering::SeqCst);
+    assert_eq!(
+        store.commit(previous, &candidate, metadata.clone()),
+        Err(Error::CommitUncertain)
+    );
+    let published = fs::read(&path).unwrap();
+    let anchor = marker.load().unwrap().unwrap();
+    marker
+        .save(&Anchor {
+            accepted: Some(Digest::of(b"PUBLIC unrelated anchor")),
+            prepared: None,
+        })
+        .unwrap();
+    assert_eq!(
+        store.commit(previous, &candidate, metadata.clone()),
+        Err(Error::Changed)
+    );
+    assert_eq!(fs::read(&path).unwrap(), published);
+    marker.save(&anchor).unwrap();
+    fs::write(&path, original.clone()).unwrap();
+    assert_eq!(
+        store.commit(previous, &candidate, metadata),
+        Err(Error::Changed)
+    );
+    assert_eq!(fs::read(&path).unwrap(), original);
+    assert_eq!(marker.load().unwrap().unwrap(), anchor);
 }
 
 #[test]

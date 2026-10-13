@@ -117,6 +117,22 @@ impl ArchiveStore {
             {
                 return Err(Error::Changed);
             }
+            // A prepared marker may describe a replacement whose directory or
+            // final protected ACK failed before the previous host exited.
+            // Reading equal bytes cannot confirm that publication.
+            let mut input = File::open(&path)?;
+            if Digest::from_bytes(file::fingerprint(&mut input)?) != snapshot.fingerprint {
+                return Err(Error::Changed);
+            }
+            input.sync_all().map_err(|_| Error::CommitUncertain)?;
+            File::open(file::parent(&path)?)
+                .and_then(|directory| directory.sync_all())
+                .map_err(|_| Error::CommitUncertain)?;
+            if Digest::from_bytes(file::fingerprint(&mut File::open(&path)?)?)
+                != snapshot.fingerprint
+            {
+                return Err(Error::Changed);
+            }
             store.save(&Anchor {
                 accepted: Some(snapshot.fingerprint),
                 prepared: None,
@@ -128,6 +144,7 @@ impl ArchiveStore {
             snapshot,
             anchor,
             uncertain: false,
+            last_commit: None,
         })
     }
 }

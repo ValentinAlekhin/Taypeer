@@ -1,0 +1,24 @@
+<resources>
+    <string name="received_sources">Отложенные правки</string>
+    <string name="received_source">Отложенный источник</string>
+    <string name="received_sources_note">Исходные правки сохраняются до применения или явного решения о том, что оставить.</string>
+    <string name="received_sources_empty">Отложенных источников нет</string>
+    <string name="received_source_id">Источник · %1$s</string>
+    <string name="received_author">Автор · %1$s</string>
+    <string name="received_causal_note">Просмотр исходных данных не применяет эти правки к базе.</string>
+    <string name="received_no_entries">В этом источнике нет записей для извлечения.</string>
+    <string name="received_password_choice">Выберите вариант пароля для показа или копирования.</string>
+    <string name="received_password_variant">Вариант пароля %1$d</string>
+    <string name="extract_source">Извлечь в новую запись</string>
+    <string name="extract_group_source">Извлечь в новую группу</string>
+    <string name="extract_action">Извлечь</string>
+    <string name="retry_source">Повторить извлечение</string>
+    <string name="received_extract_note">Выберите активную группу. Новая запись сохранит выбранные значения и их происхождение; история источника и сетевой допуск не наследуются.</string>
+    <string name="received_extract_group_note">Выберите родителя или верхний уровень. Новая группа сохранит метаданные выбранного источника. Остальные источники обрабатываются отдельно.</string>
+    <string name="received_extracted">Новый объект сохранён.</string>
+    <string name="open_extracted">Открыть новую запись</string>
+    <string name="open_extracted_group">Открыть новую группу</string>
+    <string name="discard_source">Удалить источник</string>
+    <string name="discard_action">Удалить</string>
+    <string name="received_discard_warning">Эти исходные правки не будут применяться автоматически, в том числе при повторном получении. Копии на других устройствах не стираются.</string>
+</resources>

@@ -18,11 +18,17 @@ taypeer-storage.workspace = true
 taypeer-trust.workspace = true
 taypeer-sync.workspace = true
 rand_core.workspace = true
+rsa.workspace = true
+sha1.workspace = true
+sha2.workspace = true
 tempfile.workspace = true
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 zeroize.workspace = true
+
+[dev-dependencies]
+rustix = { workspace = true, features = ["pipe"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework.workspace = true

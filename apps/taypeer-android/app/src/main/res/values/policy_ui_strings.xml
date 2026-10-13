@@ -1,0 +1,31 @@
+<resources>
+    <string name="protection_title">Protection settings</string>
+    <string name="limits_title">Attachment limits</string>
+    <string name="policy_database_manager">%1$s · managing device</string>
+    <string name="policy_database_readonly">%1$s · read only settings</string>
+    <string name="protection_target">Target key preparation time</string>
+    <string name="protection_memory">Memory</string>
+    <string name="policy_seconds">%1$s s</string>
+    <string name="policy_mib">%1$s MiB</string>
+    <string name="protection_algorithm_range">Argon2id · target range 0.5–5 seconds</string>
+    <string name="protection_passes">Current parameters: %1$s passes · parallelism %2$s</string>
+    <string name="protection_actual_time">Actual key preparation on this device: %1$s s.</string>
+    <string name="protection_time_unavailable">No password key preparation measurement in this session.</string>
+    <string name="protection_calibrate">Calibrate</string>
+    <string name="protection_preview">Preview for %1$s s: %2$s passes, measured %3$s s. Not applied.</string>
+    <string name="protection_password_needed">Changing the target requires the current master password and updates the shared protection parameters.</string>
+    <string name="limits_attachment_mib">Size of one file, MiB</string>
+    <string name="limits_total_mib">Total attachments, MiB</string>
+    <string name="limits_used">Used %1$s MiB of %2$s MiB.</string>
+    <string name="limits_retention_note">History, trash and pending sources can retain content. Identical attachment content is counted once.</string>
+    <string name="limits_other_usage">Retained content: %1$s MiB. Local drafts: %2$s MiB. Encrypted working file: %3$s MiB.</string>
+    <string name="limits_exceeded">Accepted attachment content exceeds the quota. New attachments require cleanup or a higher limit.</string>
+    <string name="limits_incomplete">Some retained content or pending references are unavailable. Usage cannot justify deleting them.</string>
+    <string name="policy_readonly">Only the unlocked managing device can apply shared protection settings and limits.</string>
+    <string name="policy_read_failed">Could not read the actual policy and usage. Retry the read.</string>
+    <string name="policy_number_invalid">Enter a MiB amount that represents a whole number of bytes.</string>
+    <string name="policy_rejected">The request was rejected before publication. Correct the values or current master password.</string>
+    <string name="policy_retry_exact">The result is not confirmed. Retry the same request before making another change.</string>
+    <string name="policy_retained_summary">Submitted request: one attachment %1$s MiB, total %2$s MiB, key preparation target %3$s s.</string>
+    <string name="policy_calibration_failed">Calibration failed. No settings have been applied.</string>
+</resources>

@@ -178,6 +178,7 @@ impl DatabaseService {
                                 .description
                                 .map_or(FieldUpdate::Clear, FieldUpdate::Set),
                             icon: FieldUpdate::Set(form.icon),
+                            parent: FieldUpdate::Keep,
                         },
                         &doc.heads(),
                         now,

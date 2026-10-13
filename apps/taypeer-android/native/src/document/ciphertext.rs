@@ -7,6 +7,9 @@ use taypeer_storage::{
 };
 use taypeer_trust::{ControlChain, Digest, SignedControl};
 
+mod recovery;
+pub use recovery::{CipherRecoveryArchive, CipherRecoverySource};
+
 /// Immutable descriptor lease plus verified public generation identity.
 #[derive(uniffi::Record)]
 pub struct CipherSnapshot {
@@ -71,6 +74,44 @@ pub trait DocumentPersistence: Send + Sync {
     fn load_draft(&self) -> Result<Option<u64>, AndroidError>;
     /// Durably remove the local collection.
     fn discard_draft(&self) -> Result<(), AndroidError>;
+    /// Freeze one authenticated source. The returned archive is ciphertext-only.
+    fn freeze_recovery(
+        &self,
+        _operation: String,
+        _authenticated: String,
+    ) -> Result<CipherRecoverySource, AndroidError> {
+        Err(AndroidError::Runtime)
+    }
+    /// Resume the prior immutable encrypted source before password authentication.
+    fn recovery_source(
+        &self,
+        _operation: String,
+    ) -> Result<Option<CipherRecoverySource>, AndroidError> {
+        Err(AndroidError::Runtime)
+    }
+    /// Recovery-only author capability, bound to the protected immutable source.
+    fn author_recovery(&self, _source: Vec<u8>) -> Result<Vec<u8>, AndroidError> {
+        Err(AndroidError::Runtime)
+    }
+    /// Read the actual candidate; a missing candidate differs from a failed read.
+    fn recovery_candidate(
+        &self,
+        _intent: Vec<u8>,
+    ) -> Result<Option<CipherRecoveryArchive>, AndroidError> {
+        Err(AndroidError::Runtime)
+    }
+    /// Publish verified encrypted objects without activating catalog or network.
+    fn publish_recovery(
+        &self,
+        _intent: Vec<u8>,
+        _seed: CipherSeed,
+    ) -> Result<Vec<u8>, AndroidError> {
+        Err(AndroidError::Runtime)
+    }
+    /// Confirm real ciphertext durability and protected receipt, never a cached locator.
+    fn confirm_recovery(&self, _publication: Vec<u8>) -> Result<(), AndroidError> {
+        Err(AndroidError::Runtime)
+    }
 }
 
 /// Host-only descriptor adapter. This object never opens a plaintext DatabaseService.
@@ -333,6 +374,7 @@ impl Transfer {
 fn storage(error: AndroidError) -> taypeer_storage::Error {
     match error {
         AndroidError::StorageChanged => taypeer_storage::Error::Changed,
+        AndroidError::StorageBusy => taypeer_storage::Error::Busy,
         AndroidError::CommitUncertain => taypeer_storage::Error::CommitUncertain,
         AndroidError::AlreadyExists => taypeer_storage::Error::AlreadyExists,
         AndroidError::InvalidFile | AndroidError::InvalidOptions => {
@@ -489,5 +531,47 @@ impl taypeer_runtime::platform_worker::PlatformDocument for RemoteDocument {
             .map_err(|_| taypeer_runtime::RuntimeError::Transport)?
             .parse()
             .map_err(|_| taypeer_runtime::RuntimeError::Protocol)
+    }
+    fn freeze_recovery(
+        &self,
+        operation: Digest,
+        authenticated: Digest,
+    ) -> Result<(taypeer_runtime::RecoverySource, ArchiveSnapshot), taypeer_runtime::RuntimeError>
+    {
+        recovery::freeze(self, operation, authenticated)
+    }
+    fn recovery_bootstrap(
+        &self,
+        operation: Digest,
+    ) -> Result<
+        Option<taypeer_runtime::platform_worker::PlatformRecoveryBootstrap>,
+        taypeer_runtime::RuntimeError,
+    > {
+        recovery::source(self, operation)
+    }
+    fn author_recovery(
+        &self,
+        source: &taypeer_runtime::RecoverySource,
+    ) -> Result<taypeer_trust::AuthorKey, taypeer_runtime::RuntimeError> {
+        recovery::author(self, source)
+    }
+    fn recovery_candidate(
+        &self,
+        intent: &taypeer_runtime::RecoveryIntent,
+    ) -> Result<Option<ArchiveSnapshot>, taypeer_runtime::RuntimeError> {
+        recovery::candidate(self, intent)
+    }
+    fn publish_recovery(
+        &self,
+        intent: &taypeer_runtime::RecoveryIntent,
+        seed: ArchiveSeed,
+    ) -> Result<taypeer_runtime::RecoveryPublication, taypeer_runtime::RuntimeError> {
+        recovery::publish(self, intent, seed)
+    }
+    fn confirm_recovery(
+        &self,
+        publication: &taypeer_runtime::RecoveryPublication,
+    ) -> Result<(), taypeer_runtime::RuntimeError> {
+        recovery::confirm(self, publication)
     }
 }

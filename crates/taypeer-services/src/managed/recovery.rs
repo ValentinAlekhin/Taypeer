@@ -4,6 +4,12 @@ use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use taypeer_trust::{SignedControl, TrustSetId};
 
+mod named;
+pub use named::{
+    NamedRecoveryIntent, TrustRecoveryPreparation, TrustRecoverySource,
+    authenticate_named_trust_recovery, validate_named_trust_recovery,
+};
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Origin {
@@ -33,6 +39,8 @@ pub(super) struct WrappedObject {
 pub(super) struct RecoveryReceipt {
     operation: Digest,
     source: Digest,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    named: Option<NamedRecoveryIntent>,
 }
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -192,6 +200,7 @@ impl DatabaseService {
         let receipt = RecoveryReceipt {
             operation,
             source: source.fingerprint(),
+            named: None,
         };
         if metadata.recovery.receipt.as_ref() != Some(&receipt)
             || chain.head().database != session.database
@@ -229,125 +238,212 @@ impl DatabaseService {
         if author.device_id() != identity.device {
             return Err(ServiceError::Unauthorized);
         }
-        if snapshot
-            .object(managed.accepted)?
-            .unlock_key(password)
-            .is_ok()
-        {
-            return Err(ServiceError::InvalidInput);
-        }
-        let mut metadata = open.metadata.clone();
-        // Missing encrypted sources may retain content we cannot inspect yet. Keep
-        // that uncertainty when the old transport membership is intentionally left.
-        metadata.recovery.incomplete_inventory |=
-            snapshot.metadata().journal.offers.values().any(|offer| {
-                offer
-                    .manifest
-                    .body
-                    .objects
-                    .keys()
-                    .any(|id| !snapshot.metadata().manifest.body.objects.contains_key(id))
-            });
-
-        metadata.recovery.origins.insert(
-            snapshot.chain().head().trust_set,
-            Origin {
-                controls: snapshot.chain().records().to_vec(),
-                keys: metadata.keys.clone(),
-                journal: snapshot.metadata().journal.clone(),
-            },
-        );
-        metadata.policy_salt = codec::random_salt()?;
-        let chain = ControlChain::genesis(
-            session.database.clone(),
+        let contents = RecoveryContents {
+            snapshot,
+            accepted: managed.accepted,
+            document: state.document().clone(),
+            metadata: open.metadata.clone(),
+        };
+        prepare_recovery_seed(
+            &contents,
+            password,
             identity,
             author,
-            metadata.commitment()?,
-            state.document().schema_descriptor()?,
-        )?;
-        let (header, key) =
-            taypeer_storage::create_epoch(password, metadata.policy.kdf_target_ms())?;
-        metadata.keys = BTreeMap::from([(0, Zeroizing::new(*key.secret_bytes()))]);
-        metadata.administration.clear();
-        metadata.processed.clear();
-        metadata.discarded.clear();
-        metadata.recovery.receipt = Some(RecoveryReceipt {
-            operation,
-            source: snapshot.fingerprint(),
-        });
-        let mut objects = Vec::new();
-        let known_wrappers: BTreeSet<_> = open
-            .metadata
-            .recovery
-            .objects
-            .values()
-            .map(|object| object.wrapper)
-            .collect();
-        let mut ids: BTreeSet<_> = snapshot
-            .metadata()
-            .manifest
-            .body
-            .objects
-            .keys()
-            .filter(|id| !known_wrappers.contains(id))
-            .copied()
-            .collect();
-        ids.extend(open.metadata.recovery.objects.keys());
-        metadata.recovery.objects.clear();
-        for id in ids {
-            let object = open.metadata.object(&snapshot, id)?;
-            let wrapped = EncryptedObject::seal_in(
-                &chain,
-                author,
-                ObjectKind::Retained,
-                &header,
-                &key,
-                object.reader()?,
-                object.descriptor().length,
-                snapshot.temporary_storage(),
-            )?;
-            metadata.recovery.objects.insert(
-                id,
-                WrappedObject {
-                    wrapper: wrapped.descriptor().digest,
-                    trust_set: object.envelope().trust_set,
-                    kind: object.envelope().kind,
-                },
-            );
-            objects.push(wrapped);
-        }
-        let document = state.document();
-        metadata.verify(document, &chain, chain.head_hash()?)?;
-        let clear = Zeroizing::new(document.export());
-        let checkpoint = codec::seal_payload(
-            &chain,
-            author,
-            ObjectKind::Checkpoint,
-            &header,
-            &key,
-            &metadata,
-            &clear,
-            snapshot.temporary_storage(),
-        )?;
-        let baseline = codec::seal_payload(
-            &chain,
-            author,
-            ObjectKind::Baseline,
-            &header,
-            &key,
-            &metadata,
-            &clear,
-            snapshot.temporary_storage(),
-        )?;
-        let seed = ArchiveSeed {
-            controls: chain.records().to_vec(),
-            checkpoint: checkpoint.descriptor().digest,
-            baseline: baseline.descriptor().digest,
-            objects: {
-                objects.extend([checkpoint, baseline]);
-                objects
+            RecoveryReceipt {
+                operation,
+                source: contents.snapshot.fingerprint(),
+                named: None,
             },
+        )
+    }
+}
+
+#[derive(Clone)]
+struct RecoveryContents {
+    snapshot: ArchiveSnapshot,
+    accepted: Digest,
+    document: Document,
+    metadata: Checkpoint,
+}
+
+fn prepare_recovery_seed(
+    contents: &RecoveryContents,
+    password: &[u8],
+    identity: Identity,
+    author: &AuthorKey,
+    receipt: RecoveryReceipt,
+) -> Result<ArchiveSeed, ServiceError> {
+    let snapshot = &contents.snapshot;
+    if snapshot
+        .object(contents.accepted)?
+        .unlock_key(password)
+        .is_ok()
+    {
+        return Err(ServiceError::InvalidInput);
+    }
+    let mut metadata = contents.metadata.clone();
+    // Missing encrypted sources may retain content we cannot inspect yet. Keep
+    // that uncertainty when the old transport membership is intentionally left.
+    metadata.recovery.incomplete_inventory |=
+        snapshot.metadata().journal.offers.values().any(|offer| {
+            offer
+                .manifest
+                .body
+                .objects
+                .keys()
+                .any(|id| !snapshot.metadata().manifest.body.objects.contains_key(id))
+        });
+
+    metadata.recovery.origins.insert(
+        snapshot.chain().head().trust_set,
+        Origin {
+            controls: snapshot.chain().records().to_vec(),
+            keys: metadata.keys.clone(),
+            journal: snapshot.metadata().journal.clone(),
+        },
+    );
+    metadata.policy_salt = codec::random_salt()?;
+    let chain = ControlChain::genesis(
+        snapshot.chain().head().database.clone(),
+        identity,
+        author,
+        metadata.commitment()?,
+        contents.document.schema_descriptor()?,
+    )?;
+    let (header, key) = taypeer_storage::create_epoch(password, metadata.policy.kdf_target_ms())?;
+    metadata.keys = BTreeMap::from([(0, Zeroizing::new(*key.secret_bytes()))]);
+    metadata.administration.clear();
+    metadata.processed.clear();
+    metadata.discarded.clear();
+    metadata.recovery.receipt = Some(receipt);
+    let mut objects = Vec::new();
+    let known_wrappers: BTreeSet<_> = contents
+        .metadata
+        .recovery
+        .objects
+        .values()
+        .map(|object| object.wrapper)
+        .collect();
+    let mut ids: BTreeSet<_> = snapshot
+        .metadata()
+        .manifest
+        .body
+        .objects
+        .keys()
+        .filter(|id| !known_wrappers.contains(id))
+        .copied()
+        .collect();
+    ids.extend(contents.metadata.recovery.objects.keys());
+    metadata.recovery.objects.clear();
+    for id in ids {
+        let object = contents.metadata.object(snapshot, id)?;
+        let wrapped = EncryptedObject::seal_in(
+            &chain,
+            author,
+            ObjectKind::Retained,
+            &header,
+            &key,
+            object.reader()?,
+            object.descriptor().length,
+            snapshot.temporary_storage(),
+        )?;
+        metadata.recovery.objects.insert(
+            id,
+            WrappedObject {
+                wrapper: wrapped.descriptor().digest,
+                trust_set: object.envelope().trust_set,
+                kind: object.envelope().kind,
+            },
+        );
+        objects.push(wrapped);
+    }
+    let document = &contents.document;
+    // A named copy adds one ordinary causal metadata change under its new
+    // trust set. Retained originals keep their old proofs; the new change
+    // needs the same signed encrypted source used by a normal managed Save.
+    for source in document.changes_since(&[])? {
+        if metadata.proofs.contains_key(&source.metadata().hash) {
+            continue;
+        }
+        if source.metadata().author != Some(*author.device_id().as_bytes()) {
+            return Err(ServiceError::Unauthorized);
+        }
+        let proof =
+            SourceProof::sign_bound(&chain, author, source.bytes(), metadata.blobs.clone())?;
+        let object = codec::seal_payload(
+            &chain,
+            author,
+            ObjectKind::Change,
+            &header,
+            &key,
+            &proof,
+            source.bytes(),
+            snapshot.temporary_storage(),
+        )?;
+        metadata.processed.insert(object.descriptor().digest);
+        objects.push(object);
+        metadata
+            .proofs
+            .insert(source.metadata().hash.clone(), proof);
+    }
+    metadata.verify(document, &chain, chain.head_hash()?)?;
+    let clear = Zeroizing::new(document.export());
+    let checkpoint = codec::seal_payload(
+        &chain,
+        author,
+        ObjectKind::Checkpoint,
+        &header,
+        &key,
+        &metadata,
+        &clear,
+        snapshot.temporary_storage(),
+    )?;
+    let baseline = codec::seal_payload(
+        &chain,
+        author,
+        ObjectKind::Baseline,
+        &header,
+        &key,
+        &metadata,
+        &clear,
+        snapshot.temporary_storage(),
+    )?;
+    let seed = ArchiveSeed {
+        controls: chain.records().to_vec(),
+        checkpoint: checkpoint.descriptor().digest,
+        baseline: baseline.descriptor().digest,
+        objects: {
+            objects.extend([checkpoint, baseline]);
+            objects
+        },
+    };
+    Ok(seed)
+}
+
+#[cfg(test)]
+mod receipt_compatibility {
+    use super::*;
+
+    #[derive(Serialize)]
+    struct LegacyReceipt {
+        operation: Digest,
+        source: Digest,
+    }
+
+    #[test]
+    fn absent_named_intent_keeps_legacy_receipt_bytes_and_decodes_with_no_android_proof() {
+        let operation = Digest::of(b"PUBLIC legacy recovery operation");
+        let source = Digest::of(b"PUBLIC legacy recovery source");
+        let before = serde_json::to_vec(&LegacyReceipt { operation, source }).unwrap();
+        let current = RecoveryReceipt {
+            operation,
+            source,
+            named: None,
         };
-        Ok(seed)
+        assert_eq!(serde_json::to_vec(&current).unwrap(), before);
+        let decoded: RecoveryReceipt = serde_json::from_slice(&before).unwrap();
+        assert_eq!(decoded.operation, operation);
+        assert_eq!(decoded.source, source);
+        assert!(decoded.named.is_none());
     }
 }

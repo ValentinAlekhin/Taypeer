@@ -11,6 +11,12 @@ internal fun code(error: Exception): Int = when (error) {
     is AndroidException.AlreadyExists -> 4
     is AndroidException.InvalidFile -> 5
     is AndroidException.InvalidOptions -> 7
+    is AndroidException.StorageBusy -> 8
+    is AndroidException.RecoveryRequiresNewOperation -> 9
+    is AndroidException.ProfileBusy -> 10
+    is AndroidException.ProfileIo -> 11
+    is AndroidException.ProfileInvalid -> 12
+    is AndroidException.Credentials -> 13
     else -> 6
 }
 internal fun checked(status: Int) {
@@ -22,6 +28,12 @@ internal fun checked(status: Int) {
         4 -> AndroidException.AlreadyExists()
         5 -> AndroidException.InvalidFile()
         7 -> AndroidException.InvalidOptions()
+        8 -> AndroidException.StorageBusy()
+        9 -> AndroidException.RecoveryRequiresNewOperation()
+        10 -> AndroidException.ProfileBusy()
+        11 -> AndroidException.ProfileIo()
+        12 -> AndroidException.ProfileInvalid()
+        13 -> AndroidException.Credentials()
         else -> AndroidException.Runtime()
     }
 }

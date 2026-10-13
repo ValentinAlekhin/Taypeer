@@ -4,12 +4,16 @@
 //! receives database passwords, author keys, read keys or decrypted documents.
 
 mod coordinator;
+mod management;
 mod node;
 mod persistence;
 mod wire;
 
 pub use coordinator::{Coordinator, CoordinatorEvent, CoordinatorState};
 pub use iroh::{EndpointAddr, RelayUrl};
+pub use management::{
+    ManagementApplied, ManagementDecision, ManagementIntent, ManagementReadiness, ManagementReply,
+};
 pub use node::{ExchangeReport, Node, RelaySetting};
 pub use persistence::CoordinatorPersistence;
 pub use taypeer_storage::PreparedCommit;
@@ -17,9 +21,8 @@ pub use wire::{Command, Reply};
 
 use serde::{Deserialize, Serialize};
 use taypeer_core::DatabaseId;
-use taypeer_storage::ObjectReader;
+use taypeer_storage::{CiphertextFile, ObjectReader};
 use taypeer_trust::{CipherObject, Digest, PublicKey};
-use tempfile::NamedTempFile;
 
 /// Sanitized transport/backend failures, without payloads, paths or invitations.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -77,12 +80,13 @@ pub trait Backend: Send + Sync + 'static {
         id: Digest,
     ) -> Result<(CipherObject, ObjectReader), Error>;
     /// Verify a complete staged object and durably record it before returning its ID.
-    /// The temporary file is private and contains only encrypted bytes.
+    /// The host-allocated capability is private and contains only encrypted bytes.
+    /// Its immediately readable staging writes do not themselves promise durability.
     fn receive(
         &self,
         peer: PublicKey,
         database: &DatabaseId,
         descriptor: CipherObject,
-        file: NamedTempFile,
+        file: CiphertextFile,
     ) -> Result<Digest, Error>;
 }

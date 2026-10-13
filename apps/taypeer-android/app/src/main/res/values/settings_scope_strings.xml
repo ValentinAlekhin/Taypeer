@@ -1,0 +1,4 @@
+<resources>
+    <string name="settings_scope_device">Device</string>
+    <string name="settings_scope_database">Database</string>
+</resources>

@@ -21,13 +21,19 @@ mod lifecycle;
 mod operations;
 pub use lifecycle::{InspectionTarget, InspectionView, TreeView};
 mod managed;
+pub use managed::{DatabasePolicyDetails, ProtectionInfo};
 mod patch;
 mod presentation;
 pub use presentation::*;
+mod metadata_history;
+pub use metadata_history::{
+    DatabaseRevisionRestore, DatabaseRevisionView, GroupRevisionRestore, GroupRevisionView,
+};
 mod persistence;
 pub use managed::{
-    ApplyReport, CollectionReport, EpochCredentialStage, PendingPacket, PendingReason,
-    ReceivedSource,
+    ApplyReport, CollectionReport, EpochCredentialStage, ManagedKeyScope, NamedRecoveryIntent,
+    OpenManagementBasis, PendingPacket, PendingReason, ReceivedSource, TrustRecoveryPreparation,
+    TrustRecoverySource, authenticate_named_trust_recovery, validate_named_trust_recovery,
 };
 pub use operations::{ConflictFieldView, ConflictVariantView, ConflictView, new_operation_id};
 pub use patch::{EntryPatch, FieldUpdate};
@@ -43,7 +49,8 @@ mod editing;
 use draft::{DraftKind, DraftState};
 use editing::DraftCollection;
 pub use editing::{
-    DraftIdentity, DraftRevision, DraftSaveOutcome, DraftSummary, DraftTarget, MetadataDraftView,
+    DraftIdentity, DraftRevision, DraftSaveOutcome, DraftSummary, DraftTarget,
+    GroupParentCandidate, MetadataDraftView,
 };
 
 pub use taypeer_core::{AttributeId, DatabaseId, DraftId, EntryId, GroupId, RevisionId};
@@ -183,6 +190,7 @@ struct DatabaseState {
     draft_deferred: bool,
     draft_maintenance_pending: bool,
     write_uncertain: bool,
+    pending_icon: Option<binary::PendingIconPublication>,
 }
 
 /// Serialized application scenarios over domain documents and optional encrypted file storage.
@@ -293,6 +301,7 @@ impl DatabaseService {
                 draft_deferred: false,
                 draft_maintenance_pending: false,
                 write_uncertain: false,
+                pending_icon: None,
             },
         );
         Ok(id)
@@ -845,20 +854,36 @@ impl DatabaseService {
             .get_mut(&session.database)
             .ok_or(ServiceError::NotFound)?;
         check_session(state, session)?;
-        if state.write_uncertain {
-            return Err(StorageError::CommitUncertain.into());
-        }
-        if let Some(managed) = &state.managed {
-            managed.check_edit_permission()?;
-        } else {
-            managed::compatibility::require_write(
-                &self
-                    .capabilities
-                    .assess(&state.document().schema_descriptor()?),
-            )?;
-        }
+        check_edit_permission(state, &self.capabilities)?;
         Ok(state)
     }
+}
+
+fn check_edit_permission(
+    state: &DatabaseState,
+    capabilities: &taypeer_core::ClientCapabilities,
+) -> Result<(), ServiceError> {
+    if state.pending_icon.is_some() {
+        return Err(StorageError::CommitUncertain.into());
+    }
+    check_confirmed_edit_permission(state, capabilities)
+}
+
+fn check_confirmed_edit_permission(
+    state: &DatabaseState,
+    capabilities: &taypeer_core::ClientCapabilities,
+) -> Result<(), ServiceError> {
+    if state.write_uncertain {
+        return Err(StorageError::CommitUncertain.into());
+    }
+    if let Some(managed) = &state.managed {
+        managed.check_edit_permission()?;
+    } else {
+        managed::compatibility::require_write(
+            &capabilities.assess(&state.document().schema_descriptor()?),
+        )?;
+    }
+    Ok(())
 }
 
 fn check_session(state: &DatabaseState, session: &SessionToken) -> Result<(), ServiceError> {

@@ -257,6 +257,14 @@ impl EncryptedObject {
     pub fn unlock_key(&self, password: &[u8]) -> Result<ReadKey, Error> {
         crypto::unlock_key(&self.password_header()?, password)
     }
+    /// Authenticate the existing wrapper and report actual Argon2id work only.
+    /// Both the read key and its measurement remain in the plaintext worker.
+    pub fn unlock_key_measured(
+        &self,
+        password: &[u8],
+    ) -> Result<(ReadKey, crate::KdfMeasurement), Error> {
+        crypto::unlock_key_measured(&self.password_header()?, password)
+    }
     /// Decrypt into a caller-owned candidate stream. The caller must not publish
     /// any output until this method succeeds, including the final authentication tag.
     pub fn decrypt(&self, key: &ReadKey, output: &mut impl Write) -> Result<(), Error> {

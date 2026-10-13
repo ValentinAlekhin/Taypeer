@@ -1,0 +1,17 @@
+<resources>
+    <string name="generator_length">Length · 1–256</string>
+    <string name="generator_word_count">Words · 3–20</string>
+    <string name="generator_uppercase">A–Z</string>
+    <string name="generator_lowercase">a–z</string>
+    <string name="generator_digits">0–9</string>
+    <string name="generator_punctuation">Special characters</string>
+    <string name="generator_exclusions">Exclusions…</string>
+    <string name="generator_exclusions_title">Exclusions</string>
+    <string name="generator_wordlist">EFF Long Wordlist · 7776 words\nThe English word list is available offline.</string>
+    <string name="generator_options_note">Changing the options creates a new result.</string>
+    <string name="generator_quality_low">Low</string>
+    <string name="generator_quality_medium">Medium</string>
+    <string name="generator_quality_high">High</string>
+    <string name="generator_password_quality">%1$s · %2$s characters · %3$s bits</string>
+    <string name="generator_phrase_quality">%1$s · %2$s words · %3$s bits</string>
+</resources>

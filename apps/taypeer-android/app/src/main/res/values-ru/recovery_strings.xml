@@ -1,0 +1,18 @@
+<resources>
+    <string name="recover_management">Восстановить управление</string>
+    <string name="recovery_name">Название новой копии</string>
+    <string name="recovery_intro">Будет создана новая рабочая копия с новым доверенным набором. Это устройство станет управляющим.</string>
+    <string name="recovery_intro_named">Будет создана новая рабочая копия с новым доверенным набором. %1$s станет управляющим.</string>
+    <string name="recovery_warning">Старые допуски не переносятся. Другие устройства потребуется подключить заново. Исходная копия сохранится.</string>
+    <string name="recovery_unconfirmed">Восстановление не подтверждено. Повторите с теми же названием, паролем и операцией. Опубликованная копия будет проверена перед принятием.</string>
+    <string name="recovery_new_operation_required">Исходная попытка пароля утрачена до публикации зашифрованного кандидата. Начните отдельное восстановление явно.</string>
+    <string name="recovery_start_new">Начать новое восстановление</string>
+    <string name="recovery_pending">Незавершённое восстановление управления</string>
+    <string name="recovery_source_frozen">Зашифрованный источник сохранён. Требуется согласовать прежнюю операцию.</string>
+    <string name="recovery_candidate_published">Зашифрованный кандидат создан. Для продолжения той же операции введите его новый пароль.</string>
+    <string name="recovery_proof_confirmed">Защищённая квитанция подтверждена. До принятия нужно закрыть исходные писатели.</string>
+    <string name="recovery_adopted">Новая рабочая копия зарегистрирована.</string>
+    <string name="recovery_status_failed">Не удалось проверить состояние восстановления.</string>
+    <string name="recovery_read_source">Открыть для восстановления</string>
+    <string name="recovery_resume_password">Пароль восстановленной копии</string>
+</resources>

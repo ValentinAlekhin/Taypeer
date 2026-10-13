@@ -114,6 +114,7 @@ impl MetadataForm {
                     name,
                     description,
                     icon: icon.map_or(FieldUpdate::Keep, FieldUpdate::Set),
+                    parent: FieldUpdate::Keep,
                 },
             }
         };

@@ -1,0 +1,17 @@
+<resources>
+    <string name="generator_length">Длина · 1–256</string>
+    <string name="generator_word_count">Количество слов · 3–20</string>
+    <string name="generator_uppercase">A–Z</string>
+    <string name="generator_lowercase">a–z</string>
+    <string name="generator_digits">0–9</string>
+    <string name="generator_punctuation">Спецсимволы</string>
+    <string name="generator_exclusions">Исключения…</string>
+    <string name="generator_exclusions_title">Исключения</string>
+    <string name="generator_wordlist">EFF Long Wordlist · 7776 слов\nАнглийский словарь доступен без сети.</string>
+    <string name="generator_options_note">Изменение параметров создаёт новый результат.</string>
+    <string name="generator_quality_low">Низкая надёжность</string>
+    <string name="generator_quality_medium">Средняя надёжность</string>
+    <string name="generator_quality_high">Надёжный</string>
+    <string name="generator_password_quality">%1$s · %2$s символов · %3$s бит</string>
+    <string name="generator_phrase_quality">%1$s · %2$s слов · %3$s бит</string>
+</resources>

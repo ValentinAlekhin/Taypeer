@@ -113,6 +113,14 @@ impl Document {
         &self,
         address: &ObjectAddress,
     ) -> Result<(ObjectStatus, bool), Error> {
+        self.object_status_with_times(address, None)
+    }
+
+    pub(super) fn object_status_with_times(
+        &self,
+        address: &ObjectAddress,
+        times: Option<&projection::SavedOperationTimes>,
+    ) -> Result<(ObjectStatus, bool), Error> {
         let tree = groups::tree(&self.doc)?;
         if matches!(address.object, ObjectId::Group(_)) {
             let node = tree
@@ -125,7 +133,8 @@ impl Document {
         if status == ObjectStatus::Purged {
             return Ok((status, conflict));
         }
-        let snapshot = projection::read_entry_generation(&self.doc, address, None)?;
+        let snapshot =
+            projection::read_entry_generation_with_times(&self.doc, address, None, times)?;
         conflict |= snapshot.has_conflicts();
         let current = objects::single(&self.doc, &address.object)?;
         if &current != address {
@@ -166,7 +175,7 @@ impl Document {
         Ok(address)
     }
 
-    fn destination(&self, id: Option<GroupId>) -> Result<Option<GroupRef>, Error> {
+    pub(super) fn destination(&self, id: Option<GroupId>) -> Result<Option<GroupRef>, Error> {
         id.map(|id| {
             self.require_group(&id)?;
             objects::single(&self.doc, &ObjectId::Group(id))?.group_ref()
@@ -199,7 +208,10 @@ impl Document {
             .collect()
     }
 
-    fn selected_subtree(&self, root: &ObjectAddress) -> Result<BTreeSet<ObjectAddress>, Error> {
+    pub(super) fn selected_subtree(
+        &self,
+        root: &ObjectAddress,
+    ) -> Result<BTreeSet<ObjectAddress>, Error> {
         objects::generation_object(&self.doc, root)?;
         let mut selected = BTreeSet::from([root.clone()]);
         if matches!(root.object, ObjectId::Entry(_)) {
@@ -238,6 +250,32 @@ impl Document {
             }
         }
         Ok(selected)
+    }
+
+    pub(super) fn reviewed_group_destination(
+        &self,
+        basis: &Self,
+        address: &ObjectAddress,
+        parent: Option<GroupId>,
+    ) -> Result<Option<GroupRef>, Error> {
+        if objects::purge(&self.doc, address)?.is_some() {
+            return Err(Error::NotFound);
+        }
+        if self.object_status(address)?.0 == ObjectStatus::Trashed
+            || objects::single(&self.doc, &address.object)? != *address
+        {
+            return Err(Error::InvalidContext);
+        }
+        let destination = self.destination(parent.clone())?;
+        let subtree = basis.selected_subtree(address)?;
+        if destination
+            .as_ref()
+            .is_some_and(|parent| subtree.contains(&ObjectAddress::from(parent.clone())))
+            || basis.destination(parent)? != destination
+        {
+            return Err(Error::InvalidContext);
+        }
+        Ok(destination)
     }
 
     /// Prepare a deterministic exact subtree selection; no state is changed.

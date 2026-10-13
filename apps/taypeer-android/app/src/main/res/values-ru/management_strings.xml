@@ -1,0 +1,36 @@
+<resources>
+    <string name="transfer_management">Передать управление</string>
+    <string name="transfer_management_action">Передать</string>
+    <string name="accept_management_title">Принять управление?</string>
+    <string name="accept_management_action">Принять</string>
+    <string name="management_current_manager">%1$s · сейчас управляет %2$s</string>
+    <string name="management_transfer_hint">Оба устройства должны быть подключены и разблокированы. %1$s подтвердит передачу.</string>
+    <string name="management_accept_hint">%1$s передаёт управление БД «%2$s» этому устройству. После подтверждённого применения оно станет единственным управляющим.</string>
+    <string name="management_accept_named_hint">%1$s передаёт управление БД «%2$s» устройству %3$s. После подтверждённого применения оно станет единственным управляющим.</string>
+    <string name="management_no_recipient">Нет другого допущенного устройства для выбора.</string>
+    <string name="management_readiness_unknown">Готовность не проверена</string>
+    <string name="management_check_peer">Проверить устройство сейчас</string>
+    <string name="management_last_check_ready">Последняя явная проверка: подключено и разблокировано. Следующее действие проверит готовность заново.</string>
+    <string name="management_last_check_locked">Последняя явная проверка: устройство заблокировано. Разблокируйте его и повторите проверку.</string>
+    <string name="management_last_check_pending">Последняя явная проверка: устройство ожидает применения полученных изменений.</string>
+    <string name="management_peer_check_failed">Проверка устройства не завершена. Его текущая готовность неизвестна.</string>
+    <string name="management_proposed">Предложение сохранено. Ожидается решение получателя; продолжите ту же операцию.</string>
+    <string name="management_waiting_decision">Проверенное предложение ожидает вашего явного решения.</string>
+    <string name="management_accept_requested">Принятие начато. Продолжите то же решение; отказ больше недоступен.</string>
+    <string name="management_consent_recorded">Согласие сохранено. Управление ещё не применено.</string>
+    <string name="management_rejected">Передача явно отклонена.</string>
+    <string name="management_source_committed">Передача сохранена. Прежнее устройство отказалось от управляющей роли; доставка ещё ожидается.</string>
+    <string name="management_awaiting_apply">Зашифрованный переход получен. Ожидается подтверждённое применение у получателя.</string>
+    <string name="management_completed">Передача завершена: получатель подтвердил надёжное применение.</string>
+    <string name="management_status_failed">Защищённое состояние передачи не удалось подтвердить.</string>
+    <string name="management_review">Рассмотреть передачу</string>
+    <string name="management_unconfirmed">Исход не подтверждён. Повторите ту же операцию; закрытие экрана её не отменяет.</string>
+    <string name="management_needs_unlock">Нет требуемой открытой сессии устройства. Разблокируйте оба устройства и повторите.</string>
+    <string name="management_pending_apply">Полученное состояние управления ещё не применено надёжно. Примените изменения перед продолжением.</string>
+    <string name="management_stale">Исходное состояние управления изменилось. Нельзя подтвердить прежнюю передачу для другого состояния.</string>
+    <string name="management_wrong_role">Это устройство не может выполнить выбранное действие управления.</string>
+    <string name="management_unknown">Точная защищённая операция передачи не найдена.</string>
+    <string name="management_conflict">Операция уже связана с другим намерением или решением. Первоначальный выбор сохранён.</string>
+    <string name="management_capacity">Достигнут лимит защищённого журнала передач.</string>
+    <string name="management_unsupported">Устройство не поддерживает этот сценарий явной передачи.</string>
+</resources>

@@ -1,5 +1,15 @@
 <resources>
-    <string name="exchange_channel">Обмен шифротекстом</string>
-    <string name="exchange_notification">Обмен зашифрованными данными</string>
-    <string name="exchange_notification_detail">Нажмите, чтобы вернуться в Taypeer</string>
+    <string name="exchange_channel">Обмен зашифрованными данными</string>
+    <string name="exchange_notification">Taypeer · обмен</string>
+    <string name="exchange_notification_detail">Получение зашифрованных изменений</string>
+    <string name="exchange_running">Обмен зашифрованными данными запущен</string>
+    <string name="exchange_stopped">Обмен зашифрованными данными остановлен</string>
+    <string name="device_exchange_succeeded">Последний обмен завершён</string>
+    <string name="device_exchange_failed">Последний обмен не удался; повторите при подключении</string>
+    <string name="device_exchange_unknown">Подтверждённого обмена ещё не было</string>
+    <string name="application_waiting">Ожидаем входящие изменения</string>
+    <string name="application_no_pending">При последнем применении новых изменений не было</string>
+    <string name="application_applied">Применено полученных наборов изменений: %1$s</string>
+    <string name="application_pending">Сохранённых наборов изменений ожидает применения: %1$s</string>
+    <string name="application_failed">Не удалось применить изменения. Зашифрованные данные остаются сохранёнными.</string>
 </resources>

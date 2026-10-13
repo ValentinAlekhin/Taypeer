@@ -1,0 +1,17 @@
+<resources>
+    <string name="clone_entry">Clone entry</string>
+    <string name="new_subgroup">Create subgroup</string>
+    <string name="clone_group">Clone group</string>
+    <string name="move_entry">Move entry</string>
+    <string name="move_group">Move group</string>
+    <string name="clone_action">Clone</string>
+    <string name="move_action">Move</string>
+    <string name="destination_group">Destination group</string>
+    <string name="top_level_groups">Database root</string>
+    <string name="restore_from_trash">Restore from trash</string>
+    <string name="restore_action">Restore</string>
+    <string name="trash_title">Trash</string>
+    <string name="trash_empty">Trash is empty</string>
+    <string name="trash_review_counts">Reviewed: %1$s groups, %2$s entries.</string>
+    <string name="trash_purge_warning">The reviewed objects and their saved versions will be removed permanently.</string>
+</resources>

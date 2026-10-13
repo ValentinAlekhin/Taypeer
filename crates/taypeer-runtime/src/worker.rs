@@ -2,6 +2,7 @@
 #[cfg(any(test, feature = "ui-test-support"))]
 mod faults;
 mod input;
+mod secret_access;
 #[cfg(test)]
 mod tests;
 
@@ -591,7 +592,10 @@ pub(crate) fn dispatch(
 ) -> Result<Value, RuntimeError> {
     Ok(match command {
         Command::RecoverTrust { .. }
+        | Command::RecoverWorkingCopy { .. }
         | Command::ImportSelectedAttachment { .. }
+        | Command::ImportSelectedIcon { .. }
+        | Command::ImportSelectedEntryFavicon { .. }
         | Command::ExportSelectedBinary { .. } => return Err(RuntimeError::Protocol),
         Command::ApplyReceived => value(&service.apply_received(session)?.value)?,
         Command::CollectReceived => value(&service.collect_received(session)?.value)?,
@@ -618,6 +622,7 @@ pub(crate) fn dispatch(
         )?,
         Command::Authority => value(&service.authority(session)?)?,
         Command::SessionAuthority => value(&service.session_authority(session)?)?,
+        Command::ManagementBasis => value(&service.management_basis(session)?.value)?,
         Command::Compatibility => value(&service.compatibility(session)?)?,
         Command::CreateInvitation => {
             let (invitation, secret) = service.create_invitation(session, unix_seconds()?)?;
@@ -646,6 +651,10 @@ pub(crate) fn dispatch(
             Value::Null
         }
         Command::DatabasePolicy => value(&service.database_policy(session)?.value)?,
+        Command::PolicyDetails => value(&service.database_policy_details(session)?.value)?,
+        Command::CalibrateProtection { target_ms } => {
+            value(&service.calibrate_protection(session, target_ms)?.value)?
+        }
         Command::SetDatabasePolicy {
             operation,
             policy,
@@ -660,6 +669,25 @@ pub(crate) fn dispatch(
             Value::Null
         }
         Command::IconPreview(target) => value(&service.icon_preview(session, &target)?)?,
+        Command::IconImportReceipt {
+            draft,
+            source,
+            operation,
+        } => value(
+            &service
+                .icon_import_receipt(session, &draft, &source, &operation)?
+                .value,
+        )?,
+        Command::StoredFavicon(draft) => value(&service.stored_favicon(session, &draft)?.value)?,
+        Command::SelectStoredFavicon {
+            draft,
+            identity,
+            operation,
+        } => value(
+            &service
+                .select_stored_favicon(session, &draft, &identity, &operation)?
+                .value,
+        )?,
         Command::BinaryView(target) => value(&service.binary_view(session, &target)?.value)?,
         Command::EditBinary { request, operation } => {
             value(&service.edit_binary(session, &request, &operation)?.value)?
@@ -688,6 +716,12 @@ pub(crate) fn dispatch(
                 .group_favicons(session, &group, recursive, replace, &operation)?
                 .value,
         )?,
+        Command::PrepareGroupFavicons(request) => {
+            value(&service.prepare_group_favicons(session, request)?.value)?
+        }
+        Command::FaviconEntryReceipt(request) => {
+            value(&service.favicon_entry_receipt(session, &request)?.value)?
+        }
         Command::Tree => value(&service.tree(session)?.value)?,
         Command::Trash => value(&service.trash(session)?.value)?,
         Command::TrashObject { target, operation } => {
@@ -802,6 +836,47 @@ pub(crate) fn dispatch(
         Command::BeginEditDatabaseInfo => value(&service.start_edit_database_info(session)?.value)?,
         Command::GroupHistory(group) => value(&service.group_history(session, &group)?.value)?,
         Command::DatabaseHistory => value(&service.database_history(session)?.value)?,
+        Command::GroupRevisionView { group, revision } => value(
+            &service
+                .group_revision_view(session, &group, &revision)?
+                .value,
+        )?,
+        Command::DatabaseRevisionView(revision) => {
+            value(&service.database_revision_view(session, &revision)?.value)?
+        }
+        Command::RestoreGroupRevision {
+            group,
+            revision,
+            parent,
+            heads,
+            operation,
+        } => value(
+            &service
+                .restore_group_revision(
+                    session,
+                    &taypeer_services::GroupRevisionRestore {
+                        group,
+                        revision,
+                        parent,
+                        heads,
+                    },
+                    &operation,
+                )?
+                .value,
+        )?,
+        Command::RestoreDatabaseRevision {
+            revision,
+            heads,
+            operation,
+        } => value(
+            &service
+                .restore_database_revision(
+                    session,
+                    &taypeer_services::DatabaseRevisionRestore { revision, heads },
+                    &operation,
+                )?
+                .value,
+        )?,
         Command::PurgeGroupHistory {
             group,
             revisions,
@@ -857,6 +932,20 @@ pub(crate) fn dispatch(
                         .value
                 }
             };
+            value(&secret.expose())?
+        }
+        Command::RevealSavedForAccess {
+            entry,
+            revision,
+            attribute,
+        } => {
+            let secret = secret_access::reveal(
+                service,
+                session,
+                &entry,
+                revision.as_ref(),
+                attribute.as_ref(),
+            )?;
             value(&secret.expose())?
         }
         Command::Groups => value(&service.groups(session)?.value)?,

@@ -219,7 +219,9 @@ impl DatabaseService {
         let managed = state.managed.as_mut().ok_or(ServiceError::InvalidContext)?;
         let (source, metadata, snapshot) = managed.inspect_source(&document, change)?;
         compatibility::require_write(&managed.capabilities.assess(&source.schema_descriptor()?))?;
-        let id = document.extract_entry(&source, (entry, change), group, operation, now)?;
+        let id = document
+            .extract_entry(&source, (entry, change), group, operation, now)
+            .map_err(crate::operations::candidate_input_error)?;
         // Load exactly the result's required content, never all blobs in the foreign history.
         apply::load_blobs(&snapshot, &metadata, &document, &mut blobs)?;
         let attachments = document

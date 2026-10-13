@@ -41,6 +41,18 @@ impl Default for PasswordOptions {
     }
 }
 
+/// Presentation rating for a generated secret's known sampling entropy.
+/// This is separate from scoring a manually entered password.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GeneratedQuality {
+    /// Fewer than 40 bits of known entropy.
+    Low,
+    /// At least 40 but fewer than 60 bits of known entropy.
+    Medium,
+    /// At least 60 bits of known entropy.
+    High,
+}
+
 /// A generated secret with entropy calculated from the known sampling method.
 pub struct GeneratedSecret {
     value: Zeroizing<String>,
@@ -59,6 +71,16 @@ impl GeneratedSecret {
     /// Entropy from uniform independent choices; not a score for manually entered text.
     pub fn entropy_bits(&self) -> f64 {
         self.entropy_bits
+    }
+    /// Shared presentation rating, using the known independent sampling entropy.
+    pub fn quality(&self) -> GeneratedQuality {
+        if self.entropy_bits >= 60.0 {
+            GeneratedQuality::High
+        } else if self.entropy_bits >= 40.0 {
+            GeneratedQuality::Medium
+        } else {
+            GeneratedQuality::Low
+        }
     }
 }
 
@@ -246,5 +268,38 @@ mod tests {
         assert_eq!(phrase.expose(), "abacus-abacus-abacus-abacus-abacus-abacus");
         assert!((phrase.entropy_bits() - 77.54887502163469).abs() < 0.0001);
         assert!(passphrase_with(2, "-", &mut Fixed(0)).is_err());
+    }
+
+    #[test]
+    fn generated_quality_uses_the_shared_entropy_boundaries() {
+        for (length, quality) in [
+            (39, GeneratedQuality::Low),
+            (40, GeneratedQuality::Medium),
+            (59, GeneratedQuality::Medium),
+            (60, GeneratedQuality::High),
+        ] {
+            let result = password_with(
+                &PasswordOptions {
+                    length,
+                    uppercase: false,
+                    lowercase: false,
+                    punctuation: false,
+                    exclude: "23456789".into(),
+                    ..Default::default()
+                },
+                &mut Fixed(0),
+            )
+            .unwrap();
+            assert_eq!(result.entropy_bits(), f64::from(length));
+            assert_eq!(result.quality(), quality);
+        }
+        for (words, quality) in [
+            (3, GeneratedQuality::Low),
+            (4, GeneratedQuality::Medium),
+            (5, GeneratedQuality::High),
+        ] {
+            let result = passphrase_with(words, "-", &mut Fixed(7776)).unwrap();
+            assert_eq!(result.quality(), quality);
+        }
     }
 }

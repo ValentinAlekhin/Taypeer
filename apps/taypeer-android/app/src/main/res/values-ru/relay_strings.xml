@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="relay_settings">Relay</string>
+    <string name="relay_public">Общие relay</string>
+    <string name="relay_disabled">Только прямое соединение</string>
+    <string name="relay_custom">Собственный relay</string>
+    <string name="relay_address">Адрес HTTPS</string>
+    <string name="relay_explanation">Предпочтительно прямое соединение. Если оно недоступно, relay пересылает зашифрованный трафик. База данных на relay не хранится.</string>
+    <string name="relay_direct_warning">При отключённых relay устройства должны быть доступны напрямую. Изменившиеся адреса после перезапуска обоих устройств могут прервать синхронизацию.</string>
+    <string name="relay_change_failed">Изменение relay не подтверждено. Проверьте настройку, адрес HTTPS и соединение, затем повторите попытку.</string>
+    <string name="relay_load_failed">Не удалось прочитать настройку relay. Повторите попытку.</string>
+</resources>

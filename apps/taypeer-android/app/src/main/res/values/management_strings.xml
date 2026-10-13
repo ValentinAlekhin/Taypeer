@@ -1,0 +1,36 @@
+<resources>
+    <string name="transfer_management">Transfer management</string>
+    <string name="transfer_management_action">Transfer</string>
+    <string name="accept_management_title">Accept management?</string>
+    <string name="accept_management_action">Accept</string>
+    <string name="management_current_manager">%1$s · currently managed by %2$s</string>
+    <string name="management_transfer_hint">Both devices must be connected and unlocked. %1$s will confirm the transfer.</string>
+    <string name="management_accept_hint">%1$s is transferring management of “%2$s” to this device. After confirmed application, this device will be its only manager.</string>
+    <string name="management_accept_named_hint">%1$s is transferring management of “%2$s” to %3$s. After confirmed application, this device will be its only manager.</string>
+    <string name="management_no_recipient">No other admitted device is available to select.</string>
+    <string name="management_readiness_unknown">Readiness not checked</string>
+    <string name="management_check_peer">Check peer now</string>
+    <string name="management_last_check_ready">Last explicit check: connected and unlocked. The next action checks again.</string>
+    <string name="management_last_check_locked">Last explicit check: the peer is locked. Unlock it, then check again.</string>
+    <string name="management_last_check_pending">Last explicit check: the peer is waiting to apply received changes.</string>
+    <string name="management_peer_check_failed">The peer check did not complete. Its current readiness is unknown.</string>
+    <string name="management_proposed">The proposal is saved. Waiting for the recipient’s decision; continue the same operation.</string>
+    <string name="management_waiting_decision">A verified proposal is waiting for your explicit decision.</string>
+    <string name="management_accept_requested">Acceptance has started. Resume the same decision; rejection is no longer available.</string>
+    <string name="management_consent_recorded">Acceptance is saved. Management has not yet been applied.</string>
+    <string name="management_rejected">The transfer was explicitly rejected.</string>
+    <string name="management_source_committed">The transfer is saved. The previous manager has relinquished its role; delivery is still pending.</string>
+    <string name="management_awaiting_apply">The encrypted transfer was received. Waiting for confirmed application on the recipient.</string>
+    <string name="management_completed">Transfer completed: the recipient confirmed durable application.</string>
+    <string name="management_status_failed">The protected transfer status could not be confirmed.</string>
+    <string name="management_review">Review transfer</string>
+    <string name="management_unconfirmed">The outcome is not confirmed. Retry the same operation; closing this screen does not cancel it.</string>
+    <string name="management_needs_unlock">A required device has no matching unlocked session. Unlock both devices and retry.</string>
+    <string name="management_pending_apply">Current received authority has not been durably applied. Apply the received changes before continuing.</string>
+    <string name="management_stale">The original authority changed. This transfer cannot be approved against a different state.</string>
+    <string name="management_wrong_role">This device cannot perform the selected management action.</string>
+    <string name="management_unknown">No exact protected transfer was found.</string>
+    <string name="management_conflict">This operation already belongs to another intent or decision. Its original choice is retained.</string>
+    <string name="management_capacity">The protected transfer journal has reached its limit.</string>
+    <string name="management_unsupported">The peer does not support this explicit transfer workflow.</string>
+</resources>

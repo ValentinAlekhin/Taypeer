@@ -1,0 +1,24 @@
+<resources>
+    <string name="received_sources">Pending changes</string>
+    <string name="received_source">Pending source</string>
+    <string name="received_sources_note">Original sources remain here until they can be applied or you explicitly decide what to keep.</string>
+    <string name="received_sources_empty">No pending sources</string>
+    <string name="received_source_id">Source · %1$s</string>
+    <string name="received_author">Author · %1$s</string>
+    <string name="received_causal_note">Viewing original data does not apply these changes to this database.</string>
+    <string name="received_no_entries">This source has no entries to extract.</string>
+    <string name="received_password_choice">Choose a password variant to reveal or copy.</string>
+    <string name="received_password_variant">Password variant %1$d</string>
+    <string name="extract_source">Extract into a new entry</string>
+    <string name="extract_group_source">Extract into a new group</string>
+    <string name="extract_action">Extract</string>
+    <string name="retry_source">Retry extraction</string>
+    <string name="received_extract_note">Choose an active group. The new entry keeps the selected values and their provenance; the source’s history and network admission are not inherited.</string>
+    <string name="received_extract_group_note">Choose a parent or the top level. The new group keeps the selected source’s metadata. Other sources are processed separately.</string>
+    <string name="received_extracted">The new item has been saved.</string>
+    <string name="open_extracted">Open new entry</string>
+    <string name="open_extracted_group">Open new group</string>
+    <string name="discard_source">Discard source</string>
+    <string name="discard_action">Discard</string>
+    <string name="received_discard_warning">This original source will not be applied automatically, including if it arrives again. Copies on other devices are not erased.</string>
+</resources>

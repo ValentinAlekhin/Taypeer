@@ -21,6 +21,19 @@ pub fn try_lock_exclusive(file: &File) -> Result<(), TryLockError> {
     file.try_lock()
 }
 
+/// Release an advisory lock through its existing file description.
+/// This also releases the lock held by duplicated or inherited descriptors.
+/// Only the unique logical owner may call this when its protected lifetime ends;
+/// ordinary shared handles continue to release their lock on the last close.
+pub fn unlock_exclusive(file: &File) -> std::io::Result<()> {
+    #[cfg(target_os = "android")]
+    {
+        rustix::fs::flock(file, rustix::fs::FlockOperation::Unlock).map_err(Into::into)
+    }
+    #[cfg(not(target_os = "android"))]
+    file.unlock()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

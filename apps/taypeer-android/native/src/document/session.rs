@@ -19,6 +19,20 @@ pub trait WorkerStreams: Send + Sync {
 /// enqueue termination; they must never perform blocking Binder I/O.
 #[uniffi::export(callback_interface)]
 pub trait DocumentProcess: Send + Sync {
+    /// Private fixed-service handoff. Original FD remains held until the service
+    /// has synchronously accepted its own duplicate of the exact armed input.
+    fn install_biometric_input(
+        &self,
+        _spec: crate::BiometricInputSpec,
+        _fd: i32,
+    ) -> Result<(), AndroidError> {
+        Err(AndroidError::Biometry {
+            failure: crate::BiometryFailure::Unavailable,
+        })
+    }
+    /// Enqueue independent terminal input revocation, without waiting for Binder.
+    /// Legacy processes never own a biometric input and need no cleanup.
+    fn revoke_biometric_input(&self, _spec: crate::BiometricInputSpec) {}
     /// Bind a fresh isolated Service, private pipes and its ciphertext-only host port.
     fn start(
         &self,
@@ -91,10 +105,10 @@ impl taypeer_runtime::platform::ProcessHandle for Control {
             .map_err(|_| taypeer_runtime::RuntimeError::Transport)
     }
 }
-pub(super) struct Launcher {
-    pub(super) process: Arc<dyn DocumentProcess>,
-    pub(super) writer: Arc<CipherWriter>,
-    pub(super) selected: Arc<super::SelectedTransfersHost>,
+pub(crate) struct Launcher {
+    pub(crate) process: Arc<dyn DocumentProcess>,
+    pub(crate) writer: Arc<CipherWriter>,
+    pub(crate) selected: Arc<super::SelectedTransfersHost>,
 }
 impl taypeer_runtime::platform::ProcessLauncher for Launcher {
     fn launch(
@@ -134,9 +148,34 @@ pub fn serve_document(
     )
     .map_err(runtime)
 }
+/// The trusted isolated-service bootstrap supplies a fixed separate input owner.
+/// Ordinary framed pipes and ciphertext callbacks never carry a plaintext key.
+#[uniffi::export]
+pub fn serve_document_with_biometry(
+    streams: Box<dyn WorkerStreams>,
+    persistence: Box<dyn DocumentPersistence>,
+    files: Box<dyn CiphertextFiles>,
+    selected: Box<dyn super::SelectedTransfersRemote>,
+    inputs: Arc<crate::PrivateBiometricInputs>,
+) -> Result<(), AndroidError> {
+    let streams: Arc<dyn WorkerStreams> = Arc::from(streams);
+    let document = Arc::new(RemoteDocument {
+        port: Arc::from(persistence),
+        files: Arc::from(files),
+        selected: Arc::from(selected),
+        copy: Mutex::new(None),
+    });
+    taypeer_runtime::platform_worker::run_platform_worker_with_biometry(
+        Reader(Arc::clone(&streams)),
+        Writer(streams),
+        document,
+        inputs,
+    )
+    .map_err(runtime)
+}
 
 /// Public identity and path only, safe to list while locked.
-#[derive(uniffi::Record)]
+#[derive(Clone, uniffi::Record)]
 pub struct WorkingCopyView {
     /// Logical identity bound to the authenticated file.
     pub database: String,
@@ -206,16 +245,14 @@ impl Host {
         });
         self.open_session(path, password, form, process, files)
     }
-    /// Start direct exchange explicitly. Ciphertext reception remains active while locked.
+    /// Start exchange using the durable local relay preference. Ciphertext reception
+    /// remains active while locked; an absent preference uses the public relay policy.
     pub fn start_exchange(&self) -> Result<(), AndroidError> {
-        self.runtime
-            .start_network(taypeer_sync::RelaySetting::Disabled)
-            .map(|_| ())
-            .map_err(runtime)
+        self.runtime.start_configured_network().map_err(runtime)
     }
     /// Stop network lifetime without unlocking any file.
     pub fn stop_exchange(&self) {
-        self.runtime.stop_network();
+        self.runtime.stop_configured_network();
     }
 }
 impl Host {
@@ -226,6 +263,17 @@ impl Host {
         form: Option<taypeer_services::CreateDatabase>,
         process: Box<dyn DocumentProcess>,
         files: Box<dyn CiphertextFiles>,
+    ) -> Result<Arc<DocumentSession>, AndroidError> {
+        self.open_session_with_recovery(path, password, form, process, files, None)
+    }
+    pub(super) fn open_session_with_recovery(
+        &self,
+        path: std::path::PathBuf,
+        password: String,
+        form: Option<taypeer_services::CreateDatabase>,
+        process: Box<dyn DocumentProcess>,
+        files: Box<dyn CiphertextFiles>,
+        recovery: Option<taypeer_trust::Digest>,
     ) -> Result<Arc<DocumentSession>, AndroidError> {
         let writer = Arc::new(CipherWriter {
             writer: self
@@ -244,30 +292,34 @@ impl Host {
         } else {
             None
         };
-        let mut worker = self
-            .runtime
-            .open_platform_worker(
+        let mut worker = match recovery {
+            Some(operation) => self
+                .runtime
+                .open_platform_recovery_worker(&launcher, password, operation),
+            None => self.runtime.open_platform_worker(
                 &launcher,
                 password,
                 if retry.is_some() { None } else { form },
-            )
-            .map_err(runtime)?;
+            ),
+        }
+        .map_err(runtime)?;
         if let Some(form) = retry {
             taypeer_runtime::RuntimeHost::validate_creation_retry(&mut worker, &form)
                 .map_err(runtime)?;
         }
-        if let Err(error) = self.runtime.register_working_copy(&path) {
+        if recovery.is_none()
+            && let Err(error) = self.runtime.register_working_copy(&path)
+        {
             worker.invalidate(taypeer_runtime::session::LockReason::Transport);
             return Err(runtime(error));
         }
-        let control = worker.control();
-        launcher.selected.bind(control.clone())?;
-        Ok(Arc::new(DocumentSession {
-            worker: Mutex::new(worker),
-            control,
-            host: Arc::clone(&self.runtime),
-            selected: launcher.selected,
-        }))
+        DocumentSession::from_platform_worker(
+            worker,
+            Arc::clone(&self.runtime),
+            self.biometry.clone(),
+            launcher.process,
+            launcher.selected,
+        )
     }
 }
 
@@ -340,7 +392,7 @@ pub struct LocalForm {
     /// Whether local input differs from its confirmed baseline.
     pub dirty: bool,
 }
-fn form(identity: taypeer_services::DraftIdentity, dirty: bool) -> LocalForm {
+pub(super) fn form(identity: taypeer_services::DraftIdentity, dirty: bool) -> LocalForm {
     use taypeer_services::DraftTarget;
     let (kind, target) = match identity.target {
         DraftTarget::Entry(id) => (FormKind::Entry, Some(id.to_string())),
@@ -420,8 +472,12 @@ pub struct EntryRow {
     pub has_password: Option<bool>,
     /// Whether original alternative values remain in history.
     pub alternatives: bool,
+    /// Current selected icon kind from the shared masked projection; never fetches.
+    pub icon: IconView,
+    /// Actual saved modification time in UTC milliseconds, independent of local access.
+    pub modified_at: i64,
 }
-fn entry_row(view: taypeer_services::EntryView) -> EntryRow {
+pub(super) fn entry_row(view: taypeer_services::EntryView) -> EntryRow {
     EntryRow {
         id: view.id.to_string(),
         group: view.group_id.to_string(),
@@ -431,6 +487,32 @@ fn entry_row(view: taypeer_services::EntryView) -> EntryRow {
         notes: view.notes,
         has_password: Some(view.has_password),
         alternatives: view.has_conflicts,
+        icon: view.appearance.icon.into(),
+        modified_at: view.modified_at,
+    }
+}
+/// Selected icon kind; image references and bytes stay inside the document service.
+#[derive(uniffi::Enum)]
+pub enum IconView {
+    /// Use the presentation's default glyph.
+    Default,
+    /// Validated bundled Lucide key; reading it does not access the network.
+    Lucide {
+        /// Canonical validated key of the bundled Lucide asset.
+        key: String,
+    },
+    /// A saved image is selected, without exporting its storage identity or content.
+    Image,
+}
+impl From<taypeer_core::IconRef> for IconView {
+    fn from(icon: taypeer_core::IconRef) -> Self {
+        match icon {
+            taypeer_core::IconRef::Default => Self::Default,
+            taypeer_core::IconRef::Lucide(key) => Self::Lucide {
+                key: String::from(key),
+            },
+            taypeer_core::IconRef::Image { .. } => Self::Image,
+        }
     }
 }
 /// Active group metadata; no decrypted document tree is exported.
@@ -444,6 +526,8 @@ pub struct GroupRow {
     pub name: String,
     /// Exact optional ordinary descriptive text.
     pub description: Option<String>,
+    /// Current saved icon selection without image storage references.
+    pub icon: IconView,
 }
 /// Current selected catalog values after authentication.
 #[derive(uniffi::Record)]
@@ -474,6 +558,33 @@ pub struct MetadataEditor {
     pub name: String,
     /// Exact optional ordinary descriptive text.
     pub description: Option<String>,
+    /// Current group form selection; absent for database metadata.
+    pub icon: Option<IconView>,
+    /// Exact group draft selection; None is top level. Database metadata has no parent control.
+    pub parent: Option<String>,
+    /// Valid destinations and original form-basis labels, supplied by shared Rust guards.
+    pub parent_candidates: Vec<GroupParentCandidate>,
+}
+/// One selectable group-form destination; the top level is an explicit None choice.
+#[derive(uniffi::Record)]
+pub struct GroupParentCandidate {
+    /// Stable group identity.
+    pub id: String,
+    /// Exact group label from the form's causal basis.
+    pub name: String,
+}
+/// Addressed parent input; Keep preserves placement and Clear selects the top level.
+#[derive(uniffi::Enum)]
+pub enum GroupParentEdit {
+    /// Preserve the existing local selection.
+    Keep,
+    /// Select this exact group identity.
+    Set {
+        /// Explicit destination group.
+        group: String,
+    },
+    /// Select the top level.
+    Clear,
 }
 /// Confirmed content version; entry secrets stay masked until explicit reveal.
 #[derive(uniffi::Record)]
@@ -521,20 +632,71 @@ pub enum SessionAccess {
 /// One supervised isolated document. Lock control is separate from the command mutex.
 #[derive(uniffi::Object)]
 pub struct DocumentSession {
-    worker: Mutex<Worker>,
-    control: taypeer_runtime::WorkerControl,
+    #[cfg(feature = "android-test-support")]
+    pub(super) preview_diagnostics: super::icons::diagnostics::PreviewDiagnostics,
+    pub(crate) worker: Arc<Mutex<Worker>>,
+    pub(crate) control: taypeer_runtime::WorkerControl,
+    pub(crate) process: Arc<dyn DocumentProcess>,
+    pub(crate) biometry: Option<Arc<crate::biometry::Broker>>,
     pub(super) host: Arc<taypeer_runtime::RuntimeHost>,
     pub(super) selected: Arc<super::SelectedTransfersHost>,
+    pub(super) lifecycle_reviews: Mutex<super::lifecycle::LifecycleReviews>,
+    pub(super) application_observer: taypeer_runtime::WorkerApplicationObserver,
 }
 impl DocumentSession {
+    pub(crate) fn from_platform_worker(
+        worker: Worker,
+        host: Arc<taypeer_runtime::RuntimeHost>,
+        biometry: Option<Arc<crate::biometry::Broker>>,
+        process: Arc<dyn DocumentProcess>,
+        selected: Arc<super::SelectedTransfersHost>,
+    ) -> Result<Arc<Self>, AndroidError> {
+        let control = worker.control();
+        let application_observer = worker.application_observer();
+        selected.bind(control.clone())?;
+        Ok(Arc::new(Self {
+            #[cfg(feature = "android-test-support")]
+            preview_diagnostics: super::icons::diagnostics::PreviewDiagnostics::default(),
+            worker: Arc::new(Mutex::new(worker)),
+            control,
+            process,
+            biometry,
+            host,
+            selected,
+            lifecycle_reviews: Mutex::new(super::lifecycle::LifecycleReviews::default()),
+            application_observer,
+        }))
+    }
+    pub(crate) fn biometric_worker<T>(
+        &self,
+        action: impl FnOnce(&mut Worker) -> Result<T, taypeer_runtime::RuntimeError>,
+    ) -> Result<T, AndroidError> {
+        crate::biometry::enrollment::with_open_worker(&self.worker, &self.control, action)
+    }
     pub(super) fn command<T: serde::de::DeserializeOwned>(
         &self,
+        command: Command,
+    ) -> Result<T, AndroidError> {
+        self.command_with_error(command, runtime)
+    }
+    pub(super) fn command_with_error<T: serde::de::DeserializeOwned>(
+        &self,
+        command: Command,
+        map_error: impl FnOnce(taypeer_runtime::RuntimeError) -> AndroidError,
+    ) -> Result<T, AndroidError> {
+        self.command_observed(command, map_error, || {})
+    }
+    pub(super) fn command_observed<T: serde::de::DeserializeOwned>(
+        &self,
         mut command: Command,
+        map_error: impl FnOnce(taypeer_runtime::RuntimeError) -> AndroidError,
+        after_lock: impl FnOnce(),
     ) -> Result<T, AndroidError> {
         let mut worker = self.worker.lock().map_err(failure)?;
+        after_lock();
         let result = worker.request(&command);
         command.erase_input();
-        let value = result.map_err(runtime)?;
+        let value = result.map_err(map_error)?;
         if !worker.is_open() {
             return Err(AndroidError::Runtime);
         }
@@ -544,7 +706,7 @@ impl DocumentSession {
         }
         Ok(decoded)
     }
-    fn identity(&self) -> Result<(String, u64), AndroidError> {
+    pub(super) fn identity(&self) -> Result<(String, u64), AndroidError> {
         let status = self.control.status();
         if status.phase != taypeer_runtime::session::SessionPhase::Open {
             return Err(AndroidError::Runtime);
@@ -575,12 +737,20 @@ impl DocumentSession {
     }
     /// Immediate access revocation; completion does not wait for a busy command.
     pub fn lock(&self) {
+        #[cfg(feature = "android-test-support")]
+        self.preview_diagnostics.clear();
+        if let Some(broker) = &self.biometry {
+            broker.retire_generation(self.generation());
+        }
         self.selected.revoke();
         self.control
             .invalidate(taypeer_runtime::session::LockReason::Manual);
     }
     /// Confirm process exit and draft disposition with the shared bounded deadline.
     pub fn close_session(&self) -> Result<(), AndroidError> {
+        if let Some(broker) = &self.biometry {
+            broker.retire_generation(self.generation());
+        }
         self.worker
             .lock()
             .map_err(failure)?
@@ -611,6 +781,7 @@ impl DocumentSession {
                     parent: g.group.parent.map(|id| id.to_string()),
                     name: g.group.name,
                     description: g.description,
+                    icon: g.group.icon.into(),
                 })
                 .collect(),
             entries: entries
@@ -624,6 +795,8 @@ impl DocumentSession {
                     notes: e.notes,
                     has_password: None,
                     alternatives: e.has_conflicts,
+                    icon: e.appearance.icon.into(),
+                    modified_at: e.modified_at,
                 })
                 .collect(),
         })
@@ -836,6 +1009,16 @@ impl DocumentSession {
             form: form(view.identity, view.dirty),
             name: view.name,
             description: view.description,
+            icon: view.icon.map(IconView::from),
+            parent: view.parent.map(|parent| parent.to_string()),
+            parent_candidates: view
+                .parent_candidates
+                .into_iter()
+                .map(|group| GroupParentCandidate {
+                    id: group.id.to_string(),
+                    name: group.name,
+                })
+                .collect(),
         })
     }
     /// Read a metadata form after resume without replacing its identity.
@@ -846,6 +1029,16 @@ impl DocumentSession {
             form: form(view.identity, view.dirty),
             name: view.name,
             description: view.description,
+            icon: view.icon.map(IconView::from),
+            parent: view.parent.map(|parent| parent.to_string()),
+            parent_candidates: view
+                .parent_candidates
+                .into_iter()
+                .map(|group| GroupParentCandidate {
+                    id: group.id.to_string(),
+                    name: group.name,
+                })
+                .collect(),
         })
     }
     /// Addressed name/description changes retain their original causal context.
@@ -870,12 +1063,33 @@ impl DocumentSession {
                     name,
                     description,
                     icon: FieldUpdate::Keep,
+                    parent: FieldUpdate::Keep,
                 },
             },
             _ => return Err(AndroidError::InvalidOptions),
         };
         self.command::<serde_json::Value>(command)?;
         self.metadata(draft)
+    }
+    /// Patch only a group form's parent. Shared Rust validates cycles and precise generations.
+    pub fn patch_group_parent(
+        &self,
+        draft: String,
+        parent: GroupParentEdit,
+    ) -> Result<LocalForm, AndroidError> {
+        let parent = match parent {
+            GroupParentEdit::Keep => FieldUpdate::Keep,
+            GroupParentEdit::Set { group } => FieldUpdate::Set(GroupId::new(identifier(group)?)),
+            GroupParentEdit::Clear => FieldUpdate::Clear,
+        };
+        self.command::<serde_json::Value>(Command::PatchGroupDraft {
+            draft: DraftId::new(identifier(draft.clone())?),
+            patch: taypeer_core::GroupMetadataPatch {
+                parent,
+                ..Default::default()
+            },
+        })?;
+        Ok(self.metadata(draft)?.form)
     }
     /// Original saved versions; automatic merges and retries create no rows.
     pub fn history(

@@ -1,0 +1,104 @@
+// REFERENCE ONLY — not an additional compiled Android test.
+// Snapshot of the actual PUBLIC Native seed +69 clone generator before corpus adoption.
+// Paste this exact method into ImageIconUiTest in an isolated checkout with the
+// original class fixtures/imports; README.md records the command and capture contract.
+// Original: apps/taypeer-android/app/src/androidTest/java/dev/taypeer/ImageIconUiTest.kt
+// Dependencies: compose/createAndroidComposeRule<MainActivity>, PublicDocumentUiFixture,
+// svg below, IconStageExecutor/NativeIconStageExecutor, DocumentState and bridge APIs.
+// svg = """<svg xmlns="http://www.w3.org/2000/svg" width="32" height="16"><rect width="32" height="16" fill="#14dc28"/></svg>""".toByteArray()
+
+    @Test fun eagerListLoadsOnlyVisibleNativeImagesAndRestoresThemWhenScrollingBack() {
+        val application = compose.activity.application as TaypeerApplication
+        val real = NativeIconStageExecutor(application)
+        var native: DocumentSession? = null
+        val executor = object : IconStageExecutor {
+            override fun pin(session: DocumentSession): LocalForm = real.pin(session)
+            override fun execute(session: DocumentSession, request: IconRequest): LocalForm {
+                native = session
+                return real.execute(session, request)
+            }
+        }
+        val store = ViewModelStore()
+        lateinit var local: DocumentState
+        compose.runOnIdle { local = DocumentState(application, executor); store.put("PUBLIC icon visibility state", local) }
+        val selected = File(application.cacheDir, "PUBLIC-list-image-${UUID.randomUUID()}.svg").apply { writeBytes(svg) }
+        try {
+            compose.runOnIdle { local.create("PUBLIC image list visibility", null, "PUBLIC image list master", newOperation()) }
+            fixture.await { local.overview != null && !local.navigating }
+            compose.runOnIdle { local.beginMetadata(FormKind.NEW_GROUP, parent = null) }
+            fixture.await { local.metadata != null && !local.navigating }
+            compose.runOnIdle {
+                local.editMetadata(name = "PUBLIC image list group")
+                local.prepareIconFile { operation -> local.selectedIconFile(operation, Uri.fromFile(selected)) }
+            }
+            fixture.await { local.icons.file?.uri != null && !local.navigating }
+            compose.runOnIdle { local.acceptIconFile() }
+            fixture.await { local.metadata?.source?.icon == IconView.Image && !local.editingBlocked }
+            compose.runOnIdle { local.saveNow() }
+            fixture.await { local.activeForm == null && local.overview?.groups?.size == 1 && !local.navigating }
+            val group = local.overview!!.groups.single().id
+            val session = native!!
+            val preparationStarted = android.os.SystemClock.elapsedRealtime()
+            fun <T> fixtureInput(index: Int, step: String, action: () -> T): T {
+                // Raw Native fixture calls bypass MainActivity.onUserInteraction.
+                // Model input before each action; command completion/polling must
+                // never keep a production session alive or revive revoked access.
+                compose.runOnIdle { local.activity() }
+                val diagnostic = "PUBLIC list preparation row=$index step=$step elapsed_ms=${android.os.SystemClock.elapsedRealtime() - preparationStarted}"
+                assertEquals(diagnostic, SessionAccess.OPEN, session.access())
+                return try { action().also {
+                    // Fixed test-only counters keep long fixture preparation observable.
+                    // Titles, IDs, selected content and failures never enter this log.
+                    val elapsed = android.os.SystemClock.elapsedRealtime() - preparationStarted
+                    androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().sendStatus(2, android.os.Bundle().apply {
+                        putString("class", "dev.taypeer.ImageIconUiTest")
+                        putString("test", "eagerListLoadsOnlyVisibleNativeImagesAndRestoresThemWhenScrollingBack")
+                        putString("qa_phase", step)
+                        putString("qa_row", index.toString())
+                        putString("qa_elapsed_ms", elapsed.toString())
+                    })
+                } }
+                catch (failure: AndroidException) {
+                    throw AssertionError("$diagnostic access=${session.access()}", failure)
+                }
+            }
+            val initial = fixtureInput(0, "create") { session.beginCreateEntry(group) }
+            fixtureInput(0, "title") { session.patchEntry(EntryTextField.TITLE, TextEdit.Set("PUBLIC image 000")) }
+            val staged = fixtureInput(0, "image") {
+                session.importIcon(initial.form.draft, newOperation(), IconSelectedInput(application, Uri.fromFile(selected)))
+            }
+            val receipt = fixtureInput(0, "save") { session.save(staged.draft, staged.revision, newOperation()) }
+            fixtureInput(0, "cleanup") { session.deleteForm(receipt.form.draft) }
+            val seed = receipt.form.target!!
+            // Visibility and eviction need 70 actual saved objects. Cloning keeps
+            // their real image reference without repeating image-acquisition tests.
+            val entries = listOf(seed) + (1 until 70).map { index ->
+                fixtureInput(index, "clone") {
+                    session.cloneEntry(seed, group, "PUBLIC image ${index.toString().padStart(3, '0')}", newOperation())
+                }
+            }
+            assertEquals(70, entries.toSet().size)
+            compose.runOnIdle { local.search("") }
+            fixture.await { local.overview?.entries?.size == 70 }
+            val bytes = File(local.catalog.single { it.database == local.overview?.database }.path).readBytes()
+            compose.activityRule.scenario.onActivity { activity -> activity.setContent {
+                TaypeerTheme { LibraryScreen(local, rememberAttachmentActions(local), copy = {}) }
+            } }
+            fun loaded(id: String) = fixture.await { local.renderedIcon(IconScope.Entry(id)) != null }
+            fun green(id: String) {
+                val image = compose.onNode(
+                    hasTestTag("rendered-icon") and hasAnyAncestor(hasTestTag("entry-$id")),
+                    useUnmergedTree = true,
+                ).assertIsDisplayed().captureToImage().asAndroidBitmap()
+                try { assertEquals(Color.rgb(20, 220, 40), image.getPixel(image.width / 2, image.height / 2)) }
+                finally { image.recycle() }
+            }
+            loaded(entries.first()); green(entries.first())
+            compose.runOnIdle { assertNull(local.renderedIcon(IconScope.Entry(entries[35]))) }
+            compose.onNodeWithTag("entry-${entries.last()}").performScrollTo()
+            loaded(entries.last()); green(entries.last())
+            compose.onNodeWithTag("entry-${entries.first()}").performScrollTo()
+            loaded(entries.first()); green(entries.first())
+            assertArrayEquals(bytes, File(local.catalog.single { it.database == local.overview?.database }.path).readBytes())
+        } finally { assertTrue(selected.delete()); compose.runOnIdle { store.clear() } }
+    }

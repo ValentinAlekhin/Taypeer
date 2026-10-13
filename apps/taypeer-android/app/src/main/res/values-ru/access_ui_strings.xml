@@ -1,0 +1,4 @@
+<resources>
+    <string name="accessed_at">Доступ</string>
+    <string name="access_record_failed">Секрет использован, но локальное время доступа не удалось сохранить. Повтор записывает только время.</string>
+</resources>

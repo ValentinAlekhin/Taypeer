@@ -1,0 +1,11 @@
+<resources>
+    <string name="save_database_copy">Сохранить копию</string>
+    <string name="copy_filename">Имя файла</string>
+    <string name="copy_default_filename">База.taypeer</string>
+    <string name="choose_copy_location">Выбрать место…</string>
+    <string name="database_copy_note">Успех только после завершения записи зашифрованной копии. Отмена не меняет рабочую копию.</string>
+    <string name="database_copy_saved">Копия сохранена.</string>
+    <string name="database_copy_capture_failed">Не удалось подготовить зашифрованную копию. Рабочая копия не изменилась.</string>
+    <string name="database_copy_output_failed">Не удалось завершить запись. В выбранном месте может остаться неполная копия. Для повтора выберите другое место.</string>
+    <string name="database_copy_unconfirmed">Не удалось подтвердить сохранение. Копия уже могла быть записана. Для повтора выберите другое место.</string>
+</resources>

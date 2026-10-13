@@ -50,6 +50,7 @@ impl ArchiveSeed {
 }
 
 /// Ciphertext candidate submitted by an unlocked service. No read key crosses this port.
+#[derive(Clone)]
 pub struct PreparedCommit {
     /// Exact prior file generation.
     pub expected: Digest,

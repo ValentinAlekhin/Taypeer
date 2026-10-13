@@ -1,0 +1,13 @@
+<resources>
+    <string name="scan_qr">Scan QR…</string>
+    <string name="scan_qr_title">Scan invitation</string>
+    <string name="scan_qr_hint">Point the camera at the invitation QR code.</string>
+    <string name="camera_permission_message">Camera access is needed to scan the QR code. You can also enter the code.</string>
+    <string name="allow_camera">Allow camera</string>
+    <string name="camera_unavailable">The camera is unavailable. Enter the invitation code to continue.</string>
+    <string name="enter_invitation_code">Enter code…</string>
+    <string name="connect_database">Connect</string>
+    <string name="receive_invitation_hint">The managing device must approve your request. The database will be saved in internal storage.</string>
+    <string name="invitation_qr_description">Invitation QR code</string>
+    <string name="invitation_qr_unavailable">This invitation cannot be displayed as a QR code. Copy the code instead.</string>
+</resources>

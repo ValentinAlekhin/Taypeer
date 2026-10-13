@@ -2,7 +2,7 @@
 use super::*;
 use crate::{
     Command, RuntimeHost,
-    platform::{ProcessConnection, ProcessLauncher},
+    platform::{ProcessConnection, ProcessHandle, ProcessLauncher},
     profile::{CredentialStore, ProfileError},
     protocol::{read_frame, write_frame},
     session::{LockReason, SessionController, Termination},
@@ -30,6 +30,11 @@ use zeroize::Zeroizing;
 
 const PASSWORD: &str = "PUBLIC descriptor password";
 const MARKER: &str = "PUBLIC descriptor process ready";
+
+#[cfg(unix)]
+mod biometry_open;
+mod group_favicons;
+mod recovery_close;
 
 #[derive(Serialize, Deserialize)]
 enum Request {
@@ -326,11 +331,19 @@ fn child() {
     let temporary = TemporaryStorage::new(Arc::new(Provider(Arc::clone(&rpc))));
     println!("\n{MARKER}");
     std::io::stdout().flush().unwrap();
-    let result = run_platform_worker(
-        std::io::stdin(),
-        std::io::stdout(),
-        Arc::new(Document { rpc, temporary }),
-    );
+    let document = Arc::new(Document { rpc, temporary });
+    #[cfg(unix)]
+    let result = match std::env::var("TAYPEER_PUBLIC_BIOMETRIC_INPUT") {
+        Ok(mode) => run_platform_worker_with_biometry(
+            std::io::stdin(),
+            std::io::stdout(),
+            document.clone(),
+            Arc::new(biometry_open::PublicInput::new(document, mode)),
+        ),
+        Err(_) => run_platform_worker(std::io::stdin(), std::io::stdout(), document),
+    };
+    #[cfg(not(unix))]
+    let result = run_platform_worker(std::io::stdin(), std::io::stdout(), document);
     std::process::exit(if result.is_ok() { 0 } else { 70 });
 }
 type AuthHook = Box<dyn FnOnce() + Send>;
@@ -372,6 +385,9 @@ impl CredentialStore for Credentials {
 struct Faults {
     author_calls: AtomicUsize,
     allocations: AtomicUsize,
+    confirmed_exits: AtomicUsize,
+    released_callback_servers: AtomicUsize,
+    forced_terminations: AtomicUsize,
     deny_allocate: AtomicBool,
     fail_commit: AtomicBool,
     hold_commit: Mutex<bool>,
@@ -385,6 +401,27 @@ struct Faults {
     fail_input: AtomicBool,
     fail_output_finish: AtomicBool,
     output_finishes: AtomicUsize,
+}
+struct RecordingProcess {
+    process: crate::platform::DesktopProcess,
+    faults: Arc<Faults>,
+    confirmed_exit: bool,
+}
+impl ProcessHandle for RecordingProcess {
+    fn has_exited(&mut self) -> Result<bool, RuntimeError> {
+        let exited = self.process.has_exited()?;
+        if exited && !self.confirmed_exit {
+            self.confirmed_exit = true;
+            self.faults.confirmed_exits.fetch_add(1, Ordering::Release);
+        }
+        Ok(exited)
+    }
+    fn terminate(&mut self) -> Result<(), RuntimeError> {
+        self.faults
+            .forced_terminations
+            .fetch_add(1, Ordering::Release);
+        self.process.terminate()
+    }
 }
 struct Server {
     writer: Arc<PlatformCipherWriter>,
@@ -632,6 +669,11 @@ impl Server {
                 break;
             }
         }
+        let faults = Arc::clone(&self.faults);
+        drop(self);
+        faults
+            .released_callback_servers
+            .fetch_add(1, Ordering::Release);
     }
 }
 struct Launcher {
@@ -641,9 +683,26 @@ struct Launcher {
 }
 impl ProcessLauncher for Launcher {
     fn launch(&self) -> Result<ProcessConnection, RuntimeError> {
+        self.launch_with_biometry(None)
+    }
+}
+impl Launcher {
+    fn launch_with_biometry(&self, mode: Option<&str>) -> Result<ProcessConnection, RuntimeError> {
         let listener = TcpListener::bind("127.0.0.1:0")
             .unwrap_or_else(|error| panic!("PUBLIC callback bind failed: {:?}", error.kind()));
-        let mut child = Process::new(std::env::current_exe().map_err(|_| RuntimeError::Transport)?)
+        let mut command =
+            Process::new(std::env::current_exe().map_err(|_| RuntimeError::Transport)?);
+        if let Some(mode) = mode {
+            command.env("TAYPEER_PUBLIC_BIOMETRIC_INPUT", mode);
+            command.env(
+                "TAYPEER_PUBLIC_BIOMETRIC_READ",
+                self.directory.join("PUBLIC private read started"),
+            );
+        } else {
+            command.env_remove("TAYPEER_PUBLIC_BIOMETRIC_INPUT");
+            command.env_remove("TAYPEER_PUBLIC_BIOMETRIC_READ");
+        }
+        let mut child = command
             .args([
                 "--exact",
                 "platform_worker::tests::child",
@@ -689,7 +748,11 @@ impl ProcessLauncher for Launcher {
             }
         }
         Ok(ProcessConnection::new(
-            Box::new(crate::platform::DesktopProcess(Some(child))),
+            Box::new(RecordingProcess {
+                process: crate::platform::DesktopProcess(Some(child)),
+                faults: Arc::clone(&self.faults),
+                confirmed_exit: false,
+            }),
             Box::new(input),
             Box::new(output),
         ))
@@ -926,6 +989,114 @@ fn selected_import(
         replacement,
         operation,
     })
+}
+
+#[test]
+fn selected_icon_replay_precedes_gateway_and_editor_projection_never_contains_image_bytes() {
+    let f = Fixture::new();
+    let mut bytes = br##"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><rect width="16" height="16" fill="#224466"/><!--"##.to_vec();
+    bytes.extend(std::iter::repeat_n(b'P', 150_000));
+    bytes.extend_from_slice(b"--></svg>");
+    f.launcher
+        .faults
+        .selected_inputs
+        .lock()
+        .unwrap()
+        .insert(1, io::Cursor::new(bytes.clone()));
+    f.launcher
+        .faults
+        .selected_outputs
+        .lock()
+        .unwrap()
+        .insert(2, Vec::new());
+    let mut worker = f.open(PASSWORD, true).unwrap();
+    edit(&mut worker, "PUBLIC original icon entry");
+    let draft = editor(&mut worker).identity.draft;
+    let operation = OperationId::new("PUBLIC selected icon frozen operation");
+    let imported: taypeer_services::DraftIdentity = serde_json::from_value(
+        worker
+            .request(&Command::ImportSelectedIcon {
+                draft: draft.clone(),
+                input: 1,
+                length: bytes.len() as u64,
+                source: taypeer_core::IconSource::File,
+                operation: operation.clone(),
+            })
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(imported, editor(&mut worker).identity);
+    assert!(f.launcher.faults.input_reads.load(Ordering::Acquire) > 1);
+    assert!(f.launcher.faults.largest_input_read.load(Ordering::Acquire) <= 65536);
+    let projected = worker.request(&Command::EditorView).unwrap();
+    assert!(projected["icon_preview"].is_null());
+    assert!(serde_json::to_vec(&projected).unwrap().len() < 65536);
+    let binary: taypeer_services::BinaryView = serde_json::from_value(
+        worker
+            .request(&Command::BinaryView(taypeer_services::BinaryTarget::Form(
+                draft.clone(),
+            )))
+            .unwrap(),
+    )
+    .unwrap();
+    let blob = binary.icons[0].blob().unwrap().clone();
+    worker
+        .request(&Command::ExportSelectedBinary {
+            target: taypeer_services::BinaryTarget::Form(draft.clone()),
+            blob,
+            output: 2,
+        })
+        .unwrap();
+    assert_eq!(
+        f.launcher.faults.selected_outputs.lock().unwrap()[&2],
+        bytes
+    );
+    assert_eq!(f.launcher.faults.output_finishes.load(Ordering::Acquire), 1);
+    let snapshot = editor(&mut worker);
+    save(
+        &mut worker,
+        &snapshot,
+        OperationId::new("PUBLIC icon common save"),
+    )
+    .unwrap();
+    let entry = editor(&mut worker).entry.unwrap();
+    worker
+        .request(&Command::PatchDraft(EntryPatch {
+            notes: FieldUpdate::Set("PUBLIC later icon editor input".into()),
+            ..Default::default()
+        }))
+        .unwrap();
+    let current = editor(&mut worker).identity;
+    let reads = f.launcher.faults.input_reads.load(Ordering::Acquire);
+    // This absent capability would fail in selected_input; neither gateway nor
+    // content validation may run after the exact frozen operation was acknowledged.
+    let retry: taypeer_services::DraftIdentity = serde_json::from_value(
+        worker
+            .request(&Command::ImportSelectedIcon {
+                draft: draft.clone(),
+                input: 999,
+                length: u64::MAX,
+                source: taypeer_core::IconSource::File,
+                operation: operation.clone(),
+            })
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(retry, current);
+    assert_eq!(f.launcher.faults.input_reads.load(Ordering::Acquire), reads);
+    let history = worker.request(&Command::History(entry)).unwrap();
+    assert_eq!(history.as_array().unwrap().len(), 1);
+    assert!(matches!(
+        worker.request(&Command::IconImportReceipt {
+            draft,
+            source: taypeer_core::IconSource::Url("https://public.invalid/changed.svg".into()),
+            operation
+        }),
+        Err(RuntimeError::Service(
+            taypeer_services::ServiceError::InvalidInput
+        ))
+    ));
+    worker.close().unwrap();
 }
 
 #[test]
@@ -1271,13 +1442,23 @@ fn invitation_only_process_returns_public_proof_without_opening_a_document() {
     assert!(!receiver.path.exists());
     assert!(receiver.host.working_copies().unwrap().is_empty());
     assert!(receiver.host.pending_joins().unwrap().is_empty());
-    let statuses = receiver.host.sessions().statuses();
-    assert_eq!(statuses.len(), 1);
-    assert!(
-        statuses[0]
-            .outcome
-            .as_ref()
-            .is_some_and(|outcome| outcome.termination == Termination::Graceful)
+    // The session registry contains Weak references, so completed controls may already
+    // be gone. Record the actual OS exit instead of depending on their drop timing.
+    assert_eq!(
+        receiver
+            .launcher
+            .faults
+            .confirmed_exits
+            .load(Ordering::Acquire),
+        1
+    );
+    assert_eq!(
+        receiver
+            .launcher
+            .faults
+            .forced_terminations
+            .load(Ordering::Acquire),
+        0
     );
 }
 

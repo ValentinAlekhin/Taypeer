@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="local_drafts_description">Encrypted on this device · not synchronized</string>
+    <string name="discard_local_draft_message">Discard this local draft (%1$s)? Its unsaved input will be lost. Saved database values remain unchanged.</string>
+</resources>

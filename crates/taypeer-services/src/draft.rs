@@ -103,6 +103,9 @@ impl DraftState {
     pub(super) fn has_binary_operation(&self, operation: &taypeer_core::OperationId) -> bool {
         self.binary_receipts.contains_key(operation)
     }
+    pub(super) fn baseline_icon(&self) -> &taypeer_core::IconRef {
+        &self.baseline.appearance.icon
+    }
     pub(super) fn fingerprint(&self) -> Result<serde_json::Value, ServiceError> {
         super::commands::fingerprint(&(&self.document, &self.expiry_input))
     }

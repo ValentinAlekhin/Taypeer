@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Lucide / Feather paths, ISC and MIT; see resources/lucide/LICENSE. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="20dp" android:height="20dp" android:viewportWidth="24" android:viewportHeight="24">
+    <path android:pathData="M21.174 6.812C22.27498 5.711296 22.275203 3.92648 21.1745 2.8255C20.073796 1.72452 18.28898 1.724297 17.188 2.825L3.842 16.174C3.609819 16.4055 3.438114 16.690532 3.342 17.004L2.021 21.356C1.968345 21.532195 2.016659 21.723074 2.146796 21.853002C2.276934 21.982931 2.46789 22.030938 2.644 21.978L6.997 20.658C7.310169 20.562751 7.595173 20.392092 7.827 20.161L21.174 6.812Z" android:fillColor="@android:color/transparent" android:strokeColor="#FF000000" android:strokeWidth="1.75" android:strokeLineCap="round" android:strokeLineJoin="round" />
+    <path android:pathData="M15 5L19 9" android:fillColor="@android:color/transparent" android:strokeColor="#FF000000" android:strokeWidth="1.75" android:strokeLineCap="round" android:strokeLineJoin="round" />
+</vector>

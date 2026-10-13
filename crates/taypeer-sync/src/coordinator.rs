@@ -3,17 +3,16 @@
 use crate::{Backend, Command, EndpointAddr, Error, Reply};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs::File,
     sync::{Arc, Mutex},
 };
 use taypeer_core::DatabaseId;
 use taypeer_storage::{
-    ArchiveMetadata, ArchiveSnapshot, ArchiveStore, EncryptedObject, ObjectReader, PreparedCommit,
+    ArchiveMetadata, ArchiveSnapshot, ArchiveStore, CiphertextFile, EncryptedObject, ObjectReader,
+    PreparedCommit,
 };
 use taypeer_trust::{
     CipherObject, ControlChain, Digest, InvitationSecret, InvitationStatus, PublicKey, TransportKey,
 };
-use tempfile::NamedTempFile;
 use tokio::sync::broadcast;
 
 /// Events are invalidation/progress signals, never decrypted data or successful application claims.
@@ -67,6 +66,12 @@ pub struct CoordinatorState {
 struct WorkingCopy {
     store: ArchiveStore,
     frozen: bool,
+    commit: Option<CommitReceipt>,
+}
+struct CommitReceipt {
+    intent: Digest,
+    metadata: ArchiveMetadata,
+    uncertain: bool,
 }
 /// Shared host-side coordinator for several independent databases under one profile.
 /// It serializes blocking disk transactions; network I/O runs outside this mutex.
@@ -106,7 +111,14 @@ impl Coordinator {
         if copies.contains_key(&id) {
             return Err(Error::State);
         }
-        copies.insert(id, WorkingCopy { store, frozen });
+        copies.insert(
+            id,
+            WorkingCopy {
+                store,
+                frozen,
+                commit: None,
+            },
+        );
         Ok(())
     }
     /// Stop using a working file and release its one-writer lock.
@@ -171,6 +183,27 @@ impl Coordinator {
         if copy.frozen {
             return Err(taypeer_trust::Error::Fork.into());
         }
+        let intent = commit_intent(&request)?;
+        if let Some(receipt) = &copy.commit {
+            if receipt.intent == intent
+                && copy
+                    .store
+                    .confirm_commit(request.expected, &receipt.metadata)?
+            {
+                let snapshot = copy.store.snapshot().clone();
+                if let Some(receipt) = &mut copy.commit {
+                    receipt.uncertain = false;
+                }
+                // A lost first ACK may also have prevented its application wakeup.
+                let _ = self
+                    .events
+                    .send(CoordinatorEvent::Committed(database.clone()));
+                return Ok(snapshot);
+            }
+            if receipt.uncertain {
+                return Err(taypeer_storage::Error::CommitUncertain.into());
+            }
+        }
         let snapshot = copy.store.snapshot().clone();
         if snapshot.fingerprint() != request.expected
             || snapshot.chain().head_hash()? != request.control
@@ -194,7 +227,17 @@ impl Coordinator {
         body.checkpoint = request.checkpoint;
         body.baseline = request.baseline;
         let metadata = candidate.metadata(&chain, &self.key, body, request.journal)?;
-        copy.store.commit(request.expected, &candidate, metadata)?;
+        let committed = copy
+            .store
+            .commit(request.expected, &candidate, metadata.clone());
+        if committed.is_ok() || committed == Err(taypeer_storage::Error::CommitUncertain) {
+            copy.commit = Some(CommitReceipt {
+                intent,
+                metadata,
+                uncertain: committed.is_err(),
+            });
+        }
+        committed?;
         let result = copy.store.snapshot().clone();
         // No listeners is normal, e.g. during a headless one-shot command.
         let _ = self
@@ -312,6 +355,27 @@ impl Coordinator {
         }
         Ok(Reply::Needed(need))
     }
+}
+
+fn commit_intent(request: &PreparedCommit) -> Result<Digest, Error> {
+    let objects: Vec<_> = request
+        .objects
+        .iter()
+        .map(EncryptedObject::descriptor)
+        .collect();
+    Ok(Digest::object(
+        b"taypeer/local-cipher-commit-replay/1",
+        &(
+            request.expected,
+            request.control,
+            &request.controls,
+            objects,
+            &request.remove,
+            request.checkpoint,
+            request.baseline,
+            &request.journal,
+        ),
+    )?)
 }
 fn authorize(copy: &WorkingCopy, peer: PublicKey) -> Result<(), Error> {
     if copy.frozen {
@@ -451,6 +515,10 @@ impl Backend for Coordinator {
                     _ => Err(Error::Unauthorized),
                 }
             }
+            Command::ManagementProposal { .. } | Command::ManagementStatus { .. } => {
+                // Ciphertext-only coordinators cannot attest unlocked worker authority.
+                Err(Error::State)
+            }
         }
     }
     fn authorize_object(
@@ -492,7 +560,7 @@ impl Backend for Coordinator {
         peer: PublicKey,
         database: &DatabaseId,
         descriptor: CipherObject,
-        file: NamedTempFile,
+        file: CiphertextFile,
     ) -> Result<Digest, Error> {
         let mut copies = self.copies.lock().map_err(|_| Error::State)?;
         let copy = copies.get_mut(database).ok_or(Error::Unauthorized)?;
@@ -501,10 +569,11 @@ impl Backend for Coordinator {
         if !announced(&snapshot, &descriptor) {
             return Err(Error::Unauthorized);
         }
-        let object = EncryptedObject::receive(
-            File::open(file.path()).map_err(|_| Error::Storage(taypeer_storage::Error::Io))?,
+        let object = EncryptedObject::receive_in(
+            file,
             &descriptor,
             snapshot.chain(),
+            snapshot.temporary_storage(),
         )?;
         if !snapshot
             .metadata()

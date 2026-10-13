@@ -1,8 +1,79 @@
 //! Addressed descriptive metadata saves retain their original causal context.
 use super::*;
-use taypeer_core::{DatabaseMetadataPatch, FieldUpdate, GroupMetadataPatch};
+use taypeer_core::{DatabaseMetadataPatch, FieldUpdate, GroupMetadataPatch, OperationId};
 
 impl Document {
+    /// Selected parent in an exact form basis, without reading a later placement.
+    pub fn group_parent_at(
+        &self,
+        id: &GroupId,
+        heads: &[String],
+    ) -> Result<Option<GroupId>, Error> {
+        let basis = self.at_heads(heads)?;
+        basis.require_group(id)?;
+        let address = objects::single(&basis.doc, &ObjectId::Group(id.clone()))?;
+        Ok(groups::read_group(&basis.doc, &address)?
+            .placement
+            .parent
+            .map(|parent| parent.id))
+    }
+
+    /// Validate an explicit group-form destination against its original and current generations.
+    /// A new group has no source yet; an existing group cannot become its own descendant.
+    pub fn validate_group_parent(
+        &self,
+        group: Option<&GroupId>,
+        parent: Option<&GroupId>,
+        heads: &[String],
+    ) -> Result<(), Error> {
+        let basis = self.at_heads(heads)?;
+        match group {
+            Some(group) => {
+                self.require_group(group)?;
+                let address = objects::single(&basis.doc, &ObjectId::Group(group.clone()))?;
+                self.reviewed_group_destination(&basis, &address, parent.cloned())?;
+            }
+            None => {
+                if self.destination(parent.cloned())? != basis.destination(parent.cloned())? {
+                    return Err(Error::InvalidContext);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Active destinations with names from an exact form basis. Recovered lifetimes and the
+    /// source's retained subtree are excluded; the top level is represented separately by None.
+    pub fn group_parent_candidates(
+        &self,
+        group: Option<&GroupId>,
+        heads: &[String],
+    ) -> Result<Vec<Group>, Error> {
+        let basis = self.at_heads(heads)?;
+        let excluded = match group {
+            Some(group) => {
+                let address = objects::single(&basis.doc, &ObjectId::Group(group.clone()))?;
+                basis.selected_subtree(&address)?
+            }
+            None => BTreeSet::new(),
+        };
+        let current: BTreeMap<_, _> = self
+            .groups()?
+            .into_iter()
+            .map(|group| (group.id, group.generation))
+            .collect();
+        Ok(basis
+            .groups()?
+            .into_iter()
+            .filter(|group| {
+                current.get(&group.id) == Some(&group.generation)
+                    && !excluded.contains(&ObjectAddress::from(GroupRef {
+                        id: group.id.clone(),
+                        generation: group.generation.clone(),
+                    }))
+            })
+            .collect())
+    }
     /// Selected optional description; original branch values remain in saved history.
     pub fn description(&self) -> Result<Option<String>, Error> {
         optional_text(&self.doc, &ROOT, "description")
@@ -68,10 +139,20 @@ impl Document {
         now: Timestamp,
         receipt: Option<&CommandReceipt<'_>>,
     ) -> Result<(), Error> {
+        self.confirm_database_metadata(patch, heads, now, receipt, RevisionKind::Save)
+    }
+    pub(super) fn confirm_database_metadata(
+        &mut self,
+        patch: &DatabaseMetadataPatch,
+        heads: &[String],
+        now: Timestamp,
+        receipt: Option<&CommandReceipt<'_>>,
+        kind: RevisionKind,
+    ) -> Result<(), Error> {
         validate_name_update(&patch.name)?;
         let basis = self.at_heads(heads)?;
-        let name = changed_name(&patch.name, &basis.display_name()?);
-        let description = changed_optional(&patch.description, basis.description()?);
+        let name = confirmed_name(&patch.name, &basis.display_name()?, kind);
+        let description = confirmed_optional(&patch.description, basis.description()?, kind);
         if name.is_none() && description.is_none() && receipt.is_none() {
             return Ok(());
         }
@@ -86,13 +167,7 @@ impl Document {
             tx.put(ROOT, "description", encode(description)?)?;
         }
         if name.is_some() || description.is_some() {
-            history::record_database_revision(
-                &mut tx,
-                &self.database_id,
-                RevisionKind::Save,
-                now,
-                heads,
-            )?;
+            history::record_database_revision(&mut tx, &self.database_id, kind, now, heads)?;
         }
         if let Some(receipt) = receipt {
             receipt.write(&mut tx, &())?;
@@ -133,6 +208,17 @@ impl Document {
         now: Timestamp,
         receipt: Option<&CommandReceipt<'_>>,
     ) -> Result<Group, Error> {
+        self.confirm_group_metadata(id, patch, heads, now, receipt, RevisionKind::Save)
+    }
+    pub(super) fn confirm_group_metadata(
+        &mut self,
+        id: &GroupId,
+        patch: &GroupMetadataPatch,
+        heads: &[String],
+        now: Timestamp,
+        receipt: Option<&CommandReceipt<'_>>,
+        kind: RevisionKind,
+    ) -> Result<Group, Error> {
         validate_name_update(&patch.name)?;
         self.require_group(id)?;
         let basis = self.at_heads(heads)?;
@@ -142,18 +228,58 @@ impl Document {
         }
         let node = groups::read_group(&basis.doc, &address)?;
         let object = objects::generation_object(&basis.doc, &address)?;
-        let name = changed_name(&patch.name, &node.name);
-        let description = changed_optional(
+        let name = confirmed_name(&patch.name, &node.name, kind);
+        let description = confirmed_optional(
             &patch.description,
             optional_text(&basis.doc, &object, "description")?,
+            kind,
         );
         let icon = match &patch.icon {
             FieldUpdate::Keep => None,
-            FieldUpdate::Set(icon) if icon != &node.icon => Some(icon.clone()),
-            FieldUpdate::Clear if node.icon != IconRef::Default => Some(IconRef::Default),
+            FieldUpdate::Set(icon) if icon != &node.icon || kind == RevisionKind::Restore => {
+                Some(icon.clone())
+            }
+            FieldUpdate::Clear
+                if node.icon != IconRef::Default || kind == RevisionKind::Restore =>
+            {
+                Some(IconRef::Default)
+            }
             FieldUpdate::Set(_) | FieldUpdate::Clear => None,
         };
-        if name.is_none() && description.is_none() && icon.is_none() && receipt.is_none() {
+        let parent = match &patch.parent {
+            FieldUpdate::Keep => None,
+            FieldUpdate::Set(parent)
+                if node.placement.parent.as_ref().map(|parent| &parent.id) != Some(parent) =>
+            {
+                Some(Some(parent.clone()))
+            }
+            FieldUpdate::Clear if node.placement.parent.is_some() => Some(None),
+            FieldUpdate::Set(_) | FieldUpdate::Clear => None,
+        };
+        let placement = parent
+            .map(|parent| {
+                let destination = self.reviewed_group_destination(&basis, &address, parent)?;
+                let operation = receipt
+                    .map(|receipt| receipt.operation.clone())
+                    .unwrap_or_else(|| OperationId::new(id.as_str()));
+                let order = basis.position(
+                    destination.as_ref(),
+                    &SiblingPosition::Last,
+                    Some(&address.object),
+                    &operation,
+                )?;
+                Ok::<_, Error>(GroupPlacement {
+                    parent: destination,
+                    order,
+                })
+            })
+            .transpose()?;
+        if name.is_none()
+            && description.is_none()
+            && icon.is_none()
+            && placement.is_none()
+            && receipt.is_none()
+        {
             return groups::selected_group(&node);
         }
         let hashes = lifecycle::parse_heads(&self.doc, heads)?;
@@ -172,8 +298,11 @@ impl Document {
             tx.put(&object, "icon", encode(icon)?)?;
             tx.put(&object, "icon_modified_at", now)?;
         }
-        if name.is_some() || description.is_some() || icon.is_some() {
-            history::record_group_revision(&mut tx, &address, RevisionKind::Save, now, heads)?;
+        if let Some(placement) = &placement {
+            groups::put_placement(&mut tx, &object, placement, now)?;
+        }
+        if name.is_some() || description.is_some() || icon.is_some() || placement.is_some() {
+            history::record_group_revision(&mut tx, &address, kind, now, heads)?;
             objects::record_event(&mut tx, &address, None)?;
         }
         let group = groups::selected_group(&groups::read_group(&tx, &address)?)?;
@@ -197,6 +326,35 @@ fn changed_name(update: &FieldUpdate<String>, original: &str) -> Option<String> 
     match update {
         FieldUpdate::Set(name) if name != original => Some(name.clone()),
         FieldUpdate::Keep | FieldUpdate::Clear | FieldUpdate::Set(_) => None,
+    }
+}
+fn confirmed_name(
+    update: &FieldUpdate<String>,
+    original: &str,
+    kind: RevisionKind,
+) -> Option<String> {
+    if kind == RevisionKind::Restore {
+        match update {
+            FieldUpdate::Set(value) => Some(value.clone()),
+            FieldUpdate::Keep | FieldUpdate::Clear => None,
+        }
+    } else {
+        changed_name(update, original)
+    }
+}
+fn confirmed_optional(
+    update: &FieldUpdate<String>,
+    original: Option<String>,
+    kind: RevisionKind,
+) -> Option<Option<String>> {
+    if kind == RevisionKind::Restore {
+        match update {
+            FieldUpdate::Set(value) => Some(Some(value.clone())),
+            FieldUpdate::Clear => Some(None),
+            FieldUpdate::Keep => None,
+        }
+    } else {
+        changed_optional(update, original)
     }
 }
 fn optional_patch(original: Option<String>, supplied: Option<String>) -> FieldUpdate<String> {
@@ -236,6 +394,9 @@ pub(super) fn optional_text(
         codec::decode(&value)
     }
 }
+
+#[cfg(test)]
+mod parent_tests;
 
 #[cfg(test)]
 mod tests {

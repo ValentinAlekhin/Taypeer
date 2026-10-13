@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="metadata_saved_version">Saved version</string>
+    <string name="metadata_group_snapshot">Group metadata</string>
+    <string name="metadata_database_snapshot">Database metadata</string>
+    <string name="metadata_restore_warning">Restore the selected metadata as one new version of the same object. Other contents and settings stay unchanged.</string>
+    <string name="metadata_retry_retained">The result is unconfirmed. Retry the same version and destination.</string>
+    <string name="metadata_frozen_destination">The confirmed destination is retained for this retry.</string>
+    <string name="metadata_retry_restore">Retry metadata restoration…</string>
+</resources>

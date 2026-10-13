@@ -95,6 +95,7 @@ impl ArchiveStore {
             snapshot,
             anchor,
             uncertain: false,
+            last_commit: None,
         })
     }
     /// Commit against an exact prior fingerprint. All callers, including receive,
@@ -105,6 +106,9 @@ impl ArchiveStore {
         candidate: &ArchiveCandidate,
         metadata: ArchiveMetadata,
     ) -> Result<(), Error> {
+        if self.confirm_commit(expected, &metadata)? {
+            return Ok(());
+        }
         if self.uncertain {
             return Err(Error::CommitUncertain);
         }
@@ -134,13 +138,18 @@ impl ArchiveStore {
             })?;
         }
         self.check_unchanged()?;
+        let retained = snapshot
+            .clone()
+            .with_temporary_storage(self.snapshot.temporary_storage());
         if let Err(error) = file::persist(temp, &self.path, false) {
             if error == Error::CommitUncertain {
                 self.uncertain = true;
+                self.last_commit = Some((expected, retained));
             }
             return Err(error);
         }
         self.snapshot = snapshot.with_temporary_storage(self.snapshot.temporary_storage());
+        self.last_commit = Some((expected, retained));
         let finish = (|| {
             if let Some(anchor) = &self.anchor {
                 anchor.save(&Anchor {
@@ -155,6 +164,60 @@ impl ArchiveStore {
             return Err(Error::CommitUncertain);
         }
         Ok(())
+    }
+
+    /// Confirm only this writer's retained exact encrypted commit, including a lost reply.
+    /// Matching metadata still requires fresh file/directory sync and protected-anchor ACK.
+    /// `false` means there is no matching retained candidate; it never adopts an arbitrary file.
+    /// A different visible generation/anchor refuses, leaving uncertainty unchanged.
+    pub fn confirm_commit(
+        &mut self,
+        expected: Digest,
+        metadata: &ArchiveMetadata,
+    ) -> Result<bool, Error> {
+        let Some((previous, candidate)) = &self.last_commit else {
+            return Ok(false);
+        };
+        if *previous != expected || candidate.metadata() != metadata {
+            return Ok(false);
+        }
+        let fingerprint = candidate.fingerprint();
+        let mut input = File::open(&self.path)?;
+        if Digest::from_bytes(file::fingerprint(&mut input)?) != fingerprint {
+            return Err(Error::Changed);
+        }
+        if let Some(store) = &self.anchor {
+            let anchor = store.load()?.ok_or(Error::Changed)?;
+            let prepared =
+                anchor.accepted == Some(expected) && anchor.prepared == Some(fingerprint);
+            let acknowledged = anchor.accepted == Some(fingerprint) && anchor.prepared.is_none();
+            if !prepared && !acknowledged {
+                return Err(Error::Changed);
+            }
+        }
+        input.sync_all().map_err(|_| Error::CommitUncertain)?;
+        File::open(file::parent(&self.path)?)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|_| Error::CommitUncertain)?;
+        if Digest::from_bytes(file::fingerprint(&mut input)?) != fingerprint
+            || Digest::from_bytes(file::fingerprint(&mut File::open(&self.path)?)?) != fingerprint
+        {
+            return Err(Error::Changed);
+        }
+        if let Some(store) = &self.anchor {
+            store
+                .save(&Anchor {
+                    accepted: Some(fingerprint),
+                    prepared: None,
+                })
+                .map_err(|_| Error::CommitUncertain)?;
+        }
+        if Digest::from_bytes(file::fingerprint(&mut File::open(&self.path)?)?) != fingerprint {
+            return Err(Error::Changed);
+        }
+        self.snapshot = candidate.clone();
+        self.uncertain = false;
+        Ok(true)
     }
     fn check_unchanged(&self) -> Result<(), Error> {
         if Digest::from_bytes(file::fingerprint(&mut File::open(&self.path)?)?)

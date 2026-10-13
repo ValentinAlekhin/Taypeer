@@ -1,13 +1,15 @@
 <resources>
+    <string name="unconfirmed_operation">The result has not been confirmed. Retry the same operation to check its result.</string>
+    <string name="retry_restore_version">Retry restoring the saved version</string>
     <string name="app_name">Taypeer</string>
     <string name="runtime_stage">Independent password and passphrase generation.</string>
     <string name="generator">Password generator</string>
     <string name="length">Length</string>
     <string name="generate">Generate</string>
-    <string name="operation_failed">The operation failed. Check the parameters and try again.</string>
+    <string name="operation_failed">Could not confirm the result. Check the data and try again.</string>
     <string name="hide">Hide</string>
     <string name="reveal">Reveal</string>
-    <string name="copy">Copy for 30 seconds</string>
+    <string name="copy">Copy</string>
     <string name="passphrase">Passphrase</string>
     <string name="words">Words</string>
     <string name="separator">Separator</string>
@@ -49,7 +51,7 @@
     <string name="lock">Lock</string>
     <string name="sync">Synchronize</string>
     <string name="retry">Retry</string>
-    <string name="details">Details</string>
+    <string name="details">Overview</string>
     <string name="additional">Additional</string>
     <string name="history">History</string>
     <string name="save_clean">No unsaved changes</string>
@@ -72,7 +74,7 @@
     <string name="password_retained">Current password retained</string>
     <string name="clear">Clear</string>
     <string name="clear_description">Clear description</string>
-    <string name="expiry">Expiration (UTC milliseconds)</string>
+    <string name="expiry">Expires</string>
     <string name="attribute">Attribute</string>
     <string name="add_attribute">Add attribute…</string>
     <string name="protected_value">Protected value</string>
@@ -113,7 +115,7 @@
     <string name="appearance">Appearance</string>
     <string name="properties">Properties</string>
     <string name="attributes">Attributes</string>
-    <string name="tags">Tags (one per line)</string>
+    <string name="tags">Tags</string>
     <string name="foreground_color">Text and icon color</string>
     <string name="background_color">Background color</string>
     <string name="icon">Icon</string>
@@ -124,8 +126,8 @@
     <string name="modified_at">Modified</string>
     <string name="no_saved_properties">Properties appear after the entry is saved.</string>
     <string name="no_saved_versions">No saved versions</string>
-    <string name="restore_version">Restore as a new entry…</string>
-    <string name="restore_version_warning">Create a separate entry from this original version, including its protected values?</string>
+    <string name="restore_version">Restore the saved version…</string>
+    <string name="restore_version_warning">Make this saved version the current version in the selected group, including its protected values? Existing history is retained.</string>
     <string name="object_id">ID</string>
     <string name="use_password">Use this password</string>
     <string name="attachments">Attachments</string>

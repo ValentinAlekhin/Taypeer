@@ -1,5 +1,6 @@
 //! Session-checked binary editing, explicit export and quota/retention reporting.
 
+use super::editing::{CapturedDraft, IconReceiptIntent};
 use super::*;
 use std::{
     fs::File,
@@ -11,6 +12,9 @@ use taypeer_core::{
 };
 use taypeer_document::SourcePreview;
 
+mod icon_import;
+pub(super) use icon_import::PendingIconPublication;
+mod group_favicons;
 mod types;
 pub use types::*;
 
@@ -106,9 +110,12 @@ impl DatabaseService {
         blob: &BlobId,
         output: &mut impl Write,
     ) -> Result<SessionValue<()>, ServiceError> {
-        self.binary_export_length(session, target, blob)?;
-        std::io::copy(&mut self.checked(session)?.blobs()?.reader(blob)?, output)
-            .map_err(StorageError::from)?;
+        // The caller may have acquired a selected output since its preflight.
+        // Check current authority again, then reuse that immutable state only
+        // for this export's visibility, length and authenticated reader.
+        let state = self.checked(session)?;
+        binary_export_length_from_checked_state(state, target, blob)?;
+        std::io::copy(&mut state.blobs()?.reader(blob)?, output).map_err(StorageError::from)?;
         Ok(stamped(session, ()))
     }
 
@@ -120,12 +127,8 @@ impl DatabaseService {
         target: &BinaryTarget,
         blob: &BlobId,
     ) -> Result<SessionValue<u64>, ServiceError> {
-        self.require_visible_blob(session, target, blob)?;
-        let length = self
-            .checked(session)?
-            .blobs()?
-            .length(blob)
-            .ok_or(StorageError::MissingBlob)?;
+        let state = self.checked(session)?;
+        let length = binary_export_length_from_checked_state(state, target, blob)?;
         Ok(stamped(session, length))
     }
 
@@ -135,17 +138,7 @@ impl DatabaseService {
         target: &BinaryTarget,
         blob: &BlobId,
     ) -> Result<(), ServiceError> {
-        let view = self.binary_view(session, target)?.value;
-        let allowed = view
-            .attachments
-            .iter()
-            .flat_map(|a| &a.contents)
-            .any(|b| &b.id == blob)
-            || view.icons.iter().any(|icon| icon.blob() == Some(blob));
-        if !allowed {
-            return Err(ServiceError::NotFound);
-        }
-        Ok(())
+        require_visible_blob_from_checked_state(self.checked(session)?, target, blob)
     }
 
     /// Read one unique local icon through its checked visibility scope. No network or plaintext file.
@@ -274,7 +267,45 @@ impl DatabaseService {
         target: &BinaryTarget,
     ) -> Result<SessionValue<BinaryView>, ServiceError> {
         let state = self.checked(session)?;
+        Ok(stamped(
+            session,
+            Self::binary_view_from_checked_state(state, target)?,
+        ))
+    }
+
+    fn binary_view_from_checked_state(
+        state: &DatabaseState,
+        target: &BinaryTarget,
+    ) -> Result<BinaryView, ServiceError> {
         let preview = match target {
+            BinaryTarget::FormFavicon { draft, identity } => {
+                let icon = state
+                    .drafts
+                    .stored_favicon_icon(draft)?
+                    .filter(|icon| icon.blob() == Some(identity))
+                    .ok_or(ServiceError::NotFound)?;
+                return Ok(BinaryView {
+                    attachments: Vec::new(),
+                    icons: vec![icon],
+                    foreground: Vec::new(),
+                    background: Vec::new(),
+                });
+            }
+            BinaryTarget::Form(id) => {
+                let draft = state.drafts.captured(id)?;
+                let view = match draft {
+                    CapturedDraft::Entry(draft) => {
+                        form_view(draft.document()?.fields(), state.blobs()?)
+                    }
+                    CapturedDraft::Metadata(draft) => BinaryView {
+                        attachments: Vec::new(),
+                        icons: vec![draft.icon()?],
+                        foreground: Vec::new(),
+                        background: Vec::new(),
+                    },
+                };
+                return Ok(view);
+            }
             BinaryTarget::Draft => {
                 let draft = state
                     .drafts
@@ -282,7 +313,7 @@ impl DatabaseService {
                     .as_ref()
                     .ok_or(ServiceError::NoDraft)?
                     .document()?;
-                return Ok(stamped(session, form_view(draft.fields(), state.blobs()?)));
+                return Ok(form_view(draft.fields(), state.blobs()?));
             }
             BinaryTarget::Entry(id) => {
                 let snapshot = state.document().entry(id)?;
@@ -290,7 +321,7 @@ impl DatabaseService {
                     .fields
                     .as_ref()
                     .ok_or(ServiceError::InvalidDocument)?;
-                return Ok(stamped(session, form_view(fields, state.blobs()?)));
+                return Ok(form_view(fields, state.blobs()?));
             }
             BinaryTarget::Group(id) => {
                 state
@@ -305,15 +336,21 @@ impl DatabaseService {
                     .into_iter()
                     .find(|g| g.current && g.address.object == ObjectId::Group(id.clone()))
                     .ok_or(ServiceError::NotFound)?;
-                return Ok(stamped(
-                    session,
-                    BinaryView {
-                        attachments: Vec::new(),
-                        icons: vec![group.icon],
-                        foreground: Vec::new(),
-                        background: Vec::new(),
-                    },
-                ));
+                return Ok(BinaryView {
+                    attachments: Vec::new(),
+                    icons: vec![group.icon],
+                    foreground: Vec::new(),
+                    background: Vec::new(),
+                });
+            }
+            BinaryTarget::GroupRevision { group, revision } => {
+                let saved = state.document().group_revision(group, revision)?;
+                return Ok(BinaryView {
+                    attachments: Vec::new(),
+                    icons: vec![saved.snapshot.group.icon],
+                    foreground: Vec::new(),
+                    background: Vec::new(),
+                });
             }
             BinaryTarget::Revision { entry, revision } => SourcePreview::Entry(Box::new(
                 state
@@ -337,7 +374,7 @@ impl DatabaseService {
             },
             SourcePreview::Entry(snapshot) => snapshot_view(&snapshot, state.blobs()?),
         };
-        Ok(stamped(session, view))
+        Ok(view)
     }
 
     /// Stage or confirm an explicit binary action. Failed acquisition leaves previous values intact.
@@ -353,7 +390,7 @@ impl DatabaseService {
         let intent = serde_json::to_value(request).map_err(|_| ServiceError::InvalidInput)?;
         let now = (self.clock)();
         let state = self.checked_mut(session)?;
-        if !matches!(request.target, BinaryTarget::Draft)
+        if !matches!(request.target, BinaryTarget::Draft | BinaryTarget::Form(_))
             && state
                 .document()
                 .binary_receipt(operation, &intent)?
@@ -363,6 +400,46 @@ impl DatabaseService {
         }
         let mut blobs = state.blobs()?.clone();
         match &request.target {
+            BinaryTarget::Form(id) => {
+                if request.review.is_some() {
+                    return Err(ServiceError::InvalidInput);
+                }
+                let mut draft = state.drafts.captured(id)?;
+                if draft.binary_receipt(operation, &intent)? {
+                    return Ok(stamped(session, ()));
+                }
+                require_active_form(&state.drafts, id)?;
+                match &mut draft {
+                    CapturedDraft::Entry(draft) => {
+                        apply_edit(
+                            draft.document_mut()?,
+                            &mut blobs,
+                            &request.edit,
+                            state.policy(),
+                        )?;
+                        check_quota(
+                            state.document(),
+                            draft.document()?.fields(),
+                            &blobs,
+                            &request.edit,
+                            state.policy(),
+                        )?;
+                        draft.record_binary(operation.clone(), intent)?;
+                    }
+                    CapturedDraft::Metadata(draft) => {
+                        let BinaryEdit::Icon(input) = &request.edit else {
+                            return Err(ServiceError::InvalidInput);
+                        };
+                        let icon = acquire_icon(&mut blobs, input, None)?;
+                        draft.stage_icon(icon, operation.clone(), intent)?;
+                    }
+                }
+                let mut collection = state.drafts.clone();
+                collection.replace_binary_form(draft)?;
+                state.persist_draft_collection(&collection, &blobs)?;
+                state.blobs = Some(blobs);
+                state.drafts = collection;
+            }
             BinaryTarget::Group(group) => {
                 let BinaryEdit::Icon(input) = &request.edit else {
                     return Err(ServiceError::InvalidInput);
@@ -490,7 +567,7 @@ impl DatabaseService {
         } else {
             refs.retained.clone()
         };
-        let file_bytes = physical_usage(state.path())?;
+        let file_bytes = physical_usage(state)?;
         Ok(stamped(
             session,
             StorageUsage {
@@ -531,6 +608,17 @@ impl DatabaseService {
             self.collect_received(session)?;
         }
         self.storage_usage(session)
+    }
+}
+
+fn require_active_form(
+    collection: &DraftCollection,
+    id: &taypeer_core::DraftId,
+) -> Result<(), ServiceError> {
+    if collection.active_binary_form(id) {
+        Ok(())
+    } else {
+        Err(ServiceError::InvalidContext)
     }
 }
 
@@ -681,6 +769,37 @@ fn check_attachment_quota(
     Ok(())
 }
 
+/// These borrows belong to one checked query, never to a retained capability.
+fn binary_export_length_from_checked_state(
+    state: &DatabaseState,
+    target: &BinaryTarget,
+    blob: &BlobId,
+) -> Result<u64, ServiceError> {
+    require_visible_blob_from_checked_state(state, target, blob)?;
+    state
+        .blobs()?
+        .length(blob)
+        .ok_or_else(|| StorageError::MissingBlob.into())
+}
+
+fn require_visible_blob_from_checked_state(
+    state: &DatabaseState,
+    target: &BinaryTarget,
+    blob: &BlobId,
+) -> Result<(), ServiceError> {
+    let view = DatabaseService::binary_view_from_checked_state(state, target)?;
+    let allowed = view
+        .attachments
+        .iter()
+        .flat_map(|attachment| &attachment.contents)
+        .any(|content| &content.id == blob)
+        || view.icons.iter().any(|icon| icon.blob() == Some(blob));
+    if !allowed {
+        return Err(ServiceError::NotFound);
+    }
+    Ok(())
+}
+
 fn form_view(fields: &EntryFields, blobs: &BlobStore) -> BinaryView {
     BinaryView {
         attachments: fields
@@ -756,8 +875,13 @@ fn snapshot_view(snapshot: &taypeer_core::EntrySnapshot, blobs: &BlobStore) -> B
     result
 }
 
-fn physical_usage(path: Option<&Path>) -> Result<u64, ServiceError> {
-    match path {
+fn physical_usage(state: &DatabaseState) -> Result<u64, ServiceError> {
+    if let Some(managed) = &state.managed {
+        // A descriptor-only worker has no host filesystem path. The fresh
+        // ciphertext snapshot reports the actual registered working file.
+        return Ok(managed.port.snapshot()?.length());
+    }
+    match state.path() {
         Some(path) => Ok(std::fs::metadata(path).map_err(StorageError::from)?.len()),
         None => Ok(0),
     }

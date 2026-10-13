@@ -1,0 +1,51 @@
+{
+  "fixture": "seventy-image-entries.taypeer",
+  "scenario": "PUBLIC Android image list: actual group/entry image import and 69 Native clones",
+  "sha256": "a965939a4ad83a973e93655d5b9ab435fd50c37c1acf08bfa6a4073985a3ea6d",
+  "bytes": 4567715,
+  "public_master_password": "PUBLIC image list master",
+  "source": {
+    "run": "parent-access-eager70-api36-16k",
+    "apk_sha256": "9ed0801dd9b6d34359617530c039cdd334e3a44a014f323c83969472e65bb07b",
+    "test": "dev.taypeer.ImageIconUiTest#eagerListLoadsOnlyVisibleNativeImagesAndRestoresThemWhenScrollingBack",
+    "reference": "generator-reference.kt.txt",
+    "capture": "artifacts/android/parent-access-eager70-captured-public/candidate-public-seventy-icons.taypeer"
+  },
+  "format": {
+    "container": 1,
+    "archive": 5,
+    "document": 7,
+    "control": 2,
+    "manifest": 1,
+    "envelope": 1,
+    "automerge": "0.7.4"
+  },
+  "identity": {
+    "database": "6543981fe6cb342893ec96b70ff9fab2",
+    "root": "0bed31b49d344f158e68ecf077a74452f47d3abba30164eff6c087f11a477353"
+  },
+  "expected": {
+    "groups": 1,
+    "active_entries": 70,
+    "unique_entry_ids": 70,
+    "entry_names": "PUBLIC image 000 through PUBLIC image 069",
+    "history_revisions_per_entry": 1,
+    "entry_image_source": "File",
+    "unique_entry_image_blobs": 1,
+    "group_image_source": "File",
+    "original_svg_dimensions": [32, 16],
+    "original_svg_fill": "#14dc28",
+    "entry_passwords": 0,
+    "entry_attributes": 0,
+    "entry_attachments": 0,
+    "entry_conflicts": 0,
+    "drafts": 0
+  },
+  "verification": {
+    "test": "captured_public_eager_fixture_is_authenticated_and_has_seventy_real_image_entries",
+    "result": "PASS before promotion",
+    "read_only": true,
+    "writer_calls": 0,
+    "ciphertext_unchanged_after_lock": true
+  }
+}

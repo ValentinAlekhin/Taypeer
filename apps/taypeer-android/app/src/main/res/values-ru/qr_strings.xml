@@ -1,0 +1,13 @@
+<resources>
+    <string name="scan_qr">Сканировать QR…</string>
+    <string name="scan_qr_title">Сканировать приглашение</string>
+    <string name="scan_qr_hint">Наведите камеру на QR-код приглашения.</string>
+    <string name="camera_permission_message">Для сканирования QR нужен доступ к камере. Вы также можете ввести код.</string>
+    <string name="allow_camera">Разрешить камеру</string>
+    <string name="camera_unavailable">Камера недоступна. Введите код приглашения, чтобы продолжить.</string>
+    <string name="enter_invitation_code">Ввести код…</string>
+    <string name="connect_database">Подключиться</string>
+    <string name="receive_invitation_hint">Управляющее устройство подтвердит подключение. База сохранится во внутреннем хранилище.</string>
+    <string name="invitation_qr_description">QR-код приглашения</string>
+    <string name="invitation_qr_unavailable">Приглашение не помещается в QR-код. Скопируйте код.</string>
+</resources>

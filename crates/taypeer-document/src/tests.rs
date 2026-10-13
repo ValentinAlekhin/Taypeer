@@ -910,3 +910,4 @@ fn addressed_noop_edits_preserve_heads_and_history_even_with_unrelated_conflicts
 }
 
 mod corpus;
+mod projection_queries;

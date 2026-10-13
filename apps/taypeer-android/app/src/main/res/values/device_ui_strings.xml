@@ -1,0 +1,20 @@
+<resources>
+    <string name="device_name">Device name</string>
+    <string name="device_name_required">Enter a device name.</string>
+    <string name="device_name_too_long">The device name must fit within 256 UTF-8 bytes.</string>
+    <string name="device_name_io">The device name could not be saved. Retry this value.</string>
+    <string name="device_name_profile_invalid">Device settings could not be read. The name has not been confirmed.</string>
+    <string name="device_name_profile_busy">Device settings are busy. Retry this value.</string>
+    <string name="device_name_unconfirmed">The name change is unconfirmed. Retry this value.</string>
+    <string name="device_name_failed">The device name could not be confirmed. Retry this value.</string>
+    <string name="auto_lock">Auto-lock</string>
+    <string name="clipboard_clear">Clear clipboard</string>
+    <string name="settings_loading">Loading…</string>
+    <string name="do_not_clear">Do not clear</string>
+    <string name="custom_duration">Custom duration…</string>
+    <string name="duration_seconds">Duration, seconds</string>
+    <string name="duration_number_required">Enter a whole number of seconds.</string>
+    <string name="device_settings_unconfirmed">The change could not be confirmed. Check the current value before trying again.</string>
+    <plurals name="after_seconds"><item quantity="one">After %1$s second</item><item quantity="other">After %1$s seconds</item></plurals>
+    <plurals name="after_minutes"><item quantity="one">After %1$s minute</item><item quantity="other">After %1$s minutes</item></plurals>
+</resources>

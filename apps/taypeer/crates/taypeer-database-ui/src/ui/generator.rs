@@ -13,6 +13,7 @@ use gpui_kit::{
     prelude::FluentBuilder,
     *,
 };
+use taypeer_services::generator::GeneratedQuality;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum GeneratorMode {
@@ -22,21 +23,28 @@ enum GeneratorMode {
 enum GeneratedOutput {
     Secret(taypeer_services::generator::GeneratedSecret),
     #[cfg(feature = "component-rendering")]
-    PublicFixture(&'static str, f64),
+    PublicFixture(&'static str, f64, GeneratedQuality),
 }
 impl GeneratedOutput {
     fn value(&self) -> &str {
         match self {
             Self::Secret(value) => value.expose(),
             #[cfg(feature = "component-rendering")]
-            Self::PublicFixture(value, _) => value,
+            Self::PublicFixture(value, _, _) => value,
         }
     }
     fn entropy(&self) -> f64 {
         match self {
             Self::Secret(value) => value.entropy_bits(),
             #[cfg(feature = "component-rendering")]
-            Self::PublicFixture(_, entropy) => *entropy,
+            Self::PublicFixture(_, entropy, _) => *entropy,
+        }
+    }
+    fn quality(&self) -> GeneratedQuality {
+        match self {
+            Self::Secret(value) => value.quality(),
+            #[cfg(feature = "component-rendering")]
+            Self::PublicFixture(_, _, quality) => *quality,
         }
     }
 }
@@ -249,19 +257,14 @@ impl Render for GeneratorView {
             .generated
             .as_ref()
             .map_or(0, |value| value.value().chars().count());
-        let quality = if entropy >= 60. {
-            "ui.quality_high"
-        } else if entropy >= 40. {
-            "ui.quality_medium"
-        } else {
-            "ui.quality_low"
-        };
-        let color = if entropy >= 60. {
-            cx.theme().success
-        } else if entropy >= 40. {
-            cx.theme().warning
-        } else {
-            cx.theme().danger
+        let (quality, color) = match self
+            .generated
+            .as_ref()
+            .map_or(GeneratedQuality::Low, GeneratedOutput::quality)
+        {
+            GeneratedQuality::High => ("ui.quality_high", cx.theme().success),
+            GeneratedQuality::Medium => ("ui.quality_medium", cx.theme().warning),
+            GeneratedQuality::Low => ("ui.quality_low", cx.theme().danger),
         };
         let count = tr("ui.character_count").replace("%{count}", &characters.to_string());
         let bits = tr("ui.entropy_bits").replace(
@@ -627,12 +630,15 @@ pub fn generator_preview(case: GeneratorPreviewCase, window: &mut Window, cx: &m
             GeneratorPreviewCase::Passphrase => GeneratorMode::Passphrase,
         };
         view.generated = Some(match case {
-            GeneratorPreviewCase::Password => {
-                GeneratedOutput::PublicFixture("mT7!qR4#vN9@kL2$wH6%pD8&xC3?zB", 196.63766555032913)
-            }
+            GeneratorPreviewCase::Password => GeneratedOutput::PublicFixture(
+                "mT7!qR4#vN9@kL2$wH6%pD8&xC3?zB",
+                196.63766555032913,
+                GeneratedQuality::High,
+            ),
             GeneratorPreviewCase::Passphrase => GeneratedOutput::PublicFixture(
                 "river-candle-paper-meadow-copper-sunset",
                 77.54887502163469,
+                GeneratedQuality::High,
             ),
         });
         view

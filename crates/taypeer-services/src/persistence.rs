@@ -197,11 +197,15 @@ impl DatabaseState {
         })
     }
     pub(super) fn stash_and_close(&mut self) -> Result<(), ServiceError> {
-        stash_draft(self);
+        if self.pending_icon.is_none() {
+            stash_draft(self);
+        }
         if self.file.is_none() && self.managed.is_none() {
             return Ok(());
         }
-        let result = if self.draft_deferred {
+        let result = if let Some(pending) = &self.pending_icon {
+            pending.stash(self)
+        } else if self.draft_deferred {
             Ok(())
         } else {
             self.blobs()
@@ -213,6 +217,7 @@ impl DatabaseState {
         self.document = None;
         self.blobs = None;
         self.key = None;
+        self.pending_icon = None;
         self.drafts = DraftCollection::new(self.drafts.database_id().clone());
         result
     }
@@ -309,6 +314,7 @@ impl DatabaseService {
                 draft_deferred,
                 draft_maintenance_pending: false,
                 write_uncertain: false,
+                pending_icon: None,
             },
         );
         Ok(SessionToken {

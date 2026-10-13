@@ -4,7 +4,10 @@ use std::{
     io::{Read, Write},
     path::{Path, PathBuf},
 };
-use taypeer_runtime::{RuntimeError, profile::ProfileError};
+use taypeer_runtime::{
+    RuntimeError,
+    profile::{ProfileError, device_name::LocalDeviceName},
+};
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -13,7 +16,7 @@ use taypeer_runtime::{RuntimeError, profile::ProfileError};
 pub struct LocalSettings {
     /// Relay policy used when starting the network host.
     pub relay: RelayPreference,
-    /// User-visible name announced for this device.
+    /// Device-local display label; never announced in open transport messages.
     pub device_name: String,
     /// Timeout for owned clipboard writes; None disables timed clearing.
     pub clipboard_seconds: Option<u32>,
@@ -34,7 +37,7 @@ impl Default for LocalSettings {
     fn default() -> Self {
         Self {
             relay: RelayPreference::Public,
-            device_name: "Taypeer".into(),
+            device_name: LocalDeviceName::default().into_string(),
             clipboard_seconds: Some(30),
             recent: Vec::new(),
         }
@@ -63,11 +66,8 @@ impl LocalSettings {
     }
     fn validate(&self) -> Result<(), RuntimeError> {
         self.relay.setting()?;
-        if self.device_name.trim().is_empty()
-            || self.device_name.len() > 256
-            || self.clipboard_seconds.is_some_and(|v| v == 0)
-            || self.recent.len() > 20
-        {
+        LocalDeviceName::validate(&self.device_name).map_err(|_| ProfileError::Invalid)?;
+        if self.clipboard_seconds.is_some_and(|v| v == 0) || self.recent.len() > 20 {
             return Err(ProfileError::Invalid.into());
         }
         Ok(())
@@ -193,5 +193,29 @@ mod tests {
         assert!(LocalSettings::load(directory.path()).is_err());
         assert!(LocalSettings::default().save(directory.path()).is_err());
         assert_eq!(std::fs::read(path).unwrap(), future);
+    }
+    #[test]
+    fn shared_local_name_rule_rejects_invalid_values_without_replacing_legacy_settings() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("device-ui.json");
+        let confirmed = LocalSettings {
+            device_name: " PUBLIC confirmed Mac ".into(),
+            ..LocalSettings::default()
+        };
+        confirmed.save(directory.path()).unwrap();
+        let before = std::fs::read(&path).unwrap();
+        for invalid in [String::new(), " \t ".into(), "П".repeat(129)] {
+            let mut candidate = confirmed.clone();
+            candidate.device_name = invalid;
+            assert!(matches!(
+                candidate.save(directory.path()),
+                Err(RuntimeError::Profile(ProfileError::Invalid))
+            ));
+            assert_eq!(std::fs::read(&path).unwrap(), before);
+        }
+        assert_eq!(
+            LocalSettings::load(directory.path()).unwrap().device_name,
+            confirmed.device_name
+        );
     }
 }

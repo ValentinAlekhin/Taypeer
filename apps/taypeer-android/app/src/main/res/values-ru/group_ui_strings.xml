@@ -1,0 +1,5 @@
+<resources>
+    <string name="group_parent">Родитель</string>
+    <string name="group_parent_root">Верхний уровень</string>
+    <string name="group_parent_unavailable">Недоступная группа</string>
+</resources>

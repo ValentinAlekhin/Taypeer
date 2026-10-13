@@ -1,0 +1,15 @@
+<resources>
+    <string name="bulk_favicon_title">Download icons</string>
+    <string name="bulk_favicon_group">Group: %1$s</string>
+    <string name="bulk_favicon_recursive">Include subgroups</string>
+    <string name="bulk_favicon_replace">Replace existing icons</string>
+    <string name="bulk_favicon_help">By default, only entries directly in this group without custom icons. Requests start after Download.</string>
+    <string name="bulk_favicon_skipped">Existing icon kept</string>
+    <string name="bulk_favicon_missing_url">No URL</string>
+    <string name="bulk_favicon_ready">Waiting</string>
+    <string name="bulk_favicon_running">Downloading or saving…</string>
+    <string name="bulk_favicon_applied">Icon saved</string>
+    <string name="bulk_favicon_failed">Could not save this icon</string>
+    <string name="bulk_favicon_unconfirmed">This operation is unconfirmed. Retry the same request.</string>
+    <string name="bulk_favicon_cancelled">Cancelled</string>
+</resources>

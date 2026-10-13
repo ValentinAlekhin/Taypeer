@@ -1,0 +1,15 @@
+<resources>
+    <string name="bulk_favicon_title">Загрузить значки</string>
+    <string name="bulk_favicon_group">Группа: %1$s</string>
+    <string name="bulk_favicon_recursive">Включая подгруппы</string>
+    <string name="bulk_favicon_replace">Заменять существующие</string>
+    <string name="bulk_favicon_help">По умолчанию — только записи этой группы без собственных значков. Запросы начнутся после «Загрузить».</string>
+    <string name="bulk_favicon_skipped">Существующий значок сохранён</string>
+    <string name="bulk_favicon_missing_url">Нет URL</string>
+    <string name="bulk_favicon_ready">Ожидание</string>
+    <string name="bulk_favicon_running">Загрузка или сохранение…</string>
+    <string name="bulk_favicon_applied">Значок сохранён</string>
+    <string name="bulk_favicon_failed">Не удалось сохранить этот значок</string>
+    <string name="bulk_favicon_unconfirmed">Операция не подтверждена. Повторите тот же запрос.</string>
+    <string name="bulk_favicon_cancelled">Отменено</string>
+</resources>

@@ -11,6 +11,8 @@ import android.os.ParcelFileDescriptor
 import dev.taypeer.bridge.AndroidException
 import dev.taypeer.bridge.CipherWriter
 import dev.taypeer.bridge.DocumentProcess
+import dev.taypeer.bridge.BiometricInputSpec
+import dev.taypeer.bridge.BiometryFailure
 import dev.taypeer.bridge.SelectedTransfersHost
 import java.io.File
 import java.util.UUID
@@ -48,6 +50,13 @@ class BoundDocumentProcess(
         private set
     @Volatile internal var binder: IBinder? = null
         private set
+    @Volatile internal var persistenceCapability: CipherPersistenceEndpoint? = null
+        private set
+    @Volatile internal var transfersCapability: SelectedTransfersEndpoint? = null
+        private set
+    /** Test barrier after real Binder cleanup; it never supplies exit evidence or a reply. */
+    @Volatile internal var afterControlStop: (() -> Unit)? = null
+    private var selectedHost: SelectedTransfersHost? = null
 
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName, service: IBinder) {
@@ -65,9 +74,21 @@ class BoundDocumentProcess(
     }
 
     override fun start(writer: CipherWriter, selected: SelectedTransfersHost) {
-        synchronized(lifecycle) {
-            if (Looper.myLooper() == Looper.getMainLooper() || disposed.get() || dead.get() || !started.compareAndSet(false, true)) throw AndroidException.Runtime()
-            starting = true
+        val persistence = CipherPersistenceEndpoint(writer, files, allocate)
+        val transfers = SelectedTransfersEndpoint(selected)
+        val accepted = synchronized(lifecycle) {
+            if (Looper.myLooper() == Looper.getMainLooper() || disposed.get() || dead.get() || !started.compareAndSet(false, true)) false
+            else {
+                starting = true
+                persistenceCapability = persistence
+                transfersCapability = transfers
+                selectedHost = selected
+                true
+            }
+        }
+        if (!accepted) {
+            try { persistence.close() } finally { selected.close() }
+            throw AndroidException.Runtime()
         }
         var commands: Array<ParcelFileDescriptor>? = null
         var responses: Array<ParcelFileDescriptor>? = null
@@ -84,10 +105,10 @@ class BoundDocumentProcess(
             if (!bound || !connected.await(10, TimeUnit.SECONDS)) throw AndroidException.Runtime()
             ensureLive()
             pid = (remote ?: throw AndroidException.Runtime()).initialize(owner, commandPipe[0], responsePipe[1],
-                CipherPersistenceEndpoint(writer, files, allocate), SelectedTransfersEndpoint(selected))
+                persistence, transfers)
             ensureLive()
         } catch (_: Exception) {
-            terminate()
+            try { releaseCapabilities() } finally { terminate() }
             throw AndroidException.Runtime()
         } finally {
             val ends = listOfNotNull(commands?.get(0), responses?.get(1),
@@ -98,6 +119,25 @@ class BoundDocumentProcess(
         }
     }
     private fun ensureLive() { if (disposed.get() || dead.get()) throw AndroidException.Runtime() }
+    override fun installBiometricInput(spec: BiometricInputSpec, fd: Int) {
+        if (Looper.myLooper() == Looper.getMainLooper()) throw AndroidException.Runtime()
+        ensureLive()
+        try {
+            val scope = BiometricInputParcel(spec)
+            // Retain a caller-owned duplicate through the synchronous isolated Native dup ACK.
+            ParcelFileDescriptor.fromFd(fd).use { held ->
+                (remote ?: throw AndroidException.Runtime()).installBiometricInput(scope, held)
+            }
+            ensureLive()
+        } catch (_: Exception) { throw AndroidException.Biometry(BiometryFailure.UNAVAILABLE) }
+    }
+    override fun revokeBiometricInput(spec: BiometricInputSpec) {
+        val scope = try { BiometricInputParcel(spec) } catch (_: Exception) { return }
+        try { control.execute {
+            try { remote?.revokeBiometricInput(scope) }
+            catch (_: Exception) { /* Native host has already terminally fenced this attempt. */ }
+        } } catch (_: java.util.concurrent.RejectedExecutionException) { /* Worker already disposed. */ }
+    }
     override fun read(count: UInt): ByteArray = (streams ?: throw AndroidException.Runtime()).read(count)
     override fun write(bytes: ByteArray): UInt = (streams ?: throw AndroidException.Runtime()).write(bytes)
     override fun exited(): Boolean = dead.get()
@@ -118,7 +158,9 @@ class BoundDocumentProcess(
             bound = false
             try { context.unbindService(connection) } catch (_: IllegalArgumentException) { /* Already unbound. */ }
         }
-        try { streams?.close() } catch (_: Exception) { /* Resource cleanup is not a durability acknowledgement. */ }
+        // Binder death can precede consumption of an already written Lock response.
+        // Keep the response FD until runtime has drained the acknowledgement.
+        afterControlStop?.invoke()
     }
     override fun close() {
         val waitForStart = synchronized(lifecycle) {
@@ -126,9 +168,31 @@ class BoundDocumentProcess(
             starting
         }
         connected.countDown() // Cancellation never waits for the asynchronous service callback.
+        // Worker close has confirmed exit, or a pending launch was cancelled. Binder
+        // references must not retain the host coordinator or native control cycle.
+        releaseCapabilities()
         if (waitForStart) control.execute { stop() } else disposeControl()
     }
-    private fun disposeControl() { control.execute { stop(); callbacks.shutdown(); control.shutdown() } }
+    private fun releaseCapabilities() {
+        val owned = synchronized(lifecycle) {
+            val owned = Pair(persistenceCapability, selectedHost)
+            persistenceCapability = null
+            transfersCapability = null
+            selectedHost = null
+            owned
+        }
+        try { owned.first?.close() } finally { owned.second?.close() }
+    }
+    private fun disposeControl() {
+        control.execute {
+            try { stop() }
+            finally {
+                try { streams?.close() } catch (_: Exception) { /* Cleanup cannot acknowledge a write. */ }
+                callbacks.shutdown()
+                control.shutdown()
+            }
+        }
+    }
 }
 
 /** Host allocation only. The worker cannot reopen an application path or invent a fallback. */

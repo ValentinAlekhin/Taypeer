@@ -4,7 +4,7 @@ use super::{
     Error,
     codec::{object, unique},
     fields::{read_field, selected_variant},
-    stored_revisions,
+    stored_revisions, visit_stored_revisions,
 };
 use automerge::ReadDoc;
 use std::collections::{BTreeMap, BTreeSet};
@@ -26,6 +26,33 @@ pub(super) fn read_entry_generation<R: ReadDoc>(
     read: &R,
     address: &super::ObjectAddress,
     pending: Option<(&BTreeSet<String>, Timestamp)>,
+) -> Result<EntrySnapshot, Error> {
+    read_entry_generation_with_times(read, address, pending, None)
+}
+
+/// A single immutable query's saved operation metadata. Full stored snapshots
+/// are decoded and validated once, then dropped instead of becoming a plaintext cache.
+pub(super) struct SavedOperationTimes {
+    entries: BTreeMap<EntryId, BTreeMap<String, Timestamp>>,
+}
+impl SavedOperationTimes {
+    pub(super) fn read(read: &impl ReadDoc) -> Result<Self, Error> {
+        let mut entries = BTreeMap::<EntryId, BTreeMap<String, Timestamp>>::new();
+        visit_stored_revisions(read, |stored| {
+            let times = entries.entry(stored.revision.entry_id).or_default();
+            for operation in stored.changed_operations {
+                times.insert(operation, stored.revision.saved_at);
+            }
+        })?;
+        Ok(Self { entries })
+    }
+}
+
+pub(super) fn read_entry_generation_with_times<R: ReadDoc>(
+    read: &R,
+    address: &super::ObjectAddress,
+    pending: Option<(&BTreeSet<String>, Timestamp)>,
+    times: Option<&SavedOperationTimes>,
 ) -> Result<EntrySnapshot, Error> {
     let super::ObjectId::Entry(id) = &address.object else {
         return Err(Error::InvalidContext);
@@ -58,7 +85,7 @@ pub(super) fn read_entry_generation<R: ReadDoc>(
         .filter(|state| state.variants.len() > 1)
         .cloned()
         .collect();
-    let modified_at = modification_time(read, id, &entry, &values, pending, created_at)?;
+    let modified_at = modification_time(read, id, &entry, &values, pending, created_at, times)?;
     let fields = project_fields(&values)?;
     fields.validate()?;
     Ok(EntrySnapshot {
@@ -131,6 +158,7 @@ fn modification_time<R: ReadDoc>(
     values: &[FieldState],
     pending: Option<(&BTreeSet<String>, Timestamp)>,
     created_at: Timestamp,
+    times: Option<&SavedOperationTimes>,
 ) -> Result<Timestamp, Error> {
     let mut origins: BTreeSet<_> = values
         .iter()
@@ -142,21 +170,24 @@ fn modification_time<R: ReadDoc>(
             .into_iter()
             .map(|(_, op)| op.to_string()),
     );
-    let mut operation_times = BTreeMap::new();
-    for stored in stored_revisions(read, id)? {
-        for operation in stored.changed_operations {
-            operation_times.insert(operation, stored.revision.saved_at);
+    let mut uncached = BTreeMap::new();
+    let operation_times = match times {
+        Some(times) => times.entries.get(id),
+        None => {
+            for stored in stored_revisions(read, id)? {
+                for operation in stored.changed_operations {
+                    uncached.insert(operation, stored.revision.saved_at);
+                }
+            }
+            Some(&uncached)
         }
-    }
-    if let Some((pending, now)) = pending {
-        for operation in pending {
-            operation_times.insert(operation.clone(), now);
-        }
-    }
+    };
     let modified_at = origins
         .iter()
-        .filter_map(|operation| operation_times.get(operation))
-        .copied()
+        .filter_map(|operation| match pending {
+            Some((pending, now)) if pending.contains(operation) => Some(now),
+            _ => operation_times.and_then(|times| times.get(operation).copied()),
+        })
         .max()
         .unwrap_or(created_at);
     Ok(modified_at)

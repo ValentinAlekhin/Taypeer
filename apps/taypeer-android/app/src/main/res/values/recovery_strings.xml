@@ -1,0 +1,18 @@
+<resources>
+    <string name="recover_management">Recover management</string>
+    <string name="recovery_name">New working copy name</string>
+    <string name="recovery_intro">A new working copy with a new trusted set will be created. This device will become its manager.</string>
+    <string name="recovery_intro_named">A new working copy with a new trusted set will be created. %1$s will become its manager.</string>
+    <string name="recovery_warning">Previous admissions will not carry over. Other devices must be connected again. The source copy will be preserved.</string>
+    <string name="recovery_unconfirmed">Recovery is not confirmed. Retry the same name, password and operation. The published copy will be checked before adoption.</string>
+    <string name="recovery_new_operation_required">The original password attempt was lost before an encrypted candidate was published. Start a new recovery explicitly.</string>
+    <string name="recovery_start_new">Start a new recovery</string>
+    <string name="recovery_pending">Unfinished management recovery</string>
+    <string name="recovery_source_frozen">The encrypted source is retained. The previous operation must be reconciled.</string>
+    <string name="recovery_candidate_published">The encrypted candidate exists. Enter its new password to continue the same operation.</string>
+    <string name="recovery_proof_confirmed">The protected proof is confirmed. Source writers must close before adoption.</string>
+    <string name="recovery_adopted">The new working copy is registered.</string>
+    <string name="recovery_status_failed">The recovery status could not be verified.</string>
+    <string name="recovery_read_source">Read for recovery</string>
+    <string name="recovery_resume_password">Recovery candidate password</string>
+</resources>

@@ -11,8 +11,11 @@ pub(super) struct Transition {
     pub journal: ArchiveJournal,
 }
 impl ManagedState {
-    fn manager(&self) -> Result<&AuthorKey, ServiceError> {
+    pub(super) fn manager(&self) -> Result<&AuthorKey, ServiceError> {
         let key = self.writer()?;
+        if self.applied_management_basis()?.is_none() {
+            return Err(ServiceError::InvalidContext);
+        }
         if key.device_id() != self.snapshot.chain().head().manager {
             return Err(ServiceError::Unauthorized);
         }
@@ -38,11 +41,13 @@ impl ManagedState {
 impl DatabaseService {
     /// Whether this session holds the current managing credential.
     pub fn can_manage(&self, session: &SessionToken) -> Result<bool, ServiceError> {
-        Ok(self
-            .checked(session)?
-            .managed
-            .as_ref()
-            .is_some_and(|managed| managed.manager().is_ok()))
+        let state = self.checked(session)?;
+        Ok(!state.write_uncertain
+            && state.pending_icon.is_none()
+            && state
+                .managed
+                .as_ref()
+                .is_some_and(|managed| managed.manager().is_ok()))
     }
 
     /// Public verified authority and portable workflow state, without any credential or bearer secret.
@@ -182,6 +187,9 @@ impl DatabaseService {
             .managed
             .as_ref()
             .ok_or(ServiceError::InvalidContext)?;
+        if managed.applied_management_basis()?.is_none() {
+            return Err(ServiceError::InvalidContext);
+        }
         Ok(HandoffConsent::sign(
             managed.snapshot.chain(),
             managed.writer()?,
@@ -194,29 +202,60 @@ impl DatabaseService {
         session: &SessionToken,
         consent: HandoffConsent,
     ) -> Result<(), ServiceError> {
+        self.checked(session)?;
+        let state = self
+            .databases
+            .get_mut(&session.database)
+            .ok_or(ServiceError::NotFound)?;
+        let managed = state.managed.as_mut().ok_or(ServiceError::InvalidContext)?;
+        if let Some(pending) = &managed.pending_management {
+            if pending.consent != consent {
+                return Err(StorageError::CommitUncertain.into());
+            }
+            // Reuse the original encrypted checkpoint/baseline, never seal newer input.
+            // The port re-syncs this exact candidate before returning its ACK.
+            let snapshot = managed.port.commit(pending.candidate.request.clone())?;
+            let pending = managed
+                .pending_management
+                .take()
+                .ok_or(ServiceError::InvalidContext)?;
+            return managed.accept_publication(pending.candidate, snapshot);
+        }
         let state = self.checked_mut(session)?;
         let document = state.document().clone();
         let managed = state.managed.as_mut().ok_or(ServiceError::InvalidContext)?;
         let chain = managed.snapshot.chain().transition(
             managed.writer()?,
             consent.operation,
-            ControlTransition::Transfer(consent),
+            ControlTransition::Transfer(consent.clone()),
         )?;
         if chain == *managed.snapshot.chain() {
             return Ok(());
         }
+        managed.manager()?;
         let open = managed.open.as_ref().ok_or(ServiceError::Locked)?;
         let transition = Transition {
             chain,
             header: open.header.clone(),
             journal: managed.snapshot.metadata().journal.clone(),
         };
-        managed.persist(
+        let candidate = managed.prepare_publication(
             &document,
             open.metadata.clone(),
             Vec::new(),
             Some(transition),
-        )
+            None,
+        )?;
+        match managed.port.commit(candidate.request.clone()) {
+            Ok(snapshot) => managed.accept_publication(candidate, snapshot),
+            Err(error) => {
+                if error == StorageError::CommitUncertain {
+                    managed.pending_management =
+                        Some(management::PendingTransfer { consent, candidate });
+                }
+                Err(error.into())
+            }
+        }
     }
     /// Rotate to an independent key and a different password, optionally revoking one device.
     /// Historical keys remain encrypted under the new key; no backup file is created.
@@ -337,7 +376,14 @@ impl DatabaseService {
             let checkpoint = managed
                 .snapshot
                 .object(managed.snapshot.metadata().manifest.body.checkpoint)?;
-            checkpoint.unlock_key(password)?;
+            checkpoint
+                .unlock_key(password)
+                .map_err(|error| match error {
+                    StorageError::Authentication | StorageError::EmptyPassword => {
+                        ServiceError::InvalidInput
+                    }
+                    other => ServiceError::Storage(other),
+                })?;
             let (header, key) = taypeer_storage::create_epoch(password, policy.kdf_target_ms())?;
             metadata
                 .keys

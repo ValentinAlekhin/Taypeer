@@ -1,10 +1,12 @@
 //! Explicit network lifetime, authenticated routes and resumable invitation downloads.
+mod preferences;
 mod view;
 use crate::{
     RuntimeError, RuntimeHost, Worker,
     cipher_ipc::storage,
     host::{canonical_path, sync_error},
 };
+pub use preferences::RelayPreference;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -122,14 +124,42 @@ impl RuntimeHost {
                 .remember_route(address)
                 .map_err(sync_error)?;
         }
-        let backend: Arc<dyn taypeer_sync::Backend> = context.coordinator.clone();
+        let backend: Arc<dyn taypeer_sync::Backend> =
+            Arc::new(crate::management_handoff::NetworkBackend {
+                context: Arc::clone(&context),
+            });
+        #[cfg(test)]
+        let bind_relay = if relay == RelaySetting::Default {
+            self.public_relay_bind_override
+                .lock()
+                .map_err(|_| RuntimeError::Transport)?
+                .clone()
+                .unwrap_or_else(|| relay.clone())
+        } else {
+            relay.clone()
+        };
+        #[cfg(not(test))]
+        let bind_relay = relay.clone();
         let node = Arc::new(
             self.runtime
-                .block_on(Node::bind(&context.transport, &relay, backend))
+                .block_on(Node::bind(
+                    &context.transport,
+                    &bind_relay,
+                    backend,
+                    context.ciphertext_staging(),
+                ))
                 .map_err(sync_error)?,
         );
         if !matches!(relay, RelaySetting::Disabled) {
-            self.runtime.block_on(node.online()).map_err(sync_error)?;
+            let online = self.runtime.block_on(node.online());
+            // Public relay availability must not disable reachable direct peers.
+            // An explicitly configured relay must work before replacing a user's choice.
+            if !matches!(relay, RelaySetting::Default)
+                && let Err(error) = online
+            {
+                self.runtime.block_on(node.close());
+                return Err(sync_error(error));
+            }
         }
         let progress = Arc::new(Mutex::new(BTreeMap::new()));
         let updates = Arc::clone(&progress);
@@ -455,7 +485,8 @@ impl RuntimeHost {
             .lock()
             .map_err(|_| RuntimeError::Transport)?
             .clone()
-            .unwrap_or(RelaySetting::Disabled);
+            .map(Ok)
+            .unwrap_or_else(|| self.relay_preference().and_then(|value| value.setting()))?;
         self.start_network(relay)?;
         Ok(())
     }
@@ -765,10 +796,11 @@ impl RuntimeHost {
             cancellation.check()?;
             let path = directory.join(descriptor.digest.to_string());
             let object = if path.try_exists().map_err(|_| RuntimeError::Transport)? {
-                EncryptedObject::receive(
+                EncryptedObject::receive_in(
                     File::open(&path).map_err(|_| RuntimeError::Transport)?,
                     descriptor,
                     &chain,
+                    context.ciphertext_staging(),
                 )
                 .map_err(storage)?
             } else {
@@ -781,10 +813,11 @@ impl RuntimeHost {
                     .await
                     .map_err(sync_error)
                 }))?;
-                let object = EncryptedObject::receive(
-                    incoming.reopen().map_err(|_| RuntimeError::Transport)?,
+                let object = EncryptedObject::receive_in(
+                    incoming,
                     descriptor,
                     &chain,
+                    context.ciphertext_staging(),
                 )
                 .map_err(storage)?;
                 let mut durable = tempfile::NamedTempFile::new_in(&directory)
@@ -818,7 +851,8 @@ impl RuntimeHost {
             signed,
             Some(context.profile.anchor(&registration)),
         )
-        .map_err(storage)?;
+        .map_err(storage)?
+        .with_temporary_storage(context.ciphertext_staging());
         context.coordinator.register(store).map_err(sync_error)?;
         context
             .copies

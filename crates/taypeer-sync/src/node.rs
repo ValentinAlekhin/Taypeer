@@ -8,16 +8,14 @@ use iroh::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    io::Read,
+    io::{Read, Seek, Write},
     sync::{Arc, Mutex},
     time::Duration,
 };
 use taypeer_core::DatabaseId;
-use taypeer_storage::ObjectReader;
+use taypeer_storage::{CiphertextFile, ObjectReader, TemporaryStorage};
 use taypeer_trust::{CipherObject, Digest, PublicKey, TransportKey};
-use tempfile::NamedTempFile;
 use tokio::{
-    io::AsyncWriteExt,
     task::{JoinHandle, JoinSet},
     time::timeout,
 };
@@ -63,15 +61,19 @@ type ExchangeGates =
 pub struct Node {
     endpoint: Endpoint,
     backend: Arc<dyn Backend>,
+    temporary: TemporaryStorage,
     task: Mutex<Option<JoinHandle<()>>>,
     exchanges: Mutex<ExchangeGates>,
 }
 impl Node {
     /// Bind the profile's persistent transport identity and start accepting exchanges.
+    /// All received ciphertext uses the host's explicit staging allocator; allocation
+    /// failure never falls back to a process-wide temporary directory.
     pub async fn bind(
         key: &TransportKey,
         relay: &RelaySetting,
         backend: Arc<dyn Backend>,
+        temporary: TemporaryStorage,
     ) -> Result<Self, Error> {
         let mode = match relay {
             RelaySetting::Default => RelayMode::Default,
@@ -112,15 +114,21 @@ impl Node {
             .bind()
             .await
             .map_err(|_| Error::Transport)?;
-        Ok(Self::from_endpoint(endpoint, backend))
+        Ok(Self::from_endpoint(endpoint, backend, temporary))
     }
-    fn from_endpoint(endpoint: Endpoint, backend: Arc<dyn Backend>) -> Self {
+    fn from_endpoint(
+        endpoint: Endpoint,
+        backend: Arc<dyn Backend>,
+        temporary: TemporaryStorage,
+    ) -> Self {
         let listener = endpoint.clone();
         let handler = Arc::clone(&backend);
-        let task = tokio::spawn(async move { serve(listener, handler).await });
+        let staging = temporary.clone();
+        let task = tokio::spawn(async move { serve(listener, handler, staging).await });
         Self {
             endpoint,
             backend,
+            temporary,
             task: Mutex::new(Some(task)),
             exchanges: Mutex::new(Default::default()),
         }
@@ -234,7 +242,13 @@ impl Node {
             let db = database.clone();
             let check = descriptor.clone();
             blocking(move || backend.authorize_object(peer, &db, &check)).await?;
-            let file = fetch(connection, database.clone(), &descriptor).await?;
+            let file = fetch(
+                connection,
+                database.clone(),
+                &descriptor,
+                self.temporary.clone(),
+            )
+            .await?;
             let backend = Arc::clone(&self.backend);
             let db = database.clone();
             let receipt = blocking(move || backend.receive(peer, &db, descriptor, file)).await?;
@@ -252,9 +266,9 @@ impl Node {
         address: EndpointAddr,
         database: DatabaseId,
         descriptor: CipherObject,
-    ) -> Result<NamedTempFile, Error> {
+    ) -> Result<CiphertextFile, Error> {
         let connection = self.connect(address).await?;
-        let result = fetch(&connection, database, &descriptor).await;
+        let result = fetch(&connection, database, &descriptor, self.temporary.clone()).await;
         connection.close(0_u8.into(), b"complete");
         result
     }
@@ -271,7 +285,7 @@ async fn blocking<T: Send + 'static>(
         .map_err(|_| Error::State)?
 }
 
-async fn serve(endpoint: Endpoint, backend: Arc<dyn Backend>) {
+async fn serve(endpoint: Endpoint, backend: Arc<dyn Backend>, temporary: TemporaryStorage) {
     let mut handlers = JoinSet::new();
     loop {
         tokio::select! {
@@ -279,13 +293,14 @@ async fn serve(endpoint: Endpoint, backend: Arc<dyn Backend>) {
             incoming = endpoint.accept(), if handlers.len() < MAX_CONNECTIONS => {
                 let Some(incoming) = incoming else { break; };
                 let backend = Arc::clone(&backend);
+                let temporary = temporary.clone();
                 handlers.spawn(async move {
                     let connection = match timeout(CONNECT, incoming).await {
                         Ok(Ok(connection)) => connection,
                         _ => return,
                     };
                     // A malformed/failed stream closes this exchange without a success receipt.
-                    if serve_connection(&connection, backend).await.is_err() {
+                    if serve_connection(&connection, backend, temporary).await.is_err() {
                         connection.close(1_u8.into(), b"exchange failed");
                     }
                 });
@@ -294,7 +309,11 @@ async fn serve(endpoint: Endpoint, backend: Arc<dyn Backend>) {
     }
     handlers.abort_all();
 }
-async fn serve_connection(connection: &Connection, backend: Arc<dyn Backend>) -> Result<(), Error> {
+async fn serve_connection(
+    connection: &Connection,
+    backend: Arc<dyn Backend>,
+    temporary: TemporaryStorage,
+) -> Result<(), Error> {
     loop {
         let (mut send, mut recv) = match timeout(wire::IDLE, connection.accept_bi()).await {
             Ok(Ok(streams)) => streams,
@@ -329,7 +348,7 @@ async fn serve_connection(connection: &Connection, backend: Arc<dyn Backend>) ->
                 let db = database.clone();
                 let check = descriptor.clone();
                 blocking(move || handler.authorize_object(peer, &db, &check)).await?;
-                let file = receive_body(&mut recv, descriptor.length).await?;
+                let file = receive_body(&mut recv, descriptor.length, temporary.clone()).await?;
                 let handler = Arc::clone(&backend);
                 let result =
                     blocking(move || handler.receive(peer, &database, descriptor, file)).await;
@@ -376,7 +395,8 @@ async fn fetch(
     connection: &Connection,
     database: DatabaseId,
     descriptor: &CipherObject,
-) -> Result<NamedTempFile, Error> {
+    temporary: TemporaryStorage,
+) -> Result<CiphertextFile, Error> {
     let (mut send, mut recv) = connection.open_bi().await.map_err(|_| Error::Transport)?;
     wire::write(
         &mut send,
@@ -391,7 +411,7 @@ async fn fetch(
     if actual? != *descriptor {
         return Err(Error::Protocol);
     }
-    receive_body(&mut recv, descriptor.length).await
+    receive_body(&mut recv, descriptor.length, temporary).await
 }
 async fn send_body(send: &mut SendStream, mut reader: ObjectReader) -> Result<(), Error> {
     let (tx, mut rx) = tokio::sync::mpsc::channel(2);
@@ -417,20 +437,47 @@ async fn send_body(send: &mut SendStream, mut reader: ObjectReader) -> Result<()
     }
     producer.await.map_err(|_| Error::State)?
 }
-async fn receive_body(recv: &mut RecvStream, length: u64) -> Result<NamedTempFile, Error> {
+async fn receive_body(
+    recv: &mut RecvStream,
+    length: u64,
+    temporary: TemporaryStorage,
+) -> Result<CiphertextFile, Error> {
     if length == 0 || length > wire::MAX_OBJECT {
         return Err(Error::Protocol);
     }
-    let temp = NamedTempFile::new().map_err(|_| Error::Storage(taypeer_storage::Error::Io))?;
-    let handle = temp
-        .reopen()
-        .map_err(|_| Error::Storage(taypeer_storage::Error::Io))?;
-    let mut output = tokio::fs::File::from_std(handle);
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(2);
+    let writer = tokio::task::spawn_blocking(move || {
+        let mut file = temporary
+            .create()
+            .map_err(|_| Error::Storage(taypeer_storage::Error::Io))?;
+        while let Some(bytes) = rx.blocking_recv() {
+            file.write_all(&bytes)
+                .map_err(|_| Error::Storage(taypeer_storage::Error::Io))?;
+        }
+        // Capability writes are immediately readable; only the coordinator's
+        // subsequent commit provides durability and authorizes a receipt.
+        file.rewind()
+            .map_err(|_| Error::Storage(taypeer_storage::Error::Io))?;
+        Ok::<_, Error>(file)
+    });
+    let received = receive_chunks(recv, length, &tx).await;
+    // Closing the bounded channel also ends the writer when this future is
+    // cancelled. On ordinary failures, await it before releasing staged bytes.
+    drop(tx);
+    let file = writer.await.map_err(|_| Error::State)??;
+    received?;
+    Ok(file)
+}
+async fn receive_chunks(
+    recv: &mut RecvStream,
+    length: u64,
+    tx: &tokio::sync::mpsc::Sender<Vec<u8>>,
+) -> Result<(), Error> {
     let mut left = length;
-    let mut buffer = vec![0; wire::CHUNK];
     while left != 0 {
-        let size = left.min(buffer.len() as u64) as usize;
-        let count = timeout(wire::IDLE, recv.read(&mut buffer[..size]))
+        let size = left.min(wire::CHUNK as u64) as usize;
+        let mut buffer = vec![0; size];
+        let count = timeout(wire::IDLE, recv.read(&mut buffer))
             .await
             .map_err(|_| Error::Timeout)?
             .map_err(|_| Error::Transport)?
@@ -438,22 +485,13 @@ async fn receive_body(recv: &mut RecvStream, length: u64) -> Result<NamedTempFil
         if count == 0 {
             return Err(Error::Protocol);
         }
-        output
-            .write_all(&buffer[..count])
+        buffer.truncate(count);
+        tx.send(buffer)
             .await
             .map_err(|_| Error::Storage(taypeer_storage::Error::Io))?;
         left -= count as u64;
     }
-    wire::eof(recv).await?;
-    output
-        .flush()
-        .await
-        .map_err(|_| Error::Storage(taypeer_storage::Error::Io))?;
-    output
-        .sync_all()
-        .await
-        .map_err(|_| Error::Storage(taypeer_storage::Error::Io))?;
-    Ok(temp)
+    wire::eof(recv).await
 }
 
 #[cfg(test)]

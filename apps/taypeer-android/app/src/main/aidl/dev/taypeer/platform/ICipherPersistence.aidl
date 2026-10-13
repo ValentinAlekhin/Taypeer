@@ -18,4 +18,11 @@ interface ICipherPersistence {
     int saveDraft(in ParcelFileDescriptor file);
     CipherFileResult loadDraft();
     int discardDraft();
+    Bundle freezeRecovery(String operation, String authenticated);
+    Bundle recoverySource(String operation);
+    CipherAuthorResult authorRecovery(in byte[] source);
+    Bundle recoveryCandidate(in byte[] intent);
+    Bundle publishRecovery(in byte[] intent, in byte[] controls,
+        in ParcelFileDescriptor[] objects, String checkpoint, String baseline);
+    int confirmRecovery(in byte[] publication);
 }

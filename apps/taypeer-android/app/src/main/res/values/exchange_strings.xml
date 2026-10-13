@@ -1,5 +1,15 @@
 <resources>
     <string name="exchange_channel">Encrypted exchange</string>
-    <string name="exchange_notification">Exchanging encrypted data</string>
-    <string name="exchange_notification_detail">Tap to return to Taypeer</string>
+    <string name="exchange_notification">Taypeer · exchange</string>
+    <string name="exchange_notification_detail">Receiving encrypted changes</string>
+    <string name="exchange_running">Encrypted exchange is running</string>
+    <string name="exchange_stopped">Encrypted exchange is stopped</string>
+    <string name="device_exchange_succeeded">Last exchange completed</string>
+    <string name="device_exchange_failed">Last exchange failed; retry when connected</string>
+    <string name="device_exchange_unknown">No confirmed exchange yet</string>
+    <string name="application_waiting">Waiting for incoming changes</string>
+    <string name="application_no_pending">Last application: no new changes</string>
+    <string name="application_applied">Received updates applied: %1$s</string>
+    <string name="application_pending">Saved updates waiting to be applied: %1$s</string>
+    <string name="application_failed">Changes could not be applied. Encrypted data remains saved.</string>
 </resources>

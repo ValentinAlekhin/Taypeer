@@ -1,0 +1,35 @@
+<resources>
+    <string name="welcome_heading">Your passwords.\nOn your devices.</string>
+    <string name="welcome_help">Create a database or open an existing one.</string>
+    <string name="recent_databases">Recent databases</string>
+    <string name="working_copy">Internal working copy</string>
+    <string name="working_copy_locked">Internal working copy · locked</string>
+    <string name="no_groups">No groups yet</string>
+    <string name="search_entries">Search entries…</string>
+    <string name="clear_search">Clear search</string>
+    <string name="no_search_results">Nothing found</string>
+    <string name="search_help">Change the query or search scope.</string>
+    <string name="expand_group">Expand or collapse group</string>
+    <string name="edit_group">Edit group</string>
+    <string name="devices_exchange">Devices and exchange</string>
+    <string name="settings">Settings</string>
+    <string name="actions">Actions</string>
+    <string name="sort_ascending">Sort title A–Z</string>
+    <string name="sort_descending">Sort title Z–A</string>
+    <string name="no_local_drafts">No local drafts</string>
+    <string name="database_locked">Database is locked</string>
+    <string name="choose_another_database">Choose another database…</string>
+    <string name="never_expires">Never</string>
+    <string name="device_settings">Device settings</string>
+    <string name="database_settings">Database settings</string>
+    <string name="theme">Application theme</string>
+    <string name="theme_system">System</string>
+    <string name="theme_light">Light</string>
+    <string name="theme_dark">Dark</string>
+    <string name="generated_value">Generated password</string>
+    <string name="language">Language</string>
+    <string name="reset_appearance">Reset appearance</string>
+    <string name="copy_invitation">Copy code</string>
+    <string name="invitation_expired">Invitation expired</string>
+    <string name="new_invitation">Create a new invitation</string>
+</resources>

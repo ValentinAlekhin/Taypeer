@@ -30,6 +30,23 @@ model {
   componentChecks -> taypeer.desktop.preferences 'Retained settings previews with public fixtures'
   componentChecks -> taypeer.desktop.exchange 'Retained exchange previews with public fixtures'
   componentChecks -> designReference 'Read-only export of the reference'
+  androidChecks = app 'Android emulator checks' {
+    #partial
+    technology 'Python; Android instrumentation; Compose'
+    description 'ARM64 Android 12/16 and 16 KiB pages. Real JNI, Binder workers, camera and local networking. Public screen fixtures and reviewed visual baselines; hardware acceptance remains separate.'
+    metadata { source 'apps/taypeer-android/qa.py'; contract 'docs/testing.md'; evidence 'apps/taypeer-android/app/src/androidTest/java/dev/taypeer' }
+  }
+  androidTestRelay = external 'Local TLS test relay' {
+    #partial
+    technology 'Iroh relay; loopback; adb reverse'
+    description 'Ephemeral synthetic fixture with explicit CA and hostname verification. Debug native capability only; no public network or production TLS bypass.'
+    metadata { source 'apps/taypeer-android/native/examples/public-relay-fixture.rs'; contract 'docs/testing.md' }
+  }
+  androidChecks -> taypeer.android 'Real Compose actions and retained screen builders'
+  androidChecks -> taypeer.ffi 'Real JNI and typed commands; explicit debug test capability'
+  androidChecks -> taypeer.secretWorker 'Real isolated Binder services and persistence'
+  androidChecks -> taypeer.androidPlatform 'Camera, OS lifecycle, scheduling and Keystore'
+  androidChecks -> androidTestRelay 'Forced local relay; exact restart and replay scenarios'
 }
 views 'macOS UI' {
   view uiTesting {
@@ -40,6 +57,13 @@ views 'macOS UI' {
   view componentTesting {
     title 'Isolated component visual checks'
     include componentChecks, designReference, taypeer.desktop.presentation, taypeer.desktop.workspace, taypeer.desktop.preferences, taypeer.desktop.exchange
+    autoLayout LeftRight
+  }
+}
+views 'Android UI' {
+  view androidTesting {
+    title 'Android automated checks and their boundaries'
+    include androidChecks, androidTestRelay, taypeer.android, taypeer.ffi, taypeer.secretWorker, taypeer.androidPlatform
     autoLayout LeftRight
   }
 }

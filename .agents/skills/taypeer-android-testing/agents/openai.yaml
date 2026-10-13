@@ -1,0 +1,4 @@
+interface:
+  display_name: "Taypeer Android testing"
+  short_description: "Build, test and compare Taypeer Android on ARM64 emulators"
+  default_prompt: "Use $taypeer-android-testing to verify Taypeer Android behavior and visual parity with explicit emulator evidence."

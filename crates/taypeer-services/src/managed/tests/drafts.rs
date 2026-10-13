@@ -5,12 +5,21 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
 };
 
+mod action_input;
+mod group_favicons;
+mod icons;
+mod metadata_history;
+mod parent;
+
 #[derive(Default)]
 struct Failures {
+    deny_snapshot: AtomicBool,
     uncertain_before_commit: AtomicBool,
     uncertain_commit: AtomicBool,
     local_after_commit: AtomicBool,
     deny_local: AtomicBool,
+    uncertain_local_before: AtomicBool,
+    uncertain_local_after: AtomicBool,
 }
 
 struct Port {
@@ -20,6 +29,9 @@ struct Port {
 
 impl CipherPersistence for Port {
     fn snapshot(&self) -> Result<ArchiveSnapshot, StorageError> {
+        if self.failures.deny_snapshot.swap(false, Ordering::SeqCst) {
+            return Err(StorageError::Io);
+        }
         self.inner.snapshot()
     }
     fn commit(&self, request: PreparedCommit) -> Result<ArchiveSnapshot, StorageError> {
@@ -53,7 +65,22 @@ impl CipherPersistence for Port {
         if self.failures.deny_local.load(Ordering::SeqCst) {
             return Err(StorageError::Io);
         }
-        self.inner.save_draft(object)
+        if self
+            .failures
+            .uncertain_local_before
+            .swap(false, Ordering::SeqCst)
+        {
+            return Err(StorageError::CommitUncertain);
+        }
+        self.inner.save_draft(object)?;
+        if self
+            .failures
+            .uncertain_local_after
+            .swap(false, Ordering::SeqCst)
+        {
+            return Err(StorageError::CommitUncertain);
+        }
+        Ok(())
     }
     fn load_draft(&self, chain: &ControlChain) -> Result<Option<EncryptedObject>, StorageError> {
         self.inner.load_draft(chain)
@@ -311,64 +338,86 @@ fn confirmed_snapshot_survives_failed_local_cleanup_and_lost_reply() {
 
 #[test]
 fn received_apply_reconciles_uncertainty_before_retry_and_preserves_local_forms() {
-    let directory = tempfile::tempdir().unwrap();
-    let profile = Profile::new(36);
-    let peer = Profile::new(37);
-    let path = directory.path().join("PUBLIC automatic receive.taypeer");
-    let (mut seed, session) = create(&profile, path.clone());
-    let database = session.database.clone();
-    admit(&mut seed, &session, &profile, &peer);
-    let peer_path = directory.path().join("PUBLIC sender.taypeer");
-    copy_to(&profile, &database, &peer_path);
-    let (mut sender, sender_session) = peer.open(peer_path, PASSWORD);
-    sender
-        .create_group(
-            &sender_session,
-            "PUBLIC received once".into(),
-            None,
-            &crate::new_operation_id().unwrap(),
-        )
-        .unwrap();
-    seed.lock(&session).unwrap();
-    drop(seed);
-    let failures = Arc::new(Failures::default());
-    let (mut service, session) = reopen(&profile, path, database.clone(), Arc::clone(&failures));
-    begin_entry(&mut service, &session);
-    service
-        .patch_draft(
-            &session,
-            EntryPatch {
-                password: FieldUpdate::Set("PUBLIC retained local form".into()),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-    service.persist_drafts(&session).unwrap();
-    deliver(&peer, &profile, &database);
-    failures.uncertain_commit.store(true, Ordering::SeqCst);
-    assert_eq!(
-        service.apply_received(&session).unwrap_err(),
-        ServiceError::Storage(StorageError::CommitUncertain)
-    );
-    service.apply_received(&session).unwrap();
-    let groups = service.groups(&session).unwrap().value;
-    assert_eq!(groups.len(), 2);
-    let received = groups
-        .iter()
-        .find(|group| group.name == "PUBLIC received once")
-        .unwrap();
-    assert_eq!(
+    for fail_after_reconciliation in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let profile = Profile::new(36);
+        let peer = Profile::new(37);
+        let path = directory.path().join("PUBLIC automatic receive.taypeer");
+        let (mut seed, session) = create(&profile, path.clone());
+        let database = session.database.clone();
+        admit(&mut seed, &session, &profile, &peer);
+        let peer_path = directory.path().join("PUBLIC sender.taypeer");
+        copy_to(&profile, &database, &peer_path);
+        let (mut sender, sender_session) = peer.open(peer_path, PASSWORD);
+        sender
+            .create_group(
+                &sender_session,
+                "PUBLIC received once".into(),
+                None,
+                &crate::new_operation_id().unwrap(),
+            )
+            .unwrap();
+        seed.lock(&session).unwrap();
+        drop(seed);
+        let failures = Arc::new(Failures::default());
+        let (mut service, session) = reopen(
+            &profile,
+            path.clone(),
+            database.clone(),
+            Arc::clone(&failures),
+        );
+        begin_entry(&mut service, &session);
         service
-            .group_history(&session, &received.id)
-            .unwrap()
-            .value
-            .len(),
-        1
-    );
-    assert!(service.editor_view(&session).unwrap().dirty);
-    assert_eq!(
-        service.reveal_editor(&session, None).unwrap().expose(),
-        "PUBLIC retained local form"
-    );
-    assert!(service.can_write(&session).unwrap());
+            .patch_draft(
+                &session,
+                EntryPatch {
+                    password: FieldUpdate::Set("PUBLIC retained local form".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        service.persist_drafts(&session).unwrap();
+        deliver(&peer, &profile, &database);
+        failures.uncertain_commit.store(true, Ordering::SeqCst);
+        assert_eq!(
+            service.apply_received(&session).unwrap_err(),
+            ServiceError::Storage(StorageError::CommitUncertain)
+        );
+        if fail_after_reconciliation {
+            service.reconcile_uncertain(&session).unwrap();
+            let confirmed = std::fs::read(&path).unwrap();
+            failures.deny_snapshot.store(true, Ordering::SeqCst);
+            assert_eq!(
+                service.apply_received(&session).unwrap_err(),
+                ServiceError::Storage(StorageError::Io)
+            );
+            assert_eq!(std::fs::read(&path).unwrap(), confirmed);
+        }
+        let report = service.apply_received(&session).unwrap().value;
+        assert!(report.changed);
+        assert_eq!(report.applied, 0);
+        let groups = service.groups(&session).unwrap().value;
+        assert_eq!(groups.len(), 2);
+        let received = groups
+            .iter()
+            .find(|group| group.name == "PUBLIC received once")
+            .unwrap();
+        assert_eq!(
+            service
+                .group_history(&session, &received.id)
+                .unwrap()
+                .value
+                .len(),
+            1
+        );
+        assert!(service.editor_view(&session).unwrap().dirty);
+        assert_eq!(
+            service.reveal_editor(&session, None).unwrap().expose(),
+            "PUBLIC retained local form"
+        );
+        assert!(service.can_write(&session).unwrap());
+        let empty = service.apply_received(&session).unwrap().value;
+        assert!(!empty.changed);
+        assert_eq!(empty.applied, 0);
+    }
 }

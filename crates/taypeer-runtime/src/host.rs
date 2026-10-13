@@ -16,7 +16,10 @@ use taypeer_trust::{ControlChain, Digest, PublicKey, TransportKey};
 use tempfile::NamedTempFile;
 
 mod catalog;
+mod ciphertext_export;
+mod recovery;
 pub use catalog::{RelocatedWorkingCopy, WorkingCopy};
+pub use ciphertext_export::{CiphertextExport, CiphertextExportIdentity};
 
 /// Platform/CLI host. Writers and native transport identity outlive individual unlocked workers.
 pub struct RuntimeHost {
@@ -26,9 +29,13 @@ pub struct RuntimeHost {
     pub(crate) runtime: tokio::runtime::Runtime,
     pub(crate) network: Mutex<BTreeMap<PublicKey, crate::network::Network>>,
     pub(crate) requested_relay: Mutex<Option<taypeer_sync::RelaySetting>>,
+    pub(crate) network_configuration: Mutex<()>,
+    #[cfg(test)]
+    pub(crate) public_relay_bind_override: Mutex<Option<taypeer_sync::RelaySetting>>,
     pub(crate) enrollments: Mutex<BTreeMap<Digest, Arc<crate::process::Client>>>,
     pub(crate) join_state: Mutex<()>,
     catalog: Arc<Mutex<catalog::Catalog>>,
+    entry_access: Arc<crate::profile::entry_access::EntryAccessStore>,
 }
 
 /// Public format and transport-admission state; querying it never unlocks a database.
@@ -46,6 +53,9 @@ pub(crate) struct HostContext {
     pub copies: Mutex<BTreeMap<PathBuf, Registration>>,
     children: Mutex<BTreeMap<DatabaseId, Arc<HostContext>>>,
     catalog: Arc<Mutex<catalog::Catalog>>,
+    pub(crate) recovery: Mutex<()>,
+    pub(crate) recovery_writers: Arc<recovery::WriterLifetimes>,
+    pub(crate) management: crate::management_handoff::Owner,
     #[cfg(test)]
     credential_fault: std::sync::atomic::AtomicU8,
 }
@@ -85,6 +95,7 @@ impl RuntimeHost {
         name: Option<String>,
     ) -> Result<taypeer_services::SessionToken, RuntimeError> {
         let path = canonical_path(path)?;
+        let lifetime = self.context.recovery_writers.acquire(&path)?;
         let existed = self.context.has_path(&path)?;
         let opened = (|| {
             let registration = if let Some(name) = name {
@@ -118,6 +129,7 @@ impl RuntimeHost {
                 registration.working_copy,
             )
             .map_err(sync_error)?;
+            let port = recovery::LocalWriter::new(port, lifetime);
             Ok(service.open_managed(Box::new(port), password, || {
                 self.profile()
                     .author()
@@ -187,7 +199,33 @@ impl RuntimeHost {
         lease: ProfileLease,
         sessions: crate::session::SessionController,
     ) -> Result<Self, RuntimeError> {
+        Self::with_lease_and_access_clock(
+            lease,
+            sessions,
+            Arc::new(crate::profile::entry_access::SystemAccessClock),
+        )
+    }
+    /// Acquire a platform profile with an explicit UTC source for local access marks.
+    /// This changes neither session/idle clocks nor portable document timestamps.
+    pub fn with_platform_credentials_and_access_clock(
+        profile: &Path,
+        sessions: crate::session::SessionController,
+        credentials: Arc<dyn crate::profile::CredentialStore>,
+        clock: Arc<dyn crate::AccessClock>,
+    ) -> Result<Self, RuntimeError> {
+        Self::with_lease_and_access_clock(
+            NativeProfile::acquire_platform(profile, credentials)?,
+            sessions,
+            clock,
+        )
+    }
+    fn with_lease_and_access_clock(
+        lease: ProfileLease,
+        sessions: crate::session::SessionController,
+        clock: Arc<dyn crate::AccessClock>,
+    ) -> Result<Self, RuntimeError> {
         let profile = lease.profile().clone();
+        let entry_access = Arc::new(crate::profile::entry_access::EntryAccessStore::new(clock)?);
         let catalog = Arc::new(Mutex::new(catalog::Catalog::load(profile.directory())?));
         let transport = Arc::new(if profile.is_linux_lazy() {
             TransportKey::generate().map_err(|_| RuntimeError::Transport)?
@@ -204,9 +242,13 @@ impl RuntimeHost {
             _lease: lease,
             network: Mutex::new(BTreeMap::new()),
             requested_relay: Mutex::new(None),
+            network_configuration: Mutex::new(()),
+            #[cfg(test)]
+            public_relay_bind_override: Mutex::new(None),
             enrollments: Mutex::new(BTreeMap::new()),
             join_state: Mutex::new(()),
             catalog: Arc::clone(&catalog),
+            entry_access,
             context: Arc::new(HostContext {
                 profile,
                 coordinator,
@@ -214,11 +256,39 @@ impl RuntimeHost {
                 copies: Mutex::new(BTreeMap::new()),
                 children: Mutex::new(BTreeMap::new()),
                 catalog,
+                recovery: Mutex::new(()),
+                recovery_writers: Arc::new(recovery::WriterLifetimes::default()),
+                management: crate::management_handoff::Owner::default(),
                 #[cfg(test)]
                 credential_fault: std::sync::atomic::AtomicU8::new(0),
             }),
             runtime,
         })
+    }
+    /// Read this profile's mark for the saved object's identity. Missing is `None`;
+    /// corrupt, unavailable and uncertain protected state are explicit failures.
+    pub fn accessed_at(
+        &self,
+        database: &DatabaseId,
+        entry: &taypeer_core::EntryId,
+    ) -> Result<Option<i64>, RuntimeError> {
+        let context = self.context.for_database(database)?;
+        self.entry_access
+            .accessed_at(&context.profile, database, entry)
+            .map_err(Into::into)
+    }
+    /// Bind an opaque local event to an object already authorized by the caller's worker.
+    /// This trusted host operation writes nothing; clients receive the object, never
+    /// this arbitrary-ID constructor. Confirm only after the secret action was accepted.
+    pub fn secret_access_grant(
+        &self,
+        database: DatabaseId,
+        entry: taypeer_core::EntryId,
+    ) -> Result<crate::SecretAccessGrant, RuntimeError> {
+        let context = self.context.for_database(&database)?;
+        Ok(self
+            .entry_access
+            .grant(context.profile.clone(), database, entry))
     }
     /// Start one plaintext process while retaining ciphertext storage independently.
     pub fn open(
@@ -443,6 +513,9 @@ impl HostContext {
             copies: Mutex::new(BTreeMap::new()),
             children: Mutex::new(BTreeMap::new()),
             catalog: Arc::clone(&self.catalog),
+            recovery: Mutex::new(()),
+            recovery_writers: Arc::clone(&self.recovery_writers),
+            management: crate::management_handoff::Owner::default(),
             #[cfg(test)]
             credential_fault: std::sync::atomic::AtomicU8::new(
                 self.credential_fault

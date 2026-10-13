@@ -10,16 +10,26 @@ use taypeer_storage::{
 use taypeer_trust::{AuthorKey, ControlChain, Digest, Identity, ObjectKind, SourceProof};
 
 mod administration;
+mod management;
+pub use management::OpenManagementBasis;
+mod open;
+pub use open::ManagedKeyScope;
 mod apply;
 mod codec;
 mod collection;
 pub(crate) mod compatibility;
 pub use collection::CollectionReport;
 mod pending;
+mod policy;
+pub use policy::{DatabasePolicyDetails, ProtectionInfo};
 mod recovery;
 pub use apply::{ApplyReport, PendingPacket, PendingReason};
 use codec::Checkpoint;
 pub use pending::ReceivedSource;
+pub use recovery::{
+    NamedRecoveryIntent, TrustRecoveryPreparation, TrustRecoverySource,
+    authenticate_named_trust_recovery, validate_named_trust_recovery,
+};
 
 #[cfg(test)]
 mod tests;
@@ -44,14 +54,24 @@ pub(super) struct ManagedState {
     pub snapshot: ArchiveSnapshot,
     baseline: Digest,
     accepted: Digest,
+    // Reconciliation can install acknowledged state before a later apply attempt fails.
+    pub(super) reconciled_application: bool,
     open: Option<Unlocked>,
     capabilities: taypeer_core::ClientCapabilities,
+    pending_management: Option<management::PendingTransfer>,
+}
+struct PreparedPublication {
+    request: PreparedCommit,
+    metadata: Checkpoint,
+    header: Option<Vec<u8>>,
 }
 struct Unlocked {
     author: Option<AuthorKey>,
     header: Vec<u8>,
     metadata: Checkpoint,
     control: Digest,
+    authentication: open::AuthenticationProvenance,
+    password_kdf: Option<policy::PasswordKdfMeasurement>,
 }
 impl ManagedState {
     pub fn policy(&self) -> DatabasePolicy {
@@ -61,8 +81,12 @@ impl ManagedState {
     }
     pub fn close(&mut self) {
         self.open = None;
+        self.pending_management = None;
     }
     pub fn check_edit_permission(&self) -> Result<(), ServiceError> {
+        if self.pending_management.is_some() {
+            return Err(StorageError::CommitUncertain.into());
+        }
         let open = self.open.as_ref().ok_or(ServiceError::Locked)?;
         self.check_format_write()?;
         let author = open.author.as_ref().ok_or(ServiceError::ReadOnly)?;
@@ -105,6 +129,9 @@ impl ManagedState {
         Ok(())
     }
     fn writer(&self) -> Result<&AuthorKey, ServiceError> {
+        if self.pending_management.is_some() {
+            return Err(StorageError::CommitUncertain.into());
+        }
         let open = self.open.as_ref().ok_or(ServiceError::Locked)?;
         self.check_format_write()?;
         let key = open.author.as_ref().ok_or(ServiceError::ReadOnly)?;
@@ -219,11 +246,24 @@ impl ManagedState {
     fn persist_candidate(
         &mut self,
         document: &Document,
+        metadata: Checkpoint,
+        objects: Vec<EncryptedObject>,
+        administration: Option<administration::Transition>,
+        collection: Option<collection::Collection>,
+    ) -> Result<(), ServiceError> {
+        let candidate =
+            self.prepare_publication(document, metadata, objects, administration, collection)?;
+        let snapshot = self.port.commit(candidate.request.clone())?;
+        self.accept_publication(candidate, snapshot)
+    }
+    fn prepare_publication(
+        &self,
+        document: &Document,
         mut metadata: Checkpoint,
         mut objects: Vec<EncryptedObject>,
         administration: Option<administration::Transition>,
         collection: Option<collection::Collection>,
-    ) -> Result<(), ServiceError> {
+    ) -> Result<PreparedPublication, ServiceError> {
         let author = self.writer()?;
         let open = self.open.as_ref().ok_or(ServiceError::Locked)?;
         let (chain, header, mut journal) = match &administration {
@@ -296,15 +336,25 @@ impl ManagedState {
             baseline,
             journal,
         };
-        let snapshot = self.port.commit(request)?;
+        Ok(PreparedPublication {
+            request,
+            metadata,
+            header: administration.map(|transition| transition.header),
+        })
+    }
+    fn accept_publication(
+        &mut self,
+        candidate: PreparedPublication,
+        snapshot: ArchiveSnapshot,
+    ) -> Result<(), ServiceError> {
         let open = self.open.as_mut().ok_or(ServiceError::Locked)?;
-        if let Some(transition) = administration {
-            open.header = transition.header;
+        if let Some(header) = candidate.header {
+            open.replace_header(header);
         }
-        open.metadata = metadata;
+        open.metadata = candidate.metadata;
         open.control = snapshot.chain().head_hash()?;
-        self.baseline = baseline;
-        self.accepted = checkpoint_id;
+        self.baseline = candidate.request.baseline;
+        self.accepted = candidate.request.checkpoint;
         self.snapshot = snapshot;
         Ok(())
     }
@@ -358,8 +408,9 @@ impl ManagedState {
         let header = checkpoint.password_header()?;
         let open = self.open.as_mut().ok_or(ServiceError::Locked)?;
         open.metadata = metadata;
-        open.header = header;
+        open.replace_header(header);
         open.control = checkpoint.envelope().control;
+        self.reconciled_application |= self.baseline != snapshot.metadata().manifest.body.baseline;
         self.baseline = snapshot.metadata().manifest.body.baseline;
         self.accepted = checkpoint.descriptor().digest;
         self.snapshot = snapshot;
@@ -495,206 +546,6 @@ impl DatabaseService {
             objects: vec![checkpoint, baseline],
         })
     }
-    /// Authenticate a portable archive before acquiring local credentials. The returned
-    /// epoch key belongs exclusively to the plaintext worker, never its host.
-    pub fn authenticate_archive_credentials(
-        snapshot: &ArchiveSnapshot,
-        password: &[u8],
-    ) -> Result<ReadKey, ServiceError> {
-        let active = snapshot.object(snapshot.metadata().manifest.body.checkpoint)?;
-        let latest = snapshot.chain().head_hash()?;
-        let selected = if active.envelope().epoch != snapshot.chain().head().epoch
-            || active.envelope().control != latest
-        {
-            latest_baseline(snapshot)?
-        } else {
-            active
-        };
-        let key = selected.unlock_key(password)?;
-        let _ = codec::read_checkpoint(&selected, &key, snapshot.chain())?;
-        Ok(key)
-    }
-
-    /// Obtain authenticated historical epoch keys solely for rewrapping local credentials
-    /// after a learned rotation. This API is confined to the plaintext worker.
-    pub fn authenticate_archive_keyring(
-        snapshot: &ArchiveSnapshot,
-        password: &[u8],
-    ) -> Result<Vec<(u64, ReadKey)>, ServiceError> {
-        let active = snapshot.object(snapshot.metadata().manifest.body.checkpoint)?;
-        let selected = if active.envelope().epoch != snapshot.chain().head().epoch
-            || active.envelope().control != snapshot.chain().head_hash()?
-        {
-            latest_baseline(snapshot)?
-        } else {
-            active
-        };
-        let key = selected.unlock_key(password)?;
-        let (metadata, _) = codec::read_checkpoint(&selected, &key, snapshot.chain())?;
-        metadata
-            .keys
-            .keys()
-            .map(|epoch| Ok((*epoch, metadata.key(*epoch)?)))
-            .collect()
-    }
-
-    /// Authenticate a registered or copied archive. The credential callback runs only
-    /// after successful password authentication. An unadmitted identity gets read/export access.
-    pub fn open_managed(
-        &mut self,
-        port: Box<dyn CipherPersistence>,
-        password: &[u8],
-        author: impl FnOnce() -> Result<Option<AuthorKey>, ServiceError>,
-    ) -> Result<SessionToken, ServiceError> {
-        self.open_managed_with_author(port, password, |_| author())
-    }
-
-    /// Authenticate one immutable generation and pass that exact ciphertext snapshot
-    /// to the author capability handshake. The callback must recheck current authority;
-    /// ciphertext receipt alone need not invalidate successful authentication.
-    pub fn open_managed_with_author(
-        &mut self,
-        port: Box<dyn CipherPersistence>,
-        password: &[u8],
-        author: impl FnOnce(&ArchiveSnapshot) -> Result<Option<AuthorKey>, ServiceError>,
-    ) -> Result<SessionToken, ServiceError> {
-        let snapshot = port.snapshot()?;
-        let compatibility = self.capabilities.assess(&snapshot.chain().head().schema);
-        compatibility::require_read(&compatibility)?;
-        let database = snapshot.chain().head().database.clone();
-        let generation = match self.databases.get(&database) {
-            None => 1,
-            Some(prior)
-                if !prior.unlocked
-                    && prior.managed.as_ref().is_some_and(|managed| {
-                        managed.port.path() == port.path()
-                            && managed.port.working_copy() == port.working_copy()
-                    }) =>
-            {
-                prior
-                    .generation
-                    .checked_add(1)
-                    .ok_or(ServiceError::InvalidContext)?
-            }
-            Some(_) => return Err(ServiceError::InvalidContext),
-        };
-        let active = snapshot.object(snapshot.metadata().manifest.body.checkpoint)?;
-        let latest = snapshot.chain().head_hash()?;
-        // A learned rotation cannot be opened using the superseded password wrapper.
-        let mut selected = active.clone();
-        if active.envelope().epoch != snapshot.chain().head().epoch
-            || active.envelope().control != latest
-        {
-            selected = latest_baseline(&snapshot)?;
-        }
-        let key = selected.unlock_key(password)?;
-        let (mut metadata, mut document) =
-            codec::read_checkpoint(&selected, &key, snapshot.chain())?;
-        let author = author(&snapshot)?;
-        let admitted = author
-            .as_ref()
-            .is_some_and(|a| snapshot.chain().head().members.contains_key(&a.device_id()));
-        if admitted
-            && selected.envelope().kind != ObjectKind::Baseline
-            && author
-                .as_ref()
-                .is_some_and(|a| a.device_id() != selected.envelope().author)
-        {
-            selected = latest_baseline(&snapshot)?;
-            (metadata, document) = codec::read_checkpoint(
-                &selected,
-                &metadata.key(selected.envelope().epoch)?,
-                snapshot.chain(),
-            )?;
-        }
-        let own_checkpoint = author
-            .as_ref()
-            .is_some_and(|a| a.device_id() == active.envelope().author);
-        if selected.descriptor().digest != active.descriptor().digest
-            && (own_checkpoint || !admitted)
-        {
-            let (prior, accepted) = codec::read_checkpoint(
-                &active,
-                &metadata.key(active.envelope().epoch)?,
-                snapshot.chain(),
-            )?;
-            document.merge(&accepted)?;
-            metadata = apply::merge_accepted_metadata(metadata, &prior)?;
-        }
-        if !own_checkpoint {
-            // Portable receipt claims from another device are never local apply/discard decisions.
-            metadata.processed.clear();
-            metadata.discarded.clear();
-            metadata.discarded_sources.clear();
-        }
-        if let Some(author) = author
-            .as_ref()
-            .filter(|_| admitted && compatibility.write.is_supported())
-        {
-            document.set_writer(*author.device_id().as_bytes());
-        } else {
-            document.clear_writer();
-        }
-        let baseline = if selected.envelope().kind == ObjectKind::Baseline {
-            selected.descriptor().digest
-        } else {
-            snapshot.metadata().manifest.body.baseline
-        };
-        let mut blobs = BlobStore::with_temporary_storage(snapshot.temporary_storage())?;
-        let managed = ManagedState {
-            port,
-            baseline,
-            accepted: selected.descriptor().digest,
-            snapshot,
-            capabilities: self.capabilities.clone(),
-            open: Some(Unlocked {
-                author,
-                header: selected.password_header()?,
-                metadata,
-                control: selected.envelope().control,
-            }),
-        };
-        managed.load_required_blobs(&document, &mut blobs)?;
-        // An unsupported writer must not decode/rewrite a possibly newer local draft.
-        let mut draft = if compatibility.write.is_supported() {
-            managed.load_draft(&mut blobs)?
-        } else {
-            DraftCollection::new(database.clone())
-        };
-        draft.reconcile(&document)?;
-        if draft.is_empty() && compatibility.write.is_supported() {
-            managed.port.discard_draft()?;
-        }
-        let label = managed
-            .port
-            .path()
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            // A descriptor-backed worker has no filesystem path. Only a public
-            // identity is retained while locked; document labels require unlock.
-            .unwrap_or_else(|| database.to_string());
-        self.databases.insert(
-            database.clone(),
-            DatabaseState {
-                document: Some(document),
-                blobs: Some(blobs),
-                label,
-                file: None,
-                managed: Some(managed),
-                key: None,
-                generation,
-                unlocked: true,
-                drafts: draft,
-                draft_deferred: !compatibility.write.is_supported(),
-                draft_maintenance_pending: false,
-                write_uncertain: false,
-            },
-        );
-        Ok(SessionToken {
-            database,
-            generation,
-        })
-    }
     /// Authenticated worker authority last accepted into this unlocked session.
     /// This reads the retained snapshot and performs no coordinator I/O.
     pub fn session_authority(&self, session: &SessionToken) -> Result<ControlChain, ServiceError> {
@@ -719,6 +570,7 @@ impl DatabaseService {
     pub fn can_write(&self, session: &SessionToken) -> Result<bool, ServiceError> {
         let state = self.checked(session)?;
         Ok(!state.write_uncertain
+            && state.pending_icon.is_none()
             && self.compatibility(session)?.value.write.is_supported()
             && state.managed.as_ref().is_none_or(|m| m.writer().is_ok()))
     }

@@ -183,7 +183,8 @@ impl DatabaseService {
     ) -> Result<SessionValue<Vec<ObjectId>>, ServiceError> {
         let now = (self.clock)();
         let state = self.checked_mut(session)?;
-        let result = state.change(|doc| Ok(change(doc, now)?))?;
+        let result = state
+            .change(|doc| change(doc, now).map_err(super::operations::candidate_input_error))?;
         Ok(stamped(session, result))
     }
 

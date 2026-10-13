@@ -1,0 +1,35 @@
+<resources>
+    <string name="welcome_heading">Ваши пароли.\nНа ваших устройствах.</string>
+    <string name="welcome_help">Создайте базу или откройте имеющуюся.</string>
+    <string name="recent_databases">Последние базы</string>
+    <string name="working_copy">Внутренняя рабочая копия</string>
+    <string name="working_copy_locked">Внутренняя копия · заблокирована</string>
+    <string name="no_groups">Пока нет групп</string>
+    <string name="search_entries">Поиск записей…</string>
+    <string name="clear_search">Очистить поиск</string>
+    <string name="no_search_results">Ничего не найдено</string>
+    <string name="search_help">Измените запрос или область поиска.</string>
+    <string name="expand_group">Раскрыть или свернуть группу</string>
+    <string name="edit_group">Изменить группу</string>
+    <string name="devices_exchange">Устройства и обмен</string>
+    <string name="settings">Настройки</string>
+    <string name="actions">Действия</string>
+    <string name="sort_ascending">Название: А–Я</string>
+    <string name="sort_descending">Название: Я–А</string>
+    <string name="no_local_drafts">Нет локальных черновиков</string>
+    <string name="database_locked">База заблокирована</string>
+    <string name="choose_another_database">Выбрать другую базу…</string>
+    <string name="never_expires">Бессрочно</string>
+    <string name="device_settings">На этом устройстве</string>
+    <string name="database_settings">База данных</string>
+    <string name="theme">Тема приложения</string>
+    <string name="theme_system">Системная</string>
+    <string name="theme_light">Светлая</string>
+    <string name="theme_dark">Тёмная</string>
+    <string name="generated_value">Результат</string>
+    <string name="language">Язык</string>
+    <string name="reset_appearance">Сбросить оформление</string>
+    <string name="copy_invitation">Копировать код</string>
+    <string name="invitation_expired">Приглашение истекло</string>
+    <string name="new_invitation">Создать новое приглашение</string>
+</resources>

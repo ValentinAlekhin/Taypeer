@@ -141,7 +141,7 @@ impl Document {
         Ok(result)
     }
 
-    pub(super) fn position(
+    pub(crate) fn position(
         &self,
         parent: Option<&GroupRef>,
         position: &SiblingPosition,
@@ -208,27 +208,9 @@ impl Document {
             .transpose()?
             .unwrap_or_else(|| self.clone());
         let address = objects::single(&basis.doc, &ObjectId::Group(request.group.clone()))?;
-        if objects::purge(&self.doc, &address)?.is_some() {
-            return Err(Error::NotFound);
-        }
         let node = groups::read_group(&basis.doc, &address)?;
-        if self.object_status(&address)?.0 == ObjectStatus::Trashed {
-            return Err(Error::InvalidContext);
-        }
-        if objects::single(&self.doc, &address.object)? != address {
-            return Err(Error::InvalidContext);
-        }
-        let destination = self.destination(request.parent.clone())?;
-        let subtree = basis.selected_subtree(&address)?;
-        if destination
-            .as_ref()
-            .is_some_and(|p| subtree.contains(&ObjectAddress::from(p.clone())))
-        {
-            return Err(Error::InvalidContext);
-        }
-        if basis.destination(request.parent.clone())? != destination {
-            return Err(Error::InvalidContext);
-        }
+        let destination =
+            self.reviewed_group_destination(&basis, &address, request.parent.clone())?;
         if let Some(name) = &request.name {
             validate_group_name(name)?;
         }

@@ -5,6 +5,7 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.system.Os
 import android.system.OsConstants
+import android.system.ErrnoException
 import dev.taypeer.bridge.AndroidException
 import dev.taypeer.bridge.CredentialPort
 import java.io.File
@@ -16,9 +17,14 @@ import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.AEADBadTagException
 
 /** Host-only credentials. The master password is never passed to this store. */
-class KeystoreCredentials(context: Context) : CredentialPort {
+class KeystoreCredentials internal constructor(
+    context: Context,
+    private val syncDirectory: (File) -> Unit,
+) : CredentialPort {
+    constructor(context: Context) : this(context, ::syncCredentialDirectory)
     private val directory = File(context.noBackupFilesDir, "credentials")
     private val keystore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
 
@@ -26,24 +32,30 @@ class KeystoreCredentials(context: Context) : CredentialPort {
     override fun get(service: String, account: String): ByteArray? = guarded {
         val address = address(service, account)
         val file = file(address)
-        if (!file.exists()) return@guarded null
-        require(file.length() in 29..(MAX_BYTES + 29).toLong())
-        val encoded = ByteArray(file.length().toInt())
+        val size = try { Os.stat(file.path).st_size }
+            catch (error: ErrnoException) {
+                if (error.errno == OsConstants.ENOENT) return@guarded null
+                throw error
+            }
+        if (size !in 29..(MAX_BYTES + 29).toLong()) throw AndroidException.ProfileInvalid()
+        val encoded = ByteArray(size.toInt())
         java.io.DataInputStream(file.inputStream()).use {
             it.readFully(encoded)
-            require(it.read() == -1)
+            if (it.read() != -1) throw AndroidException.ProfileInvalid()
         }
-        require(encoded[0] == 1.toByte())
+        if (encoded[0] != 1.toByte()) throw AndroidException.ProfileInvalid()
         val key = keystore.getKey(ALIAS, null) as? SecretKey ?: error("Unavailable key")
         Cipher.getInstance("AES/GCM/NoPadding").run {
             init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(128, encoded.copyOfRange(1, 13)))
             updateAAD(address)
-            doFinal(encoded, 13, encoded.size - 13)
+            try { doFinal(encoded, 13, encoded.size - 13) }
+            catch (_: AEADBadTagException) { throw AndroidException.ProfileInvalid() }
         }
     }
 
     @Synchronized
     override fun set(service: String, account: String, bytes: ByteArray) {
+        var published = false
         try {
             guarded {
                 require(bytes.size <= MAX_BYTES)
@@ -63,13 +75,17 @@ class KeystoreCredentials(context: Context) : CredentialPort {
                         it.fd.sync()
                     }
                     Os.rename(temporary.path, file(address).path)
-                    val parent = Os.open(directory.path, OsConstants.O_RDONLY, 0)
-                    try { Os.fsync(parent) } finally { Os.close(parent) }
+                    published = true
+                    // Closing and syncing the directory belong to publication ACK.
+                    syncDirectory(directory)
                 } finally {
                     // Only an unpublished encrypted staging object can remain here.
                     if (temporary.exists()) temporary.delete()
                 }
             }
+        } catch (error: Exception) {
+            if (published) throw AndroidException.CommitUncertain()
+            throw error
         } finally { bytes.fill(0) }
     }
 
@@ -98,10 +114,16 @@ class KeystoreCredentials(context: Context) : CredentialPort {
         return File(directory, digest.joinToString("") { "%02x".format(it) } + ".credential")
     }
     private inline fun <T> guarded(block: () -> T): T = try { block() }
+        catch (error: AndroidException) { throw error }
         catch (_: Exception) { throw AndroidException.Credentials() }
 
     companion object {
         private const val ALIAS = "dev.taypeer.credentials.v1"
         private const val MAX_BYTES = 65536
     }
+}
+
+private fun syncCredentialDirectory(directory: File) {
+    val parent = Os.open(directory.path, OsConstants.O_RDONLY, 0)
+    try { Os.fsync(parent) } finally { Os.close(parent) }
 }

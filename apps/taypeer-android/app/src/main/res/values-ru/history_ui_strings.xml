@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="view_version">Просмотр</string>
+    <string name="history_empty">Сохранённых версий нет.</string>
+    <string name="choose_group">Выберите группу…</string>
+    <string name="saved_version_title">Версия · %1$s</string>
+    <string name="saved_version_caption">%1$s · сохранённая версия · только просмотр</string>
+    <string name="compare_version">Сравнить с текущей…</string>
+    <string name="compare_versions">Сравнение версий</string>
+    <string name="comparison_caption">%1$s · изменения по полям</string>
+    <string name="selected_version_caption">Выбранная · %1$s</string>
+    <string name="current_version_caption">Текущая версия</string>
+    <string name="selected_value">Выбранная</string>
+    <string name="current_value">Текущая</string>
+    <string name="saved_password">Сохранённый пароль</string>
+    <string name="current_password">Текущий пароль</string>
+    <string name="history_retry_retained">Результат не подтверждён. Повторите ту же версию в той же группе.</string>
+</resources>

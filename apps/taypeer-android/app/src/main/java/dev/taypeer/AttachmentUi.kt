@@ -10,7 +10,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import dev.taypeer.bridge.AttachmentRow
 
-class AttachmentActions(val select: (String?) -> Unit, val export: (String, String?, String, String) -> Unit, val importDatabase: () -> Unit)
+class AttachmentActions(val select: (String?) -> Unit, val export: (String, String?, String, String) -> Unit, val importDatabase: () -> Unit, val selectIcon: () -> Unit = {})
 
 /** Keep registrations outside the secret subtree: an OS picker always backgrounds this Activity. */
 @Composable
@@ -19,6 +19,8 @@ fun rememberAttachmentActions(state: DocumentState): AttachmentActions {
     var exporting by remember { mutableStateOf((state.attachmentSelection as? AttachmentSelection.Export)?.takeIf { it.uri == null }?.operation) }
     val input = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> state.selectedAttachment(importing, uri); importing = null }
     val output = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri -> state.selectedAttachment(exporting, uri); exporting = null }
+    var iconOperation by remember { mutableStateOf(state.icons.file?.takeIf { it.uri == null }?.operation) }
+    val iconInput = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> state.selectedIconFile(iconOperation, uri); iconOperation = null }
     val database = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> state.selectDatabaseImport(uri) }
     return AttachmentActions({ replacement ->
         if (importing != null || exporting != null) state.reportFailure()
@@ -26,7 +28,10 @@ fun rememberAttachmentActions(state: DocumentState): AttachmentActions {
     }, { entry, revision, blob, name ->
         if (importing != null || exporting != null) state.reportFailure()
         else state.prepareExport(entry, revision, blob) { operation -> exporting = operation; output.launch(name) }
-    }, { database.launch(arrayOf("application/octet-stream", "application/x-taypeer", "*/*")) })
+    }, { database.launch(arrayOf("application/octet-stream", "application/x-taypeer", "*/*")) }, {
+        if (importing != null || exporting != null || iconOperation != null) state.reportFailure()
+        else state.prepareIconFile { operation -> iconOperation = operation; iconInput.launch(arrayOf("image/*")) }
+    })
 }
 
 /** UI selects a provider; bounded reads, validation, quotas and encryption stay in Rust. */
@@ -34,6 +39,22 @@ fun rememberAttachmentActions(state: DocumentState): AttachmentActions {
 @OptIn(ExperimentalLayoutApi::class)
 fun Attachments(state: DocumentState, actions: AttachmentActions, rows: List<AttachmentRow>, entry: String?, revision: String? = null, editing: Boolean = false) {
     var rename by remember { mutableStateOf<AttachmentRow?>(null) }
+    AttachmentListContent(rows, entry, revision, editing, !state.navigating,
+        actions.export, { rename = it }, actions.select, state::removeAttachment)
+    rename?.let { row ->
+        var name by remember(row.attachment) { mutableStateOf(row.name) }
+        AlertDialog(onDismissRequest = { rename = null }, title = { Text(stringResource(R.string.rename)) },
+            text = { TextField(name, { name = it }, label = { Text(stringResource(R.string.name)) }, modifier = Modifier.testTag("attachment-name")) },
+            confirmButton = { TextButton({ state.renameAttachment(row.attachment, name); rename = null }, enabled = name.isNotEmpty()) { Text(stringResource(R.string.apply)) } },
+            dismissButton = { TextButton({ rename = null }) { Text(stringResource(R.string.cancel)) } })
+    }
+}
+
+/** Shared native-shaped projection for the live, saved and visual scopes. */
+@Composable
+@OptIn(ExperimentalLayoutApi::class)
+internal fun AttachmentListContent(rows: List<AttachmentRow>, entry: String?, revision: String?, editing: Boolean, enabled: Boolean,
+    export: (String, String?, String, String) -> Unit, rename: (AttachmentRow) -> Unit, select: (String?) -> Unit, remove: (String) -> Unit) {
     Text(stringResource(R.string.attachments), style = MaterialTheme.typography.titleMedium)
     if (rows.isEmpty()) Text(stringResource(R.string.no_attachments))
     rows.forEach { row ->
@@ -42,25 +63,18 @@ fun Attachments(state: DocumentState, actions: AttachmentActions, rows: List<Att
             row.contents.forEach { content ->
                 Text(content.bytes?.let { "$it ${stringResource(R.string.bytes)}" } ?: stringResource(R.string.waiting_attachment))
                 if (entry != null && content.bytes != null) TextButton({
-                    actions.export(entry, revision, content.blob, row.name)
+                    export(entry, revision, content.blob, row.name)
                 }) { Text(stringResource(R.string.download_attachment)) }
             }
             if (editing) FlowRow {
-                TextButton({ rename = row }, enabled = !state.navigating) { Text(stringResource(R.string.rename)) }
-                TextButton({ actions.select(row.attachment) }, enabled = !state.navigating) { Text(stringResource(R.string.replace_file)) }
-                TextButton({ state.removeAttachment(row.attachment) }, enabled = !state.navigating) { Text(stringResource(R.string.remove)) }
+                TextButton({ rename(row) }, enabled = enabled) { Text(stringResource(R.string.rename)) }
+                TextButton({ select(row.attachment) }, enabled = enabled) { Text(stringResource(R.string.replace_file)) }
+                TextButton({ remove(row.attachment) }, enabled = enabled) { Text(stringResource(R.string.remove)) }
             }
         }
     }
-    if (editing) TextButton({ actions.select(null) }, enabled = !state.navigating, modifier = Modifier.testTag("add-attachment")) {
+    if (editing) TextButton({ select(null) }, enabled = enabled, modifier = Modifier.testTag("add-attachment")) {
         Text(stringResource(R.string.add_attachment))
-    }
-    rename?.let { row ->
-        var name by remember(row.attachment) { mutableStateOf(row.name) }
-        AlertDialog(onDismissRequest = { rename = null }, title = { Text(stringResource(R.string.rename)) },
-            text = { TextField(name, { name = it }, label = { Text(stringResource(R.string.name)) }, modifier = Modifier.testTag("attachment-name")) },
-            confirmButton = { TextButton({ state.renameAttachment(row.attachment, name); rename = null }, enabled = name.isNotEmpty()) { Text(stringResource(R.string.apply)) } },
-            dismissButton = { TextButton({ rename = null }) { Text(stringResource(R.string.cancel)) } })
     }
 }
 

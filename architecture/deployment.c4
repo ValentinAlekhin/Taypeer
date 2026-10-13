@@ -41,7 +41,7 @@ deployment {
   android = device 'Телефон владельца' {
     technology 'Android 12+; ARM64'
     host = process 'Host приложения' {
-      description 'Единственный координатор файлов и network host для Activity, фоновых заданий и foreground Service; без открытого документа.'
+      description 'Единственный координатор файлов и network host. Приватный OS crypto adapter допускает transient ReadKey только в native scratch для one-shot FD; UI и runtime host не получают ключ или открытый документ.'
       ui = instanceOf taypeer.android
       ffi = instanceOf taypeer.ffi
       guard = instanceOf taypeer.sessionGuard
@@ -50,6 +50,7 @@ deployment {
       sync = instanceOf taypeer.sync
       trust = instanceOf taypeer.trust
       platform = instanceOf taypeer.androidPlatform
+      biometry = instanceOf taypeer.androidBiometry
     }
     worker = process 'Isolated Service — одно поколение БД' {
       description 'Отдельный bindIsolatedService на сессию. Только переданные дескрипторы и приватный Binder; без каталогов приложения, сети и Keystore. Смерть host отзывает доступ.'

@@ -118,6 +118,30 @@ mod tests {
     }
 
     #[test]
+    fn ended_profile_lease_releases_ownership_despite_an_inherited_descriptor() {
+        let directory = tempfile::tempdir().unwrap();
+        let lease = NativeProfile::acquire_test(directory.path()).unwrap();
+        let transport = lease.profile().transport_public();
+        // dup shares the same OS file description as a descriptor inherited during fork.
+        let inherited = lease._lock.try_clone().unwrap();
+        assert!(matches!(
+            NativeProfile::acquire_test(directory.path()),
+            Err(ProfileError::Busy)
+        ));
+        drop(lease);
+        let replacement = NativeProfile::acquire_test(directory.path()).unwrap();
+        assert_eq!(replacement.profile().transport_public(), transport);
+        // A late close of the inherited handle must not release the replacement's lock.
+        drop(inherited);
+        assert!(matches!(
+            NativeProfile::acquire_test(directory.path()),
+            Err(ProfileError::Busy)
+        ));
+        drop(replacement);
+        assert!(NativeProfile::acquire_test(directory.path()).is_ok());
+    }
+
+    #[test]
     fn corrupt_fixture_state_is_an_error_without_replacement() {
         let directory = tempfile::tempdir().unwrap();
         let credentials = Credentials::Fixture(directory.path().to_owned());

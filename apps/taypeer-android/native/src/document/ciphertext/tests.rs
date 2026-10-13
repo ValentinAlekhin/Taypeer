@@ -269,6 +269,86 @@ impl DocumentPersistence for Port {
     fn discard_draft(&self) -> Result<(), AndroidError> {
         panic!("Ciphertext reply tests never discard local forms")
     }
+    fn recovery_source(
+        &self,
+        operation: String,
+    ) -> Result<Option<CipherRecoverySource>, AndroidError> {
+        let mut source = self.writer.recovery_source(operation)?;
+        if let Some(view) = source.as_mut() {
+            match self.mode.load(Ordering::Relaxed) {
+                INVALID_REPLY => view.source = b"PUBLIC malformed source metadata".to_vec(),
+                UNREADABLE_REPLY => {
+                    let unrelated = self.writer.snapshot()?;
+                    view.candidate = Some(CipherRecoveryArchive {
+                        file: unrelated.file,
+                        root: unrelated.root,
+                        fingerprint: unrelated.fingerprint,
+                    });
+                    // A candidate without its protected identity must fail and release both leases.
+                    view.intent = None;
+                }
+                _ => {}
+            }
+        }
+        Ok(source)
+    }
+}
+
+#[test]
+fn recovery_bootstrap_binds_exact_public_source_without_a_working_copy_claim_on_archive() {
+    use taypeer_runtime::platform_worker::PlatformDocument;
+    let fixture = Fixture::new();
+    let authenticated = fixture.writer.writer.snapshot().unwrap().fingerprint();
+    let operation = Digest::of(b"PUBLIC Native recovery source operation");
+    let frozen = fixture
+        .writer
+        .freeze_recovery(operation.to_string(), authenticated.to_string())
+        .unwrap();
+    fixture.files.release(frozen.archive.file);
+    let remote = fixture.remote(Port::new(&fixture));
+    let recovered = remote.recovery_bootstrap(operation).unwrap().unwrap();
+    assert_eq!(recovered.source.operation, operation);
+    assert_eq!(recovered.source.fingerprint, authenticated);
+    assert_eq!(recovered.original.fingerprint(), authenticated);
+    assert_eq!(
+        remote.working_copy(),
+        fixture.writer.writer.working_copy().unwrap()
+    );
+    assert!(recovered.candidate.is_none());
+    assert!(recovered.identity.is_none());
+    assert!(!fixture.files.bytes.lock().unwrap().is_empty());
+    drop(recovered);
+    assert!(fixture.files.bytes.lock().unwrap().is_empty());
+}
+
+#[test]
+fn malformed_recovery_source_or_candidate_without_intent_releases_every_incoming_lease() {
+    use taypeer_runtime::platform_worker::PlatformDocument;
+    let fixture = Fixture::new();
+    let authenticated = fixture.writer.writer.snapshot().unwrap().fingerprint();
+    let operation = Digest::of(b"PUBLIC Native recovery malformed operation");
+    let frozen = fixture
+        .writer
+        .freeze_recovery(operation.to_string(), authenticated.to_string())
+        .unwrap();
+    fixture.files.release(frozen.archive.file);
+    let port = Port::new(&fixture);
+    let remote = fixture.remote(port.clone());
+    for mode in [INVALID_REPLY, UNREADABLE_REPLY] {
+        port.mode.store(mode, Ordering::Relaxed);
+        assert!(remote.recovery_bootstrap(operation).is_err());
+        assert!(fixture.files.bytes.lock().unwrap().is_empty());
+    }
+    port.mode.store(VALID, Ordering::Relaxed);
+    assert_eq!(
+        remote
+            .recovery_bootstrap(operation)
+            .unwrap()
+            .unwrap()
+            .original
+            .fingerprint(),
+        authenticated
+    );
 }
 
 #[test]

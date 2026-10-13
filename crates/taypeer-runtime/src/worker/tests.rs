@@ -1,9 +1,11 @@
 //! PUBLIC-only process fixture: real dispatch, service and dev7 files, no native credentials.
 mod compatibility;
 mod manual_save;
+mod policy;
 mod presentation;
 mod retained;
 mod retries;
+mod secret_access;
 mod stalled;
 use super::*;
 use crate::{

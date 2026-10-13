@@ -1,0 +1,5 @@
+<resources>
+    <string name="invite_device_title">Пригласить устройство</string>
+    <string name="invitation_database">%1$s · одноразовый код</string>
+    <string name="invitation_approval_hint">Подключение требует подтверждения управляющим устройством.</string>
+</resources>

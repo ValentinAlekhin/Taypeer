@@ -1,0 +1,11 @@
+<resources>
+    <string name="search_scope">Область поиска</string>
+    <string name="search_current">Текущая БД</string>
+    <string name="search_current_named">Текущая БД: %1$s</string>
+    <string name="search_all_unlocked">Все разблокированные БД</string>
+    <string name="search_scope_help">Заблокированные базы и защищённые значения исключены.</string>
+    <string name="search_incomplete">Некоторые источники поиска недоступны. Разблокируйте БД или повторите поиск.</string>
+    <string name="search_result_source">%1$s / %2$s</string>
+    <string name="return_search_results">К результатам поиска</string>
+    <string name="working_copy_open">Внутренняя копия · открыта</string>
+</resources>

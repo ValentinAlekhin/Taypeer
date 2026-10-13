@@ -1,0 +1,7 @@
+<resources>
+    <string name="sort_entries">Sort</string>
+    <string name="sort_title_ascending">Title · A–Z</string>
+    <string name="sort_title_descending">Title · Z–A</string>
+    <string name="sort_username_ascending">Username · A–Z</string>
+    <string name="sort_modified_newest">Modified · newest first</string>
+</resources>

@@ -1,0 +1,11 @@
+<resources>
+    <string name="search_scope">Search scope</string>
+    <string name="search_current">Current database</string>
+    <string name="search_current_named">Current database: %1$s</string>
+    <string name="search_all_unlocked">All unlocked databases</string>
+    <string name="search_scope_help">Locked databases and protected values are excluded.</string>
+    <string name="search_incomplete">Some search sources are unavailable. Unlock the database or retry.</string>
+    <string name="search_result_source">%1$s / %2$s</string>
+    <string name="return_search_results">Back to search results</string>
+    <string name="working_copy_open">Internal working copy · open</string>
+</resources>

@@ -1,0 +1,20 @@
+<resources>
+    <string name="device_name">Имя устройства</string>
+    <string name="device_name_required">Введите имя устройства.</string>
+    <string name="device_name_too_long">Имя устройства должно занимать не более 256 байт UTF-8.</string>
+    <string name="device_name_io">Не удалось сохранить имя устройства. Повторите этот ввод.</string>
+    <string name="device_name_profile_invalid">Не удалось прочитать настройки устройства. Имя не подтверждено.</string>
+    <string name="device_name_profile_busy">Настройки устройства заняты. Повторите этот ввод.</string>
+    <string name="device_name_unconfirmed">Изменение имени не подтверждено. Повторите этот ввод.</string>
+    <string name="device_name_failed">Не удалось подтвердить имя устройства. Повторите этот ввод.</string>
+    <string name="auto_lock">Автоблокировка</string>
+    <string name="clipboard_clear">Очистка буфера</string>
+    <string name="settings_loading">Загрузка…</string>
+    <string name="do_not_clear">Не очищать</string>
+    <string name="custom_duration">Другое время…</string>
+    <string name="duration_seconds">Время, секунды</string>
+    <string name="duration_number_required">Введите целое число секунд.</string>
+    <string name="device_settings_unconfirmed">Не удалось подтвердить изменение. Проверьте текущее значение перед повторной попыткой.</string>
+    <plurals name="after_seconds"><item quantity="one">Через %1$s секунду</item><item quantity="few">Через %1$s секунды</item><item quantity="many">Через %1$s секунд</item><item quantity="other">Через %1$s секунды</item></plurals>
+    <plurals name="after_minutes"><item quantity="one">Через %1$s минуту</item><item quantity="few">Через %1$s минуты</item><item quantity="many">Через %1$s минут</item><item quantity="other">Через %1$s минуты</item></plurals>
+</resources>

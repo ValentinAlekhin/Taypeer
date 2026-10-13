@@ -1,0 +1,5 @@
+<resources>
+    <string name="invite_device_title">Invite a device</string>
+    <string name="invitation_database">%1$s · single-use code</string>
+    <string name="invitation_approval_hint">The managing device must approve the connection.</string>
+</resources>

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="relay_settings">Relay</string>
+    <string name="relay_public">Public relays</string>
+    <string name="relay_disabled">Direct connections only</string>
+    <string name="relay_custom">Custom relay</string>
+    <string name="relay_address">HTTPS address</string>
+    <string name="relay_explanation">Direct connections are preferred. A relay forwards encrypted traffic when a direct connection is unavailable. It does not store your database.</string>
+    <string name="relay_direct_warning">With relays disabled, devices must be directly reachable. Changed addresses after restarting both devices may prevent synchronization.</string>
+    <string name="relay_change_failed">Could not confirm the relay change. Check the setting, HTTPS address and connection, then try again.</string>
+    <string name="relay_load_failed">Could not read the relay setting. Try again.</string>
+</resources>

@@ -1,4 +1,4 @@
-use crate::{Error, MAX_FILE_SIZE};
+use crate::{Error, KdfMeasurement, KdfParameters, MAX_FILE_SIZE};
 use argon2::{Algorithm, Argon2, Params, Version};
 use chacha20poly1305::{
     XChaCha20Poly1305, XNonce,
@@ -17,6 +17,10 @@ pub(super) const MAX_PAYLOAD: u64 = 16 * 1024 * 1024 * 1024;
 pub(super) const MAX_ENCODED_SIZE: u64 =
     HEADER as u64 + MAX_PAYLOAD + (MAX_PAYLOAD.div_ceil(CHUNK as u64) + 1) * 40;
 const MAGIC: &[u8; 8] = b"TAYPEER\0";
+const KDF_MEMORY_KIB: u32 = 64 * 1024;
+const KDF_PARALLELISM: u32 = 1;
+const KDF_MIN_ITERATIONS: u32 = 3;
+const KDF_MAX_ITERATIONS: u32 = 256;
 
 // Keyed local objects have no password wrapper. The prefix is nevertheless
 // authenticated by the existing stream codec, including its random stream ID.
@@ -61,16 +65,33 @@ pub(super) fn random<const N: usize>() -> Result<[u8; N], Error> {
         .map_err(|_| Error::Random)?;
     Ok(bytes)
 }
-fn derive(password: &[u8], salt: &[u8], iterations: u32) -> Result<ReadKey, Error> {
+fn derive_measured(
+    password: &[u8],
+    salt: &[u8],
+    iterations: u32,
+) -> Result<(ReadKey, KdfMeasurement), Error> {
     if password.is_empty() {
         return Err(Error::EmptyPassword);
     }
-    let params = Params::new(64 * 1024, iterations, 1, Some(32)).map_err(|_| Error::InvalidFile)?;
+    let params = Params::new(KDF_MEMORY_KIB, iterations, KDF_PARALLELISM, Some(32))
+        .map_err(|_| Error::InvalidFile)?;
     let mut key = Zeroizing::new([0; 32]);
+    let start = Instant::now();
     Argon2::new(Algorithm::Argon2id, Version::V0x13, params)
         .hash_password_into(password, salt, key.as_mut())
         .map_err(|_| Error::InvalidFile)?;
-    Ok(ReadKey(key))
+    let elapsed_ms = u64::try_from(start.elapsed().as_millis()).map_err(|_| Error::TooLarge)?;
+    Ok((
+        ReadKey(key),
+        KdfMeasurement {
+            parameters: KdfParameters {
+                memory_kib: KDF_MEMORY_KIB,
+                parallelism: KDF_PARALLELISM,
+                iterations,
+            },
+            elapsed_ms,
+        },
+    ))
 }
 fn seal(key: &ReadKey, nonce: &[u8], aad: &[u8], clear: &[u8]) -> Result<Vec<u8>, Error> {
     XChaCha20Poly1305::new_from_slice(key.0.as_ref())
@@ -101,7 +122,7 @@ pub(super) fn validate(header: &[u8], file_length: u64) -> Result<(), Error> {
         return Err(Error::UnsupportedVersion);
     }
     let t = iterations(header)?;
-    if !(3..=256).contains(&t) {
+    if !(KDF_MIN_ITERATIONS..=KDF_MAX_ITERATIONS).contains(&t) {
         return Err(Error::InvalidFile);
     }
     let length = payload_length(header)?;
@@ -138,19 +159,10 @@ pub(super) fn same_key_binding(left: &[u8], right: &[u8]) -> bool {
 }
 
 pub(super) fn create_header(password: &[u8], target_ms: u32) -> Result<(Vec<u8>, ReadKey), Error> {
-    if !(500..=5000).contains(&target_ms) {
-        return Err(Error::InvalidFile);
-    }
+    validate_kdf_target(target_ms)?;
     let salt = random::<16>()?;
-    let start = Instant::now();
-    let trial = derive(password, &salt, 3)?;
-    let elapsed = start.elapsed().as_millis().max(1);
-    let iterations = (u128::from(target_ms) * 3 / elapsed).clamp(3, 256) as u32;
-    let kek = if iterations == 3 {
-        trial
-    } else {
-        derive(password, &salt, iterations)?
-    };
+    let (kek, measurement) = calibrated_kek(password, &salt, target_ms)?;
+    let iterations = measurement.parameters.iterations;
     let key = ReadKey(Zeroizing::new(random()?));
     let mut bytes = Vec::from(MAGIC.as_slice());
     bytes.extend([1, 0, 3, 0]);
@@ -163,9 +175,56 @@ pub(super) fn create_header(password: &[u8], target_ms: u32) -> Result<(Vec<u8>,
     bytes.resize(HEADER, 0);
     Ok((bytes, key))
 }
+pub(super) fn validate_kdf_target(target_ms: u32) -> Result<(), Error> {
+    if !(500..=5000).contains(&target_ms) {
+        return Err(Error::InvalidFile);
+    }
+    Ok(())
+}
+
+pub(super) fn calibrated_kek(
+    password: &[u8],
+    salt: &[u8],
+    target_ms: u32,
+) -> Result<(ReadKey, KdfMeasurement), Error> {
+    validate_kdf_target(target_ms)?;
+    let (trial, measured) = derive_measured(password, salt, KDF_MIN_ITERATIONS)?;
+    let elapsed = u128::from(measured.elapsed_ms.max(1));
+    let iterations = (u128::from(target_ms) * u128::from(KDF_MIN_ITERATIONS) / elapsed).clamp(
+        u128::from(KDF_MIN_ITERATIONS),
+        u128::from(KDF_MAX_ITERATIONS),
+    ) as u32;
+    if iterations == KDF_MIN_ITERATIONS {
+        Ok((trial, measured))
+    } else {
+        derive_measured(password, salt, iterations)
+    }
+}
+
+pub(super) fn kdf_parameters(header: &[u8]) -> Result<KdfParameters, Error> {
+    if header.len() != HEADER || &header[..8] != MAGIC || header[8..12] != [1, 0, 3, 0] {
+        return Err(Error::InvalidFile);
+    }
+    let iterations = iterations(header)?;
+    if !(KDF_MIN_ITERATIONS..=KDF_MAX_ITERATIONS).contains(&iterations) {
+        return Err(Error::InvalidFile);
+    }
+    Ok(KdfParameters {
+        memory_kib: KDF_MEMORY_KIB,
+        parallelism: KDF_PARALLELISM,
+        iterations,
+    })
+}
 
 pub(super) fn unlock_key(header: &[u8], password: &[u8]) -> Result<ReadKey, Error> {
-    let kek = derive(password, &header[16..32], iterations(header)?)?;
+    unlock_key_measured(header, password).map(|(key, _)| key)
+}
+pub(super) fn unlock_key_measured(
+    header: &[u8],
+    password: &[u8],
+) -> Result<(ReadKey, KdfMeasurement), Error> {
+    let parameters = kdf_parameters(header)?;
+    let (kek, measurement) = derive_measured(password, &header[16..32], parameters.iterations)?;
     let raw = open(
         &kek,
         &header[PREFIX..56],
@@ -177,7 +236,7 @@ pub(super) fn unlock_key(header: &[u8], password: &[u8]) -> Result<ReadKey, Erro
         return Err(Error::InvalidFile);
     }
     key.0.copy_from_slice(&raw);
-    Ok(key)
+    Ok((key, measurement))
 }
 
 pub(super) fn chunk_aad(header: &[u8], index: u64, final_chunk: bool) -> Vec<u8> {

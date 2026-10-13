@@ -142,13 +142,18 @@ async fn test_node(key: &TransportKey, backend: Arc<dyn Backend>, relay: Option<
             .bind()
             .await
             .unwrap();
-        let node = Node::from_endpoint(endpoint, backend);
+        let node = Node::from_endpoint(endpoint, backend, TemporaryStorage::default());
         node.online().await.unwrap();
         node
     } else {
-        Node::bind(key, &RelaySetting::Disabled, backend)
-            .await
-            .unwrap()
+        Node::bind(
+            key,
+            &RelaySetting::Disabled,
+            backend,
+            TemporaryStorage::default(),
+        )
+        .await
+        .unwrap()
     }
 }
 
@@ -281,7 +286,7 @@ impl Backend for LostReceipt {
         peer: PublicKey,
         database: &DatabaseId,
         descriptor: CipherObject,
-        file: NamedTempFile,
+        file: CiphertextFile,
     ) -> Result<Digest, Error> {
         let id = self.coordinator.receive(peer, database, descriptor, file)?;
         if self.fail.swap(false, Ordering::SeqCst) {
@@ -497,3 +502,5 @@ fn observe_fork(fail: bool) {
         Err(Error::Trust(taypeer_trust::Error::Fork))
     ));
 }
+
+mod staging;

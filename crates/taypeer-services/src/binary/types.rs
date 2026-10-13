@@ -2,7 +2,10 @@
 use crate::{FieldUpdate, InspectionTarget, ServiceError};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use taypeer_core::{AttachmentId, BlobId, Color, EntryId, GroupId, IconRef, LucideKey, RevisionId};
+use taypeer_core::{
+    AttachmentId, BlobId, Color, DraftId, EntryId, GroupId, IconRef, IconSource, LucideKey,
+    OperationId, RevisionId,
+};
 
 /// Metadata of an explicitly selected attachment stream, independent of its
 /// transient platform capability. The complete declared length is authenticated.
@@ -15,6 +18,24 @@ pub struct AttachmentImport {
     pub replacement: Option<AttachmentId>,
 }
 
+/// Original image from one explicit selection. The operation freezes its source;
+/// an acknowledged retry never acquires the provider or network again.
+pub struct IconImport {
+    /// Complete plaintext length, authenticated with exact EOF while reading.
+    pub length: u64,
+    /// Encrypted provenance; a file source never includes a host path or URI.
+    pub source: IconSource,
+}
+
+/// One already-held favicon original, scoped to its exact causal form.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct StoredFavicon {
+    /// Immutable original identity; a bare identity grants no read authority.
+    pub identity: BlobId,
+    /// Verified available bytes, absent when encrypted content is still missing.
+    pub bytes: Option<u64>,
+}
+
 /// Explicit scope of binary metadata and export; purged objects require a late source.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
@@ -23,8 +44,24 @@ pub enum BinaryTarget {
     Entry(EntryId),
     /// Current active group.
     Group(GroupId),
+    /// Selected icon of one accessible immutable group confirmation.
+    GroupRevision {
+        /// Owning group identity.
+        group: GroupId,
+        /// Exact saved confirmation.
+        revision: RevisionId,
+    },
     /// Active unconfirmed form.
     Draft,
+    /// Exact causal entry or group form, including a retained parked editor.
+    Form(DraftId),
+    /// The currently offered local favicon original for this exact form.
+    FormFavicon {
+        /// Owning causal form.
+        draft: DraftId,
+        /// Exact original returned by stored_favicon; changed candidates reject.
+        identity: BlobId,
+    },
     /// Accessible saved revision.
     Revision {
         /// Owning entry.
@@ -177,6 +214,67 @@ pub struct FaviconResult {
     pub skipped: bool,
     /// Categorized acquisition or persistence error, without response contents.
     pub error: Option<ServiceError>,
+}
+
+/// Bound shared with Android's metadata adapter; original image bytes use a stream.
+pub const FAVICON_PLAN_LIMIT: usize = 1024 * 1024;
+
+/// One explicit group action. A new selection requires a new operation identity.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GroupFaviconRequest {
+    /// Active selected group.
+    pub group: GroupId,
+    /// Include descendant groups when explicitly selected.
+    pub recursive: bool,
+    /// Replace custom icons only when explicitly selected.
+    pub replace: bool,
+    /// Parent operation; freezes group and options before any network request.
+    pub operation: OperationId,
+}
+
+/// Exact child request retained by a live batch. URL is never logged.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FaviconEntryRequest {
+    /// Original group action, including its operation identity.
+    pub batch: GroupFaviconRequest,
+    /// Saved entry selected by the shared service.
+    pub entry: EntryId,
+    /// Exact ordinary URL captured by preparation; no network occurs on decoding.
+    pub url: String,
+    /// Deterministically derived child identity; callers cannot substitute it.
+    pub operation: OperationId,
+}
+
+/// Shared selection result; the platform does not repeat group/icon filtering.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
+pub enum FaviconPlanAction {
+    /// Keep an existing custom icon unchanged.
+    Skipped,
+    /// No ordinary URL exists for this saved entry.
+    MissingUrl,
+    /// Acquire only after the child receipt preflight permits this exact request.
+    Acquire(FaviconEntryRequest),
+}
+
+/// One fixed row of a live-session batch; it contains no protected entry fields.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct FaviconPlanRow {
+    /// Saved entry identity.
+    pub entry: EntryId,
+    /// Ordinary label captured for displaying this operation's result.
+    pub title: String,
+    /// Fixed shared selection.
+    pub action: FaviconPlanAction,
+}
+
+/// Bounded preparation, not a cold-resume journal or an all-or-nothing transaction.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct GroupFaviconPlan {
+    /// Original exact group/options/operation.
+    pub request: GroupFaviconRequest,
+    /// Fixed per-entry actions within this live attempt.
+    pub rows: Vec<FaviconPlanRow>,
 }
 
 /// Validated local image bytes for a bounded inline preview; never fetched from the network.

@@ -6,6 +6,17 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use taypeer_core::{EntryField, FieldValue, OperationId};
 
+// Only errors from the unpublished document candidate belong here. Commit and
+// reply failures must keep their original categories so exact intents stay retryable.
+pub(super) fn candidate_input_error(error: taypeer_document::Error) -> ServiceError {
+    match error {
+        taypeer_document::Error::NotFound | taypeer_document::Error::InvalidContext => {
+            ServiceError::InvalidInput
+        }
+        other => other.into(),
+    }
+}
+
 /// Allocate an opaque idempotency key using the operating system random source.
 pub fn new_operation_id() -> Result<OperationId, ServiceError> {
     let mut bytes = [0; 16];
@@ -60,9 +71,10 @@ impl DatabaseService {
         operation: &OperationId,
     ) -> Result<SessionValue<EntryId>, ServiceError> {
         let now = (self.clock)();
-        let result = self
-            .checked_mut(session)?
-            .change(|doc| Ok(doc.clone_entry(entry, group, title, operation, now)?))?;
+        let result = self.checked_mut(session)?.change(|doc| {
+            doc.clone_entry(entry, group, title, operation, now)
+                .map_err(candidate_input_error)
+        })?;
         Ok(stamped(session, result))
     }
 
@@ -77,8 +89,10 @@ impl DatabaseService {
     ) -> Result<SessionValue<EntryId>, ServiceError> {
         let now = (self.clock)();
         let state = self.checked_mut(session)?;
-        let result = state
-            .change(|doc| Ok(doc.restore_revision(entry, revision, group, operation, now)?))?;
+        let result = state.change(|doc| {
+            doc.restore_revision(entry, revision, group, operation, now)
+                .map_err(candidate_input_error)
+        })?;
         Ok(stamped(session, result))
     }
 

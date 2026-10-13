@@ -11,6 +11,7 @@ crate-type = ["cdylib", "rlib"]
 
 [features]
 bindgen = ["uniffi/cli"]
+android-test-support = []
 
 [[bin]]
 name = "taypeer-android-bindgen"
@@ -23,6 +24,7 @@ toml.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+tempfile.workspace = true
 taypeer-core.workspace = true
 taypeer-document.workspace = true
 taypeer-trust.workspace = true
@@ -31,6 +33,17 @@ taypeer-services.workspace = true
 taypeer-runtime.workspace = true
 taypeer-storage.workspace = true
 zeroize.workspace = true
+image.workspace = true
+resvg.workspace = true
+filedescriptor.workspace = true
+rustix.workspace = true
+base64.workspace = true
+rand_core.workspace = true
+
+[dev-dependencies]
+rustix = { workspace = true, features = ["pipe"] }
+iroh-relay = { workspace = true, features = ["server", "test-utils"] }
+tokio.workspace = true
 
 [lints]
 workspace = true

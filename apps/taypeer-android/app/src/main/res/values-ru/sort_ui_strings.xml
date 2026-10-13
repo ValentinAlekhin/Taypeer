@@ -1,0 +1,7 @@
+<resources>
+    <string name="sort_entries">Сортировка</string>
+    <string name="sort_title_ascending">Название · А–Я</string>
+    <string name="sort_title_descending">Название · Я–А</string>
+    <string name="sort_username_ascending">Логин · А–Я</string>
+    <string name="sort_modified_newest">Изменение · новые первыми</string>
+</resources>

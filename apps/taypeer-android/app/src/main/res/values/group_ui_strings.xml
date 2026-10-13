@@ -1,0 +1,5 @@
+<resources>
+    <string name="group_parent">Parent</string>
+    <string name="group_parent_root">Top level</string>
+    <string name="group_parent_unavailable">Unavailable group</string>
+</resources>

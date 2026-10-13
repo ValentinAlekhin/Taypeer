@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="password_change_title">Change master password</string>
+    <string name="password_change_action">Change</string>
+    <string name="revoke_device_title">Revoke device</string>
+    <string name="revoke_device_action">Revoke</string>
+    <string name="revoke_device_warning">The selected device will lose admission after receiving the new state. Previously received data and the old password remain on its copies.</string>
+    <string name="rotation_password_mismatch">The passwords do not match.</string>
+    <string name="rotation_retry_retained">The result is unconfirmed. Retry with the same new password.</string>
+</resources>

@@ -60,12 +60,15 @@ impl Peer {
         }
     }
     fn host(directory: &Path, credentials: &Arc<Credentials>) -> RuntimeHost {
-        RuntimeHost::with_platform_credentials(
+        let host = RuntimeHost::with_platform_credentials(
             directory,
             SessionController::new(Default::default()),
             credentials.clone(),
         )
-        .unwrap()
+        .unwrap();
+        host.set_relay_preference(RelayPreference::Disabled)
+            .unwrap();
+        host
     }
     fn restart(self) -> Self {
         let Self {
@@ -553,4 +556,57 @@ fn lazy_linux_profile_rejects_public_platform_proof_without_enrollment() {
     assert!(lazy.pending_join_summaries().unwrap().is_empty());
     assert!(lazy.working_copies().unwrap().is_empty());
     assert!(lazy.network.lock().unwrap().is_empty());
+}
+
+#[test]
+fn public_policy_keeps_real_direct_exchange_available_when_its_relay_is_unreachable() {
+    let mut fixture = Fixture::new();
+    fixture.manager.host.stop_network();
+    fixture
+        .manager
+        .host
+        .set_relay_preference(RelayPreference::Public)
+        .unwrap();
+    // Only the bound relay is a synthetic fault: the real Public policy still
+    // performs its normal initial online check and decides whether to retain LAN.
+    *fixture
+        .manager
+        .host
+        .public_relay_bind_override
+        .lock()
+        .unwrap() = Some(RelaySetting::Custom("https://127.0.0.1:9".parse().unwrap()));
+    fixture.manager.host.start_configured_network().unwrap();
+    assert!(fixture.manager.host.network_snapshot().unwrap().running);
+    assert!(fixture.manager.host.relay_preference().unwrap() == RelayPreference::Public);
+    let recipient = fixture.peer("PUBLIC-offline-relay-recipient");
+    let (code, proof, request) = fixture.request(&recipient);
+    fixture.approve(request);
+    let path = receive(&recipient, &code, &proof);
+    fixture
+        .service
+        .create_group(
+            &fixture.session,
+            "PUBLIC direct after relay failure".into(),
+            None,
+            &OperationId::new("PUBLIC direct fallback group"),
+        )
+        .unwrap();
+    recipient
+        .host
+        .exchange(
+            fixture.manager.host.network_node().unwrap().address(),
+            fixture.session.database.clone(),
+        )
+        .unwrap();
+    recipient.assert_no_author_read();
+    let mut reader = DatabaseService::new();
+    let session = recipient
+        .host
+        .open_local(&mut reader, &path, PASSWORD, None)
+        .unwrap();
+    reader.apply_received(&session).unwrap();
+    assert_eq!(
+        reader.group_info(&session).unwrap()[0].group.name,
+        "PUBLIC direct after relay failure"
+    );
 }

@@ -23,6 +23,7 @@ mod codec;
 mod fields;
 mod groups;
 mod history;
+pub use history::{DatabaseRevisionRestore, GroupRevisionRestore};
 mod lifecycle;
 mod metadata;
 mod objects;
@@ -742,15 +743,23 @@ impl Document {
     pub fn entries(&self) -> Result<Vec<EntrySnapshot>, Error> {
         let root = object(&self.doc, &ROOT, "entries")?;
         let groups = self.groups()?;
+        // One query owns only operation timestamps. Neither full revision snapshots
+        // nor protected field values are cached beyond their existing projections.
+        let times = projection::SavedOperationTimes::read(&self.doc)?;
         let mut result = Vec::new();
         for key in self.doc.keys(root) {
             let id = EntryId::new(key);
             let address = objects::single(&self.doc, &ObjectId::Entry(id.clone()))?;
-            let (status, _) = self.object_status(&address)?;
+            let (status, _) = self.object_status_with_times(&address, Some(&times))?;
             if status != ObjectStatus::Active {
                 continue;
             }
-            let snapshot = read_entry(&self.doc, &id, None)?;
+            let snapshot = projection::read_entry_generation_with_times(
+                &self.doc,
+                &address,
+                None,
+                Some(&times),
+            )?;
             if groups.iter().any(|group| group.id == snapshot.group_id) {
                 result.push(snapshot);
             }
@@ -760,8 +769,14 @@ impl Document {
 
     /// Read one active entry. Retained trash generations use explicit inspection.
     pub fn entry(&self, id: &EntryId) -> Result<EntrySnapshot, Error> {
-        self.require_active_entry(id)?;
-        read_entry(&self.doc, id, None)
+        let address = objects::single(&self.doc, &ObjectId::Entry(id.clone()))?;
+        // Lifecycle checks and the returned projection use the same immutable
+        // query metadata. Decode history once rather than once for each pass.
+        let times = projection::SavedOperationTimes::read(&self.doc)?;
+        if self.object_status_with_times(&address, Some(&times))?.0 != ObjectStatus::Active {
+            return Err(Error::Conflict);
+        }
+        projection::read_entry_generation_with_times(&self.doc, &address, None, Some(&times))
     }
 
     /// Reads immutable confirmations, sorted by display time and stable revision ID.
@@ -840,18 +855,28 @@ fn random_id() -> String {
 }
 
 fn stored_revisions<R: ReadDoc>(read: &R, id: &EntryId) -> Result<Vec<StoredRevision>, Error> {
-    let root = object(read, &ROOT, "revisions")?;
     let mut result = Vec::new();
+    visit_stored_revisions(read, |stored| {
+        if &stored.revision.entry_id == id {
+            result.push(stored);
+        }
+    })?;
+    Ok(result)
+}
+
+fn visit_stored_revisions<R: ReadDoc>(
+    read: &R,
+    mut visit: impl FnMut(StoredRevision),
+) -> Result<(), Error> {
+    let root = object(read, &ROOT, "revisions")?;
     for key in read.keys(&root) {
         let stored: StoredRevision = decode(&unique(read, &root, &key)?)?;
         if stored.revision.id.as_str() != key {
             return Err(Error::InvalidDocument);
         }
-        if &stored.revision.entry_id == id {
-            result.push(stored);
-        }
+        visit(stored);
     }
-    Ok(result)
+    Ok(())
 }
 
 #[cfg(test)]

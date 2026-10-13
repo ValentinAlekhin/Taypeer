@@ -6,6 +6,9 @@ use taypeer_core::{
     DatabaseSnapshot, GroupSnapshot, OperationId, SavedDatabaseRevision, SavedGroupRevision,
 };
 
+mod restoration;
+pub use restoration::{DatabaseRevisionRestore, GroupRevisionRestore};
+
 pub(super) fn record_group_revision(
     tx: &mut Transaction<'_>,
     address: &ObjectAddress,
@@ -102,6 +105,45 @@ pub(super) fn validate(read: &impl ReadDoc) -> Result<(), Error> {
 }
 
 impl Document {
+    /// Read exactly one accessible original group confirmation, never its current replacement.
+    pub fn group_revision(
+        &self,
+        group: &GroupId,
+        revision: &RevisionId,
+    ) -> Result<SavedGroupRevision, Error> {
+        self.group_history(group)?
+            .into_iter()
+            .find(|saved| &saved.id == revision)
+            .ok_or(Error::NotFound)
+    }
+
+    /// Read exactly one retained descriptive confirmation of this database.
+    pub fn database_revision(&self, revision: &RevisionId) -> Result<SavedDatabaseRevision, Error> {
+        self.database_history()?
+            .into_iter()
+            .find(|saved| &saved.id == revision)
+            .ok_or(Error::NotFound)
+    }
+
+    /// Selected current metadata of an active group; closed generations remain inspection scopes.
+    pub fn group_snapshot(&self, id: &GroupId) -> Result<GroupSnapshot, Error> {
+        self.require_group(id)?;
+        let address = objects::single(&self.doc, &ObjectId::Group(id.clone()))?;
+        Ok(GroupSnapshot {
+            group: groups::selected_group(&groups::read_group(&self.doc, &address)?)?,
+            description: self.group_description(id)?,
+        })
+    }
+
+    /// Current descriptive metadata, excluding policy, trust and local working-copy settings.
+    pub fn database_snapshot(&self) -> Result<DatabaseSnapshot, Error> {
+        Ok(DatabaseSnapshot {
+            database_id: self.database_id.clone(),
+            name: self.display_name()?,
+            description: self.description()?,
+        })
+    }
+
     /// Read immutable group confirmations, including retained trash generations.
     pub fn group_history(&self, id: &GroupId) -> Result<Vec<SavedGroupRevision>, Error> {
         objects::shell(&self.doc, &ObjectId::Group(id.clone()))?;
@@ -194,3 +236,6 @@ impl Document {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod restoration_tests;

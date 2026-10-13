@@ -17,6 +17,11 @@ use taypeer_trust::{Digest, Identity, JoinProof, ObjectKind};
 const PASSWORD: &str = "PUBLIC automation synchronization password";
 const MARKER: &str = "PUBLIC automation synchronization worker";
 
+#[path = "automation_sync_tests/application.rs"]
+mod application_observer_tests;
+#[path = "management_handoff/tests/network.rs"]
+mod management_handoff_tests;
+
 #[test]
 #[ignore = "Private subprocess helper for synthetic synchronization scenarios"]
 fn child() {
@@ -266,7 +271,7 @@ fn deliver(
         peer,
         &snapshot.chain().head().database,
         snapshot.metadata().manifest.body.objects[&id].clone(),
-        staged,
+        staged.reopen().unwrap().into(),
     )
     .unwrap();
 }

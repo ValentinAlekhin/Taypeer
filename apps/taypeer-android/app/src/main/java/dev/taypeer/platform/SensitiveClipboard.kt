@@ -17,31 +17,68 @@ import javax.crypto.Mac
 import javax.crypto.SecretKey
 
 /** Application-owned receipt contains an HMAC, never plaintext or a password hash. */
-class SensitiveClipboard(context: Context) {
+class SensitiveClipboard internal constructor(context: Context,
+    private val publish: (ClipboardManager, ClipData) -> Unit,
+) {
+    constructor(context: Context) : this(context, { manager, clip -> manager.setPrimaryClip(clip) })
     private val clipboard = context.getSystemService(ClipboardManager::class.java)
     private val receipt = context.getSharedPreferences("clipboard-ownership", Context.MODE_PRIVATE)
     private val handler = Handler(Looper.getMainLooper())
     private var focused = false
-    private val expire = Runnable { checkExpired() }
+    // An OS/Keystore failure during a timer keeps the durable receipts for the next focus.
+    private val expire = Runnable { try { checkExpired() } catch (_: Exception) { } }
+    private data class Ownership(val token: String, val mac: String, val timed: Boolean,
+        val deadline: Long, val started: Long, val duration: Long)
 
-    fun copy(value: String, seconds: Long = 30) {
-        require(seconds > 0 && seconds <= Long.MAX_VALUE / 1000)
+    /** The caller supplies the loaded Rust-validated policy; null disables our timer. */
+    fun copy(value: String, seconds: UInt?) {
         val now = System.currentTimeMillis()
-        val deadline = Math.addExact(now, Math.multiplyExact(seconds, 1000))
-        val token = UUID.randomUUID().toString()
-        val mac = authenticate(value)
+        val duration = seconds?.toLong()?.times(1000)
+        val deadline = duration?.let { Math.addExact(now, it) }
+        var previous = owners()
+        if (previous.size == 2) {
+            previous = reconcile(previous) ?: throw IllegalStateException("Clipboard ownership remains uncertain")
+        }
+        val candidate = Ownership(UUID.randomUUID().toString(), authenticate(value), duration != null,
+            deadline ?: 0, SystemClock.elapsedRealtime(), duration ?: 0)
         val clip = ClipData.newPlainText("Taypeer", value).apply {
             description.extras = PersistableBundle().apply {
                 putBoolean("android.content.extra.IS_SENSITIVE", true)
-                putString(OWNER, token)
+                putString(OWNER, candidate.token)
             }
         }
-        // Receipt precedes publication: a crash cannot leave an untracked owned secret.
-        check(receipt.edit().putString("token", token).putString("mac", mac)
-            .putLong("deadline", deadline).putLong("started", SystemClock.elapsedRealtime())
-            .putLong("duration", seconds * 1000).commit())
-        clipboard.setPrimaryClip(clip)
-        schedule(deadline)
+        // Persist both possible owners before publication; an uncertain reply cannot forget either.
+        saveOwners(previous + candidate)
+        try {
+            try { publish(clipboard, clip) }
+            catch (denied: SecurityException) {
+                // A definite access denial retains the previous owner's original deadline.
+                saveOwners(previous)
+                throw denied
+            }
+            saveOwners(listOf(candidate))
+        }
+        finally { scheduleOwners() }
+    }
+
+    private fun owners(): List<Ownership> = listOfNotNull(owner(""), owner("candidate."))
+    private fun owner(prefix: String): Ownership? {
+        val token = receipt.getString("${prefix}token", null) ?: return null
+        val mac = receipt.getString("${prefix}mac", null) ?: throw IllegalStateException("Invalid clipboard receipt")
+        return Ownership(token, mac, receipt.getBoolean("${prefix}timed", true),
+            receipt.getLong("${prefix}deadline", 0), receipt.getLong("${prefix}started", 0),
+            receipt.getLong("${prefix}duration", 0)) // Legacy receipts were always timed.
+    }
+    private fun saveOwners(owners: List<Ownership>) {
+        check(owners.size <= 2)
+        val editor = receipt.edit().clear()
+        owners.forEachIndexed { index, owner ->
+            val prefix = if (index == 0) "" else "candidate."
+            editor.putString("${prefix}token", owner.token).putString("${prefix}mac", owner.mac)
+                .putBoolean("${prefix}timed", owner.timed).putLong("${prefix}deadline", owner.deadline)
+                .putLong("${prefix}started", owner.started).putLong("${prefix}duration", owner.duration)
+        }
+        check(editor.commit())
     }
 
     fun focusChanged(value: Boolean) {
@@ -49,28 +86,45 @@ class SensitiveClipboard(context: Context) {
         if (focused) checkExpired()
     }
     private fun checkExpired() {
-        val token = receipt.getString("token", null) ?: return
-        val deadline = receipt.getLong("deadline", 0)
-        val started = receipt.getLong("started", 0)
-        val elapsed = SystemClock.elapsedRealtime()
-        val remaining = receipt.getLong("duration", 0) - (elapsed - started)
-        if (elapsed >= started && remaining > 0 && System.currentTimeMillis() < deadline) {
-            handler.removeCallbacks(expire)
-            handler.postDelayed(expire, minOf(remaining, deadline - System.currentTimeMillis()))
+        val retained = owners()
+        val current = reconcile(retained)
+        if (current == null) {
+            // Unavailable reads do not prove either value disappeared. Wait for focus after expiry.
+            scheduleOwners(includeExpired = false)
             return
         }
-        if (!focused) return // Android may deny clipboard reads while unfocused.
-        val clip = try { clipboard.primaryClip } catch (_: SecurityException) { return }
-            ?: return // Unavailable is not evidence that the original value disappeared.
-        val text = if (clip.itemCount == 1) clip.getItemAt(0).text?.toString() else null
-        val owns = clip.description.extras?.getString(OWNER) == token && text != null &&
-            MessageDigest.isEqual(authenticate(text).toByteArray(), receipt.getString("mac", "")!!.toByteArray())
-        if (owns) clipboard.clearPrimaryClip()
-        receipt.edit().clear().commit()
+        val owner = current.singleOrNull()
+        if (owner != null && owner.timed && remaining(owner) <= 0) {
+            clipboard.clearPrimaryClip()
+            saveOwners(emptyList())
+        }
+        scheduleOwners(includeExpired = false)
     }
-    private fun schedule(deadline: Long) {
+    /** Null means unavailable; an empty result means a readable foreign clip, never ours. */
+    private fun reconcile(owners: List<Ownership>): List<Ownership>? {
+        if (owners.isEmpty()) return emptyList()
+        if (!focused) return null // Android may deny clipboard reads while unfocused.
+        val clip = try { clipboard.primaryClip } catch (_: SecurityException) { return null }
+            ?: return null
+        val text = if (clip.itemCount == 1) clip.getItemAt(0).text?.toString() else null
+        val owner = owners.firstOrNull { it.token == clip.description.extras?.getString(OWNER) }
+        val matches = owner != null && text != null &&
+            MessageDigest.isEqual(authenticate(text).toByteArray(), owner.mac.toByteArray())
+        val current = if (matches) listOf(owner!!) else emptyList()
+        if (current != owners) saveOwners(current)
+        return current
+    }
+    private fun remaining(owner: Ownership): Long {
+        val elapsed = SystemClock.elapsedRealtime()
+        if (elapsed < owner.started) return 0 // Reboot invalidates the old monotonic deadline.
+        return minOf(owner.duration - (elapsed - owner.started), owner.deadline - System.currentTimeMillis())
+            .coerceAtLeast(0)
+    }
+    private fun scheduleOwners(includeExpired: Boolean = true) {
         handler.removeCallbacks(expire)
-        handler.postDelayed(expire, (deadline - System.currentTimeMillis()).coerceAtLeast(0))
+        val delay = owners().filter(Ownership::timed).map(::remaining)
+            .filter { includeExpired || it > 0 }.minOrNull() ?: return
+        handler.postDelayed(expire, delay)
     }
     private fun authenticate(value: String): String {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }

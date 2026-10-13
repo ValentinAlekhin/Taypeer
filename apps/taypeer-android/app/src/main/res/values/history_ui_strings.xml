@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="view_version">View</string>
+    <string name="history_empty">No saved versions.</string>
+    <string name="choose_group">Choose a group…</string>
+    <string name="saved_version_title">Version · %1$s</string>
+    <string name="saved_version_caption">%1$s · saved version · read only</string>
+    <string name="compare_version">Compare with current…</string>
+    <string name="compare_versions">Compare versions</string>
+    <string name="comparison_caption">%1$s · field changes</string>
+    <string name="selected_version_caption">Selected · %1$s</string>
+    <string name="current_version_caption">Current version</string>
+    <string name="selected_value">Selected</string>
+    <string name="current_value">Current</string>
+    <string name="saved_password">Saved password</string>
+    <string name="current_password">Current password</string>
+    <string name="history_retry_retained">The result is unconfirmed. Retry the same version and destination.</string>
+</resources>

@@ -1,0 +1,16 @@
+<resources>
+    <string name="biometric_setting">Биометрия для этой БД</string>
+    <string name="biometric_enabled">Включена на этом устройстве</string>
+    <string name="biometric_disabled">Выключена</string>
+    <string name="biometric_needs_master">Разблокируйте мастер-паролем и настройте биометрию заново</string>
+    <string name="biometric_pending">Настройку нужно подтвердить; повторите ожидающую операцию</string>
+    <string name="biometric_checking">Проверка биометрии…</string>
+    <string name="biometric_failed">Не удалось подтвердить биометрию. Разблокируйте мастер-паролем, чтобы повторить.</string>
+    <string name="biometric_unavailable">Надёжная биометрия недоступна или не настроена на устройстве</string>
+    <string name="biometric_enable">Включить биометрию</string>
+    <string name="biometric_disable">Выключить биометрию</string>
+    <string name="biometric_unlock">Разблокировать биометрией</string>
+    <string name="biometric_master_password">Использовать мастер-пароль</string>
+    <string name="biometric_prompt_title">Разблокировать эту БД</string>
+    <string name="biometric_prompt_subtitle">Подтвердите биометрией устройства</string>
+</resources>

@@ -1,0 +1,27 @@
+<resources>
+    <string name="entry_preview">Предпросмотр записи</string>
+    <string name="lucide_icons">Lucide Icons…</string>
+    <string name="loaded_favicon">Загруженный favicon</string>
+    <string name="icon_from_url">Загрузить по URL…</string>
+    <string name="icon_from_file">Выбрать файл…</string>
+    <string name="icon_original_unavailable">Оригинал изображения недоступен</string>
+    <string name="select_icon">Выбрать</string>
+    <string name="download_icon">Загрузить значок</string>
+    <string name="download_icon_action">Загрузить</string>
+    <string name="image_url">URL изображения</string>
+    <string name="icon_download_help">Запрос выполняется только после «Загрузить». Изображение до 1 МиБ.</string>
+    <string name="icon_outcome_unknown">Операция со значком не подтверждена. Повторите тот же запрос перед изменением или сохранением формы.</string>
+    <string name="icon_invalid_url">Введите поддерживаемый HTTP или HTTPS URL.</string>
+    <string name="icon_network_boundary">Перенаправление пересекло недопустимую сетевую границу.</string>
+    <string name="icon_network_failed">Не удалось загрузить изображение. Проверьте соединение и повторите.</string>
+    <string name="icon_timeout">Время загрузки истекло. Повторите попытку.</string>
+    <string name="icon_too_large">Изображение больше 1 МиБ.</string>
+    <string name="icon_invalid_image">Формат или содержимое изображения не поддерживается.</string>
+    <string name="icon_file_failed">Не удалось прочитать выбранное изображение.</string>
+    <string name="selected_icon_ready">Выбранный значок готов.</string>
+    <string name="use_selected_icon">Использовать выбранный значок</string>
+    <string name="download_favicon">Загрузить favicon</string>
+    <string name="search_icons">Найти значок…</string>
+    <string name="icon_title">Значок</string>
+    <string name="lucide_picker_title">Значки Lucide</string>
+</resources>

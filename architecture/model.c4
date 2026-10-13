@@ -33,31 +33,31 @@ model {
     android = app 'Приложение Android' {
       #partial
       technology 'Kotlin + Jetpack Compose / AndroidX'
-      description 'Каталог, документный Compose UI, история и обмен через общий Rust runtime. Генератор использует общие сервисы; физическая приёмка остаётся открытой. Spike — исторический стенд.'
+      description 'Каталог, документный Compose UI, история и обмен через общий Rust runtime. Поиск выбирает текущую или все OPEN-БД; masked строки упорядочиваются локально с сохранением ID выбора. Неактивные workers сохраняют отдельные сессии. Физическая приёмка остаётся открытой.'
       metadata { source 'apps/taypeer-android/app/src/main/java/dev/taypeer/MainActivity.kt'; evidence 'apps/taypeer-android/README.md'; contract 'docs/architecture.md' }
     }
     ffi = component 'Адаптер UniFFI' {
       #partial
       technology 'Rust + UniFFI'
-      description 'Типизированные команды, ограниченные представления и события с БД, поколением и ID запроса; без универсального JSON API.'
+      description 'Формы, версии, корзина и политики. Чистый Rust-пресет срока вычисляет абсолютный UTC-момент для существующего черновика. Значки и ciphertext export выполняются в host Rust; worker владеет открытым документом. Настройки подтверждаются записью; поколения ограничивают ответы.'
       metadata { source 'apps/taypeer-android/native/src/lib.rs'; evidence 'apps/taypeer-android/README.md'; contract 'docs/architecture.md' }
     }
     secretWorker = component 'Процесс открытой БД' {
       #partial
       technology 'Rust; отдельный процесс'
-      description 'Владеет открытым документом, ключами БД и авторским ключом. Linux передаёт host только независимую транспортную capability. Блокировка инвалидирует сессию и завершает процесс даже при ошибке черновика.'
+      description 'Открытый документ, ключи и неподтверждённая публикация принадлежат worker. Host получает транспортную capability. Recovery фиксирует ciphertext snapshot; чтение fork не разрешает старую цепочку. Блокировка отзывает доступ и при ошибке черновика.'
       metadata { source 'crates/taypeer-runtime/src/lib.rs'; contract 'docs/runtime.md'; evidence 'crates/taypeer-runtime/src/worker/tests/presentation.rs' }
     }
     sessionGuard = component 'Контроль времени жизни сессий' {
       #partial
       technology 'Rust; runtime'
-      description 'Общий монотонный таймер, инвалидирование ответов и завершение процессов desktop/Android независимо от команд. AppKit и Linux-адаптер передают события ОС; нативная приёмка остаётся открытой.'
+      description 'Общий монотонный таймер и независимый отзыв процессов. Ручная блокировка затрагивает выбранную БД; Android background и события ОС отзывают все сессии и поисковые проекции. Нативная приёмка остаётся открытой.'
       metadata { source 'crates/taypeer-runtime/src/session/mod.rs'; contract 'docs/sessions.md'; evidence 'crates/taypeer-runtime/src/worker/tests.rs' }
     }
     host = component 'Профиль и рабочие копии' {
       #partial
       technology 'Rust; runtime'
-      description 'Существующий RuntimeHost; целевой общий владелец профиля, внутреннего каталога и рабочих путей desktop/Android. Публикация регистрации следует надёжной записи.'
+      description 'RuntimeHost владеет профилем, локальными настройками и рабочими путями. Recovery proof и неизменяемый ciphertext export не раскрывают документ. Имя устройства не меняет сетевую идентичность; ACK следует надёжной публикации.'
       metadata { source 'crates/taypeer-runtime/src/host.rs'; contract 'docs/storage.md' }
     }
     coordinator = component 'Координатор рабочей копии' {
@@ -78,8 +78,8 @@ model {
       #partial
       style { border solid }
       technology 'Rust'
-      description 'Rust-команды и поколения сессий. Ручное подтверждение адресных снимков, обязательная группа записи, коллекция локальных зашифрованных черновиков и безопасные повторы.'
-      metadata { source 'crates/taypeer-services/src/lib.rs'; contract 'docs/architecture.md' }
+      description 'Формы и адресное размещение группы в одном Save. Typed история записей, групп и метаданных БД; exact Restore и локальные зашифрованные черновики. Поколения ограничивают доступ и ответы.'
+      metadata { source 'crates/taypeer-services/src/lib.rs'; contract 'docs/runtime.md' }
     }
     document = component 'Документ и объединение' {
       #partial
@@ -106,7 +106,7 @@ model {
       #partial
       style { border solid }
       technology 'Rust + Iroh'
-      description 'Получение и пересылка, включая заблокированную БД; без ключей чтения.'
+      description 'Приём и пересылка ciphertext, включая заблокированную БД, с явным источником временных файлов от host; без ключей чтения.'
       metadata { source 'crates/taypeer-sync/src/lib.rs'; contract 'docs/p2p.md'; evidence 'docs/p2p-acceptance.md' }
     }
     trust = component 'Допуск и управление' {
@@ -131,7 +131,7 @@ model {
     generator = component 'Генератор секретов' {
       #partial
       technology 'Rust'
-      description 'Пароли и фразы из встроенного словаря с криптографическим источником случайности.'
+      description 'Пароли и фразы из встроенного словаря с криптографическим источником случайности. UI получает значение и известную энтропию выбранного метода из общего результата; оценки не дублируются в Kotlin.'
       metadata { source 'crates/taypeer-services/src/generator.rs'; contract 'spec.md' }
     }
     theme = component 'Тема и локальные настройки' {
@@ -142,7 +142,7 @@ model {
     }
     iconLoader = component 'Загрузка иконок' {
       #partial
-      description 'Явные HTTP(S)-запросы, проверка изображений и ограниченные ресурсы; результат входит в черновик. Локальные адреса разрешены, переход с публичного сайта внутрь сети запрещён.'
+      description 'Явные ограниченные HTTP(S)-запросы и общая проверка изображений. Android получает одиночные и групповые значки в host; worker проверяет точный запрос и сохраняет выбранный поток. Локальные адреса разрешены; переход с публичного сайта внутрь сети запрещён.'
       metadata { source 'crates/taypeer-services/src/icons/mod.rs'; contract 'docs/runtime.md'; evidence 'crates/taypeer-services/src/icons/tests.rs' }
     }
     macPlatform = component 'Адаптеры macOS' {
@@ -171,8 +171,14 @@ model {
     androidPlatform = component 'Адаптеры Android' {
       #partial
       technology 'Kotlin + AndroidX'
-      description 'SAF, Keystore, Binder и bindIsolatedService, буфер, lifecycle и фоновые задания. Выбранные пользователем вложения передаются отдельными ограниченными потоками; ciphertext persistence не получает plaintext. Контроль worker независим от команд; биометрия отложена.'
+      description 'SAF, Keystore, Binder, lifecycle и фоновые задания. Явная внешняя копия подтверждается завершением выбранного output; recovery gateway подтверждает закрытие source writer. Камера заполняет приглашение; буфер очищается по владению.'
       metadata { source 'apps/taypeer-android/app/src/main/java/dev/taypeer/platform/DocumentService.kt'; evidence 'apps/taypeer-android/README.md'; contract 'docs/architecture.md' }
+    }
+    androidBiometry = component 'Приватный OS crypto adapter' {
+      #planned
+      technology 'Rust Native; Android Keystore; AndroidX; JNI / C++'
+      description 'Fixed trusted OS port при создании Host; Native bounded durable registry и auth-bound RSA wrapper одной копии. Настоящий CryptoObject и private owned FD; UI, runtime host и сеть не получают ReadKey.'
+      metadata { contract 'docs/android-biometry.md' }
     }
     vault = store 'Рабочий файл .taypeer' {
       #partial
@@ -182,7 +188,7 @@ model {
     }
     local = store 'Локальное состояние устройства' {
       #planned
-      description 'Раздельное хранение приватных допусков, биометрии, коллекции зашифрованных черновиков и настроек; черновики не синхронизируются.'
+      description 'Приватные допуски, биометрия, зашифрованные черновики с квитанциями и оригиналами значков, настройки и отметки доступа. Локальное состояние не синхронизируется.'
       metadata { contract 'docs/data-model.md#8-локальная-модель' }
     }
     demo = store 'Демонстрационные данные в памяти' {
@@ -195,10 +201,11 @@ model {
   }
 
   taypeer.desktop -> taypeer.host 'Общий профиль и внутренние рабочие копии'
-  taypeer.ffi -> taypeer.host 'Внутренний каталог через платформенные файловые возможности'
-  taypeer.host -> taypeer.local 'Регистрация и локальная коллекция'
+  taypeer.ffi -> taypeer.host 'Рабочие копии и подтверждённые локальные настройки'
+  taypeer.host -> taypeer.local 'Регистрация, настройки и локальная коллекция'
   taypeer.host -> taypeer.coordinator 'Единственный ciphertext writer'
   taypeer.host -> taypeer.storage 'Надёжная публикация подготовленных файлов'
+  taypeer.host -> taypeer.sync 'Транспорт и источник временных файлов'
   taypeer.host -> taypeer.vault 'Рабочие пути и явный перенос'
   taypeer.desktop -> taypeer.linuxPlatform 'События ОС, буфер и диалоги'
   taypeer.linuxPlatform -> linuxos 'logind, ScreenSaver и Wayland'
@@ -229,9 +236,13 @@ model {
   taypeer.ffi -> taypeer.sessions 'Сценарии Rust внутри isolated worker'
   taypeer.ffi -> taypeer.sessionGuard 'Поколения и независимый отзыв доступа'
   taypeer.ffi -> taypeer.coordinator 'Файлы и ciphertext независимо от разблокировки'
+  taypeer.ffi -> taypeer.iconLoader 'Явное получение и локальный предпросмотр значка'
+  taypeer.ffi -> taypeer.androidPlatform 'Выбранный output, отмена и подтверждение ciphertext export'
   taypeer.sessionGuard -> taypeer.androidPlatform 'Неблокирующее завершение isolated Service'
   taypeer.secretWorker -> taypeer.androidPlatform 'Приватный Binder и переданные дескрипторы'
-  taypeer.storage -> taypeer.androidPlatform 'Источник дескрипторов для ciphertext staging в isolated worker'
+  taypeer.androidPlatform -> taypeer.host 'Ciphertext recovery gateway, защищённый proof и закрытие source writer'
+  taypeer.storage -> taypeer.androidPlatform 'Дескрипторы ciphertext staging и ограниченный явный export'
+  taypeer.androidPlatform -> files 'Явно выбранный SAF output и завершение записи'
   taypeer.sessions -> taypeer.core 'Правила предметной области'
   taypeer.sessions -> taypeer.document 'Правки и объединение'
   taypeer.sessions -> taypeer.crypto 'Защита содержимого'
@@ -253,6 +264,7 @@ model {
   taypeer.evolution -> taypeer.trust 'Проверка полномочий и происхождения'
   taypeer.sync -> taypeer.trust 'Проверка допуска'
   taypeer.sync -> taypeer.coordinator 'Сохранение входящих объектов и получение ciphertext'
+  taypeer.sync -> taypeer.storage 'Ограниченный ciphertext staging'
   taypeer.sync -> taypeer.local 'Сетевые учётные данные'
   taypeer.trust -> taypeer.local 'Приватные полномочия устройства'
   taypeer.trust -> taypeer.storage 'Подписанное состояние управления'
@@ -261,12 +273,60 @@ model {
   taypeer.desktop -> taypeer.macPlatform 'Файловые диалоги, буфер и события ОС'
   taypeer.android -> taypeer.androidPlatform 'Платформенные действия'
   taypeer.macPlatform -> macos 'API ОС'
-  taypeer.androidPlatform -> androidos 'API ОС'
+  taypeer.androidPlatform -> androidos 'API ОС; lifecycle камеры и разрешение по действию пользователя'
+  taypeer.android -> taypeer.androidBiometry 'Явное действие и публичный статус выбранной БД' {
+    #planned
+    metadata { contract 'docs/android-biometry.md' }
+  }
+  taypeer.ffi -> taypeer.androidBiometry 'Фиксированный trusted OS port при Host bootstrap; exact Native registry' {
+    #planned
+    metadata { contract 'docs/android-biometry.md' }
+  }
+  taypeer.androidPlatform -> taypeer.androidBiometry 'Приватный launch stamp и одноразовый FD' {
+    #planned
+    metadata { contract 'docs/android-biometry.md' }
+  }
+  taypeer.androidBiometry -> androidos 'Auth-bound Keystore key; настоящий CryptoObject prompt' {
+    #planned
+    metadata { contract 'docs/android-biometry.md' }
+  }
+  taypeer.androidBiometry -> taypeer.local 'Надёжная scoped запись только RSA ciphertext и публичной связи' {
+    #planned
+    metadata { contract 'docs/android-biometry.md' }
+  }
+  taypeer.secretWorker -> taypeer.androidBiometry 'Private OS-key capability; wrapped ciphertext без plaintext ответа' {
+    #planned
+    metadata { contract 'docs/android-biometry.md' }
+  }
+  taypeer.androidBiometry -> taypeer.secretWorker 'Ровно 32 байта ReadKey через одноразовый private FD' {
+    #planned
+    metadata { contract 'docs/android-biometry.md'; source 'apps/taypeer-android/native/src/biometry/key_fd.rs' }
+  }
+  taypeer.sessionGuard -> taypeer.androidBiometry 'Отменить attempt и закрыть FD независимо от provider I/O' {
+    #planned
+    metadata { contract 'docs/android-biometry.md' }
+  }
   taypeer.macPlatform -> taypeer.local 'Защита локальных данных'
   taypeer.androidPlatform -> taypeer.local 'Защита локальных данных'
   taypeer.macPlatform -> taypeer.sessionGuard 'Сон и блокировка пользовательской сессии'
   taypeer.androidPlatform -> taypeer.ffi 'Lifecycle и блокировка'
   taypeer.ffi -> taypeer.sync 'Фоновое получение'
+  taypeer.ffi -> taypeer.host 'Сценарий и квитанции передачи управления' {
+    #planned
+    metadata { contract 'docs/management-handoff.md' }
+  }
+  taypeer.sync -> taypeer.host 'Аутентифицированные запросы передачи управления' {
+    #planned
+    metadata { contract 'docs/management-handoff.md' }
+  }
+  taypeer.host -> taypeer.sessionGuard 'Проверить живое OPEN-поколение передачи' {
+    #planned
+    metadata { contract 'docs/management-handoff.md' }
+  }
+  taypeer.host -> taypeer.secretWorker 'Явное согласие и точный переход управления' {
+    #planned
+    metadata { contract 'docs/management-handoff.md' }
+  }
   taypeer.macPlatform -> taypeer.sync 'Фоновое получение'
   taypeer.desktop -> taypeer.theme 'Палитра GPUI Kit'
   taypeer.android -> taypeer.theme 'Палитра Compose'

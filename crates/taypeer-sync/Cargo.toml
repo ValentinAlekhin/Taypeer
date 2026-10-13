@@ -14,10 +14,10 @@ iroh-relay.workspace = true
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-tempfile.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
+tempfile.workspace = true
 iroh = { workspace = true, features = ["test-utils"] }
 iroh-relay = { workspace = true, features = ["test-utils"] }
 

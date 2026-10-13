@@ -16,12 +16,23 @@ class DocumentUiTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
     private val password = "PUBLIC UI master password"
     private var database = ""
+    private var groupBoundsBeforeClick = "not clicked"
     private fun text(resource: Int) = compose.activity.getString(resource)
-    private fun waitFor(tag: String) = compose.waitUntil(20_000) {
-        compose.onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().isNotEmpty()
+    private fun waitFor(tag: String) {
+        try { compose.waitUntil(20_000) { compose.onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().isNotEmpty() } }
+        catch (error: ComposeTimeoutException) {
+            var state = ""
+            compose.runOnIdle { compose.activity.documentState.let { current ->
+                state = "overview=${current.overview != null}, metadata=${current.metadata != null}, entry=${current.entry != null}, inspected=${current.inspectedEntry != null}, opening=${current.opening}, navigating=${current.navigating}, failure=${current.error}, invalid=${current.invalidInput}, decision=${current.navigationDecision}, groups=${current.overview?.groups?.size}, entries=${current.overview?.entries?.size}, forms=${current.forms.size}, active=${current.activeForm?.kind}, writable=${current.overview?.writable}, selected=${current.selectedGroup != null}, history=${current.history != null}, exchange=${current.exchange != null}, policy=${current.policy != null}"
+            } }
+            val groupBounds = compose.onAllNodes(hasTestTag("add-group")).fetchSemanticsNodes().map { it.boundsInRoot }
+            val routes = listOf("route-entries", "route-welcome", "route-settings", "route-metadata", "route-entry", "route-inspected", "route-authentication", "database-drawer-open", "database-drawer-closed", "drawer-add-group", "theme-system", "master-password", "metadata-name", "entry-title", "unsaved-changes").associateWith { safeTag -> compose.onAllNodes(hasTestTag(safeTag)).fetchSemanticsNodes().size }
+            throw AssertionError("Missing $tag: $state; group bounds before=$groupBoundsBeforeClick after=$groupBounds; safe routes=$routes", error)
+        }
     }
     private fun createDatabase(): String {
         val name = "PUBLIC UI ${UUID.randomUUID().toString().take(8)}"
+        if (compose.onAllNodes(hasTestTag("choose-another-database")).fetchSemanticsNodes().isNotEmpty()) compose.onNodeWithTag("choose-another-database").performClick()
         compose.onNodeWithTag("create-database").performClick()
         compose.onNodeWithTag("database-name").performTextReplacement(name)
         compose.onNodeWithTag("master-password").performTextReplacement(password)
@@ -41,12 +52,16 @@ class DocumentUiTest {
         return File(path)
     }
     private fun createGroup() {
-        compose.onNodeWithTag("add-group").performClick()
+        startGroup()
         waitFor("metadata-name")
         compose.onNodeWithTag("metadata-name").performTextReplacement("PUBLIC UI group")
         compose.onNodeWithTag("save-form").performClick()
         waitFor("add-entry")
         compose.onNodeWithTag("add-entry").assertIsEnabled()
+    }
+    private fun startGroup() {
+        groupBoundsBeforeClick = compose.onNodeWithTag("add-group").fetchSemanticsNode().boundsInRoot.toString()
+        compose.onNodeWithTag("add-group").assertIsEnabled().performClick()
     }
     private fun create() { createDatabase(); createGroup() }
     private fun add() {
@@ -54,8 +69,8 @@ class DocumentUiTest {
         waitFor("entry-title")
     }
     private fun edit() {
-        compose.onNodeWithTag("edit-entry").performScrollTo().performClick()
-        compose.onNodeWithTag("entry-tab-0").performClick()
+        compose.onNodeWithTag("edit-entry").performClick()
+        compose.onNodeWithTag("entry-tab-0").performScrollTo().performClick()
         waitFor("entry-title")
     }
     private fun save() {
@@ -64,29 +79,47 @@ class DocumentUiTest {
         compose.onNodeWithTag("save-form").assertDoesNotExist()
     }
     private fun back() {
-        compose.onNodeWithText(text(R.string.back)).performScrollTo().performClick()
+        compose.onNodeWithTag("navigation-back").performClick()
     }
     private fun unlock() {
-        waitFor("create-database")
-        compose.onNodeWithTag("catalog-$database").performScrollTo().performClick()
+        compose.waitUntil(20_000) { compose.onAllNodes(hasTestTag("master-password")).fetchSemanticsNodes().isNotEmpty() || compose.onAllNodes(hasTestTag("create-database")).fetchSemanticsNodes().isNotEmpty() }
+        if (compose.activity.documentState.lockedCopy?.database != database && compose.onAllNodes(hasTestTag("choose-another-database")).fetchSemanticsNodes().isNotEmpty())
+            compose.onNodeWithTag("choose-another-database").performClick()
+        if (compose.onAllNodes(hasTestTag("master-password")).fetchSemanticsNodes().isEmpty()) compose.onNodeWithTag("catalog-$database").performScrollTo().performClick()
         compose.onNodeWithTag("master-password").performTextReplacement(password)
-        compose.onNodeWithTag("authenticate").performClick()
+        compose.tapWorkingCopyUnlock(database)
     }
     private fun lock() {
-        compose.onNodeWithText(text(R.string.lock)).performClick()
-        waitFor("create-database")
+        compose.onNodeWithTag("screen-actions").performClick()
+        compose.onNodeWithTag("lock-database").performClick()
+        waitFor("database-locked")
     }
     private fun acknowledgedInput() = compose.waitUntil(20_000) {
         compose.activity.documentState.activeForm?.dirty == true && !compose.activity.documentState.navigating
     }
     private fun quiet() { Thread.sleep(800); compose.waitForIdle() }
 
+    @Test fun openingAndUnlockingKeepTheDrawerClosedAndGroupCreationTouchable() {
+        createDatabase()
+        compose.onNodeWithTag("database-drawer-closed").assertExists()
+        compose.onNodeWithTag("database-drawer-open").assertDoesNotExist()
+        createGroup()
+        lock(); unlock()
+        waitFor("add-entry")
+        compose.onNodeWithTag("database-drawer-closed").assertExists()
+        compose.onNodeWithTag("database-drawer-open").assertDoesNotExist()
+        compose.onNodeWithTag("group-menu").performClick()
+        compose.onNodeWithTag("database-drawer-open").assertExists()
+        compose.onNodeWithTag("drawer-lock-database").performScrollTo().performClick()
+        waitFor("database-locked")
+    }
+
     @Test fun firstGroupIsRequiredAndTypingDoesNotCommitUntilSave() {
         createDatabase()
         compose.onNodeWithTag("add-entry").assertIsNotEnabled()
         compose.onNodeWithTag("create-group-first").assertExists()
         val empty = savedFile().readBytes()
-        compose.onNodeWithTag("add-group").performClick()
+        startGroup()
         waitFor("metadata-name")
         compose.onNodeWithTag("metadata-name").performTextReplacement("PUBLIC explicit group")
         acknowledgedInput(); quiet()
@@ -189,7 +222,7 @@ class DocumentUiTest {
         val before = savedFile().readBytes()
         compose.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
         compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
-        waitFor("create-database")
+        waitFor("database-locked")
         compose.onNodeWithTag("entry-username").assertDoesNotExist()
         compose.onNodeWithTag("revealed-secret").assertDoesNotExist()
         quiet()
@@ -218,12 +251,16 @@ class DocumentUiTest {
         compose.onNodeWithTag("attribute-protected-$attribute").performScrollTo().performClick()
         compose.onNodeWithTag("entry-tab-2").performScrollTo().performClick()
         compose.onNodeWithTag("icon-picker").performScrollTo().performClick()
+        waitFor("icon-source-lucide")
+        compose.onNodeWithTag("icon-source-lucide").performClick()
         waitFor("icon-key-key-round")
         compose.onNodeWithTag("icon-key-key-round").performScrollTo().performClick()
+        compose.onNodeWithTag("choose-lucide").performClick()
         acknowledgedInput(); quiet()
         assertArrayEquals(before, savedFile().readBytes())
+        compose.onNodeWithTag("screen-actions").performClick()
         compose.onNodeWithTag("open-generator").performClick()
-        compose.onNodeWithText(text(R.string.library)).performClick()
+        compose.onNodeWithTag("navigation-back").performClick()
         assertArrayEquals(before, savedFile().readBytes())
         save()
         compose.onNodeWithTag("entry-tab-4").performScrollTo().performClick()
@@ -240,7 +277,8 @@ class DocumentUiTest {
         var group = ""
         compose.runOnIdle { group = compose.activity.documentState.selectedGroup!! }
         compose.onNodeWithTag("group-menu").performClick()
-        compose.onNodeWithTag("edit-group-$group").performClick(); waitFor("metadata-name")
+        compose.onNodeWithTag("edit-group-$group").performClick()
+        compose.onNodeWithTag("edit-selected-group").performClick(); waitFor("metadata-name")
         val before = savedFile().readBytes()
         compose.onNodeWithTag("metadata-name").performTextReplacement("PUBLIC renamed group")
         compose.onNodeWithTag("metadata-description").performTextReplacement("PUBLIC group description")
@@ -249,7 +287,11 @@ class DocumentUiTest {
         compose.onNodeWithTag("save-form").performClick(); waitFor("add-entry")
         compose.onNode(hasText("PUBLIC renamed group") and !hasClickAction()).assertExists()
         compose.onNodeWithTag("group-menu").performClick()
-        compose.onNodeWithText(text(R.string.database_info)).performClick(); waitFor("metadata-name")
+        compose.onNodeWithTag("drawer-settings").performClick()
+        waitFor("settings-scope")
+        compose.onNodeWithTag("settings-scope").performClick()
+        compose.onNodeWithTag("settings-scope-database").performClick()
+        compose.onNodeWithTag("database-information").performScrollTo().performClick(); waitFor("metadata-name")
         val grouped = savedFile().readBytes()
         compose.onNodeWithTag("metadata-name").performTextReplacement("PUBLIC renamed database")
         acknowledgedInput(); quiet()
@@ -275,7 +317,7 @@ class DocumentUiTest {
             waitFor("accept-selected-file")
             assertArrayEquals(before, savedFile().readBytes())
             lock()
-            compose.onNodeWithTag("accept-selected-file").assertIsNotEnabled()
+            compose.onNodeWithTag("accept-selected-file").assertDoesNotExist()
             createDatabase()
             compose.onNodeWithTag("accept-selected-file").assertIsNotEnabled()
             lock(); database = originalDatabase
@@ -294,5 +336,77 @@ class DocumentUiTest {
             compose.onNodeWithTag("entry-tab-1").performClick()
             compose.waitUntil(20_000) { compose.onAllNodes(hasText(name)).fetchSemanticsNodes().isNotEmpty() }
         } finally { source.delete() }
+    }
+
+    @Test fun searchUsesTheWholeDatabaseAndClearRestoresTheSelectedGroup() {
+        create(); add()
+        compose.onNodeWithTag("entry-title").performTextReplacement("PUBLIC first group entry")
+        save(); back(); waitFor("add-entry")
+        compose.onNodeWithTag("group-menu").performClick()
+        compose.onNodeWithTag("drawer-add-group").performClick(); waitFor("metadata-name")
+        compose.onNodeWithTag("metadata-name").performTextReplacement("PUBLIC second group")
+        compose.onNodeWithTag("save-form").performClick(); waitFor("add-entry")
+        add(); compose.onNodeWithTag("entry-title").performTextReplacement("PUBLIC second group entry")
+        save(); back(); waitFor("entry-search")
+        compose.onNodeWithText("PUBLIC first group entry").assertDoesNotExist()
+        compose.onNodeWithTag("entry-search").performTextReplacement("PUBLIC first group")
+        compose.waitUntil(20_000) { compose.onAllNodes(hasText("PUBLIC first group entry")).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("clear-search").performClick()
+        compose.waitUntil(20_000) { compose.activity.documentState.query.isEmpty() }
+        compose.onNodeWithText("PUBLIC first group entry").assertDoesNotExist()
+        compose.onNodeWithText("PUBLIC second group entry").assertExists()
+    }
+
+    @Test fun copyOfHiddenPasswordDoesNotRevealItInTheDocumentUi() {
+        create(); add()
+        compose.onNodeWithTag("entry-title").performTextReplacement("PUBLIC hidden copy entry")
+        compose.onNodeWithTag("entry-password").performTextReplacement("PUBLIC hidden copy value")
+        save()
+        compose.waitUntil(20_000) {
+            val state = compose.activity.documentState
+            !state.navigating && state.activeForm == null && state.inspectedEntry?.hasPassword == true
+        }
+        // A physical copy tap must land inside the inspector viewport after the IME closes.
+        compose.runOnIdle {
+            compose.activity.getSystemService(android.view.inputmethod.InputMethodManager::class.java)
+                .hideSoftInputFromWindow(compose.activity.window.decorView.windowToken, 0)
+        }
+        compose.waitUntil(10_000) {
+            compose.activity.window.decorView.rootWindowInsets?.isVisible(android.view.WindowInsets.Type.ime()) != true
+        }
+        compose.onNodeWithText("PUBLIC hidden copy value").assertDoesNotExist()
+        val copyButton = compose.onNodeWithTag("copy-password").performScrollTo().assertIsDisplayed()
+        val copyBounds = copyButton.fetchSemanticsNode().boundsInRoot
+        copyButton.performTouchInput { click() }
+        val clipboard = compose.activity.getSystemService(android.content.ClipboardManager::class.java)
+        try {
+            compose.waitUntil(20_000) {
+                clipboard.primaryClip?.getItemAt(0)?.text?.toString() == "PUBLIC hidden copy value"
+            }
+        } catch (timeout: ComposeTimeoutException) {
+            var flags = ""
+            compose.runOnIdle {
+                val state = compose.activity.documentState
+                val policy = (compose.activity.application as TaypeerApplication).deviceSettings
+                flags = "focus=${compose.activity.hasWindowFocus()}, lifecycle=${compose.activity.lifecycle.currentState}, " +
+                    "policyLoaded=${policy.settings != null}, policyBusy=${policy.busy}, policyFailed=${policy.failed}, " +
+                    "clipboardTimed=${policy.settings?.clipboardSeconds != null}, overview=${state.overview != null}, " +
+                    "hasPassword=${state.inspectedEntry?.hasPassword}, revealed=${state.revealed.isNotEmpty()}, " +
+                    "navigating=${state.navigating}, failed=${state.error}, invalid=${state.invalidInput}, " +
+                    "imeVisible=${compose.activity.window.decorView.rootWindowInsets?.isVisible(android.view.WindowInsets.Type.ime())}, " +
+                    "copyBounds=$copyBounds"
+            }
+            throw AssertionError("Hidden-copy acknowledgement missing; $flags", timeout)
+        }
+        compose.runOnIdle {
+            assertTrue(compose.activity.documentState.revealed.isEmpty())
+            assertEquals("PUBLIC hidden copy value", clipboard.primaryClip?.getItemAt(0)?.text?.toString())
+        }
+        compose.onNodeWithText("PUBLIC hidden copy value").assertDoesNotExist()
+        compose.onNodeWithTag("reveal-password").performScrollTo().assertIsDisplayed().performTouchInput { click() }
+        compose.waitUntil(20_000) { compose.activity.documentState.revealed == "PUBLIC hidden copy value" }
+        compose.onNodeWithText("PUBLIC hidden copy value").assertExists()
+        compose.onNodeWithTag("entry-tab-1").performClick()
+        compose.runOnIdle { assertTrue(compose.activity.documentState.revealed.isEmpty()) }
     }
 }

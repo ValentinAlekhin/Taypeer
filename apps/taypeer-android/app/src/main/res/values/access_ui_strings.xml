@@ -1,0 +1,4 @@
+<resources>
+    <string name="accessed_at">Accessed</string>
+    <string name="access_record_failed">The secret was used, but its local access time could not be saved. Retry saves the time only.</string>
+</resources>

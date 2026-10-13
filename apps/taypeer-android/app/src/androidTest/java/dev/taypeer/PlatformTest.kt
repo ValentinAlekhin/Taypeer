@@ -45,7 +45,7 @@ class PlatformTest {
         assertFalse(encoded.toString(Charsets.ISO_8859_1).contains("PUBLIC-test-credential"))
         encoded[encoded.lastIndex] = (encoded.last().toInt() xor 1).toByte()
         file.writeBytes(encoded)
-        assertThrows(AndroidException.Credentials::class.java) { store.get(service, account) }
+        assertThrows(AndroidException.ProfileInvalid::class.java) { store.get(service, account) }
         assertTrue(file.delete())
     }
 

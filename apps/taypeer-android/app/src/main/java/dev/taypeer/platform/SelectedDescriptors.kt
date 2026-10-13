@@ -95,8 +95,25 @@ private class SelectedDescriptor(file: ParcelFileDescriptor) {
         }
         return selectedIo { duplicate.use { block(it) } }
     }
+    fun finish() {
+        // Completion owns the original provider descriptor, including its close
+        // and reliable error channel. Closing a dup cannot confirm this boundary.
+        val destination = take() ?: throw AndroidException.InvalidOptions()
+        selectedIo {
+            val detectsErrors = destination.use { selected ->
+                val detectsErrors = selected.canDetectErrors()
+                if (detectsErrors) selected.checkError()
+                Os.fsync(selected.fileDescriptor)
+                if (detectsErrors) selected.checkError()
+                detectsErrors
+            }
+            // close() can collect a remote status while closing the error channel.
+            if (detectsErrors) destination.checkError()
+        }
+    }
+    private fun take(): ParcelFileDescriptor? = synchronized(this) { file.also { file = null } }
     fun close() {
-        val removed = synchronized(this) { file.also { file = null } }
+        val removed = take()
         try { removed?.close() } catch (_: Exception) { /* Cleanup is never a successful durability acknowledgement. */ }
     }
 }
@@ -146,7 +163,7 @@ internal class SelectedDescriptorOutput(file: ParcelFileDescriptor) : SelectedOu
             Os.pwrite(selected.fileDescriptor, bytes, 0, bytes.size, position).toUInt()
         }
     } finally { bytes.fill(0) }
-    override fun finish() = descriptor.withFile { selected -> Os.fsync(selected.fileDescriptor) }
+    override fun finish() = descriptor.finish()
     override fun close() = descriptor.close()
 }
 

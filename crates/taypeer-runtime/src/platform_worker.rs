@@ -14,6 +14,24 @@ use taypeer_storage::{
 use taypeer_trust::{AuthorKey, Digest, PublicKey};
 use zeroize::Zeroize;
 
+pub mod biometry;
+mod key_input;
+mod recovery;
+mod recovery_read;
+pub use key_input::read_private_key_input;
+
+/// Ciphertext-only bootstrap selected from one protected recovery operation.
+pub struct PlatformRecoveryBootstrap {
+    /// Exact original local source binding.
+    pub source: crate::RecoverySource,
+    /// Immutable original ciphertext; never a mutable source-path substitution.
+    pub original: ArchiveSnapshot,
+    /// Existing encrypted candidate, if one was actually published.
+    pub candidate: Option<ArchiveSnapshot>,
+    /// Current protected host-profile identity, required when a candidate exists.
+    pub identity: Option<taypeer_trust::Identity>,
+}
+
 /// Isolated-process access to its host's ciphertext writer. No paths, Keystore or
 /// read keys cross this contract. Implementations transfer immutable descriptor leases.
 pub trait PlatformDocument: CipherPersistence + Sync {
@@ -26,6 +44,50 @@ pub trait PlatformDocument: CipherPersistence + Sync {
     fn author(&self, authenticated: Option<Digest>) -> Result<Option<AuthorKey>, RuntimeError>;
     /// Public identity of the host transport. It conveys no author authority.
     fn transport_public(&self) -> Result<PublicKey, RuntimeError>;
+    /// Select the protected immutable source of an existing recovery before password authentication.
+    /// Only a missing operation is `None`; a vanished pre-publication attempt requires a new operation.
+    fn recovery_bootstrap(
+        &self,
+        _operation: Digest,
+    ) -> Result<Option<PlatformRecoveryBootstrap>, RuntimeError> {
+        Ok(None)
+    }
+    /// Durably capture the exact authenticated ciphertext generation for one recovery.
+    /// An existing operation returns its original snapshot, never the latest mutable path.
+    fn freeze_recovery(
+        &self,
+        _operation: Digest,
+        _authenticated: Digest,
+    ) -> Result<(crate::RecoverySource, ArchiveSnapshot), RuntimeError> {
+        Err(RuntimeError::Protocol)
+    }
+    /// Private recovery-only author capability bound to the exact frozen source.
+    /// It never relaxes ordinary author, document-writing or network authority guards.
+    fn author_recovery(&self, _source: &crate::RecoverySource) -> Result<AuthorKey, RuntimeError> {
+        Err(RuntimeError::Protocol)
+    }
+    /// Read the actual immutable encrypted candidate. Only a missing file is `None`.
+    fn recovery_candidate(
+        &self,
+        _intent: &crate::RecoveryIntent,
+    ) -> Result<Option<ArchiveSnapshot>, RuntimeError> {
+        Err(RuntimeError::Protocol)
+    }
+    /// Publish a separate encrypted archive without activating its catalog or network.
+    fn publish_recovery(
+        &self,
+        _intent: &crate::RecoveryIntent,
+        _seed: ArchiveSeed,
+    ) -> Result<crate::RecoveryPublication, RuntimeError> {
+        Err(RuntimeError::Protocol)
+    }
+    /// Confirm the worker-authenticated candidate, real file durability and protected proof.
+    fn confirm_recovery(
+        &self,
+        _publication: &crate::RecoveryPublication,
+    ) -> Result<(), RuntimeError> {
+        Err(RuntimeError::Protocol)
+    }
     /// Consume a selected plaintext input capability for this worker generation.
     /// Ordinary ciphertext persistence adapters have no selected-file access.
     fn selected_input(&self, _id: u64) -> Result<Box<dyn Read + Send>, RuntimeError> {
@@ -38,8 +100,10 @@ pub trait PlatformDocument: CipherPersistence + Sync {
     }
 }
 
-/// A selected plaintext output whose explicit finish confirms durable publication.
-/// Dropping the stream is cleanup and must never report export success.
+/// A selected plaintext output whose explicit finish confirms completion.
+/// File providers must confirm durable publication; an ephemeral bounded preview
+/// sink completes its memory result without claiming an external saved file.
+/// Dropping either stream is cleanup and must never report operation success.
 pub trait SelectedOutput: Write + Send {
     /// Flush, synchronize and complete this selected output, or return a typed failure.
     fn finish(&mut self) -> Result<(), RuntimeError>;
@@ -51,6 +115,10 @@ struct PlatformBoot {
     form: Option<taypeer_services::CreateDatabase>,
     #[serde(default)]
     invitation: Option<taypeer_trust::Invitation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    recovery: Option<Digest>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    biometry: Option<biometry::BiometricInputLease>,
 }
 impl Drop for PlatformBoot {
     fn drop(&mut self) {
@@ -92,11 +160,45 @@ pub fn run_platform_worker(
     writer: impl Write + Send + 'static,
     document: Arc<dyn PlatformDocument>,
 ) -> Result<(), RuntimeError> {
+    run_platform_worker_inner(reader, writer, document, None)
+}
+
+/// Run a worker with its separate private one-shot key-FD owner.
+/// Only the fixed isolated Native bootstrap installs this owner; it is unrelated
+/// to ordinary streams, selected files, ciphertext callbacks or credential ports.
+pub fn run_platform_worker_with_biometry(
+    reader: impl Read + Send + 'static,
+    writer: impl Write + Send + 'static,
+    document: Arc<dyn PlatformDocument>,
+    inputs: Arc<dyn biometry::BiometricInputs>,
+) -> Result<(), RuntimeError> {
+    run_platform_worker_inner(reader, writer, document, Some(inputs))
+}
+
+fn run_platform_worker_inner(
+    reader: impl Read + Send + 'static,
+    writer: impl Write + Send + 'static,
+    document: Arc<dyn PlatformDocument>,
+    inputs: Option<Arc<dyn biometry::BiometricInputs>>,
+) -> Result<(), RuntimeError> {
     let channel = Arc::new(Mutex::new(Channel::new(reader, writer)));
     let mut boot: PlatformBoot = channel
         .lock()
         .map_err(|_| RuntimeError::Transport)?
         .read()?;
+    if boot.biometry.is_some()
+        && (!boot.password.is_empty()
+            || boot.form.is_some()
+            || boot.invitation.is_some()
+            || boot.recovery.is_some())
+    {
+        boot.password.zeroize();
+        channel
+            .lock()
+            .map_err(|_| RuntimeError::Transport)?
+            .response(Err(RuntimeError::Protocol))?;
+        return Ok(());
+    }
     if let Some(invitation) = boot.invitation.take() {
         // Enrollment signs only public identities. The bearer code, network and
         // Keystore remain with the host; no database or read key is opened here.
@@ -127,44 +229,124 @@ pub fn run_platform_worker(
             .response(Ok(serde_json::Value::Null))?;
         return Ok(());
     }
+    let recovery_operation = boot.recovery;
     let mut service = DatabaseService::new();
-    let opened = (|| {
-        if let Some(form) = boot.form.take() {
-            let author = document.author(None)?.ok_or(RuntimeError::Protocol)?;
-            let identity =
-                taypeer_trust::Identity::new(author.public(), document.transport_public()?)
-                    .map_err(|_| RuntimeError::Protocol)?;
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_err(|_| RuntimeError::Protocol)?
-                .as_millis();
-            let seed = DatabaseService::prepare_managed_form_in(
-                form,
-                boot.password.as_bytes(),
-                &author,
-                identity,
-                now.try_into().map_err(|_| RuntimeError::Protocol)?,
-                document.temporary(),
-            )?;
-            document.create(seed)?;
+    let mut recovery = None;
+    let opened = if let Some(lease) = boot.biometry.take() {
+        match biometry::open_keyed(
+            &channel,
+            &mut service,
+            Arc::clone(&document),
+            inputs.as_deref(),
+            lease,
+        ) {
+            Ok(Some(session)) => Ok(session),
+            Ok(None) => return Ok(()),
+            Err(error) => Err(error),
         }
-        let session = service.open_managed_with_author(
-            Box::new(Persistence(Arc::clone(&document))),
-            boot.password.as_bytes(),
-            |snapshot| {
-                document
-                    .author(Some(snapshot.fingerprint()))
-                    .map_err(|error| match error {
-                        RuntimeError::Service(error) => error,
-                        _ => taypeer_services::ServiceError::Credentials,
+    } else {
+        (|| {
+            if let Some(form) = boot.form.take() {
+                let author = document.author(None)?.ok_or(RuntimeError::Protocol)?;
+                let identity =
+                    taypeer_trust::Identity::new(author.public(), document.transport_public()?)
+                        .map_err(|_| RuntimeError::Protocol)?;
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_err(|_| RuntimeError::Protocol)?
+                    .as_millis();
+                let seed = DatabaseService::prepare_managed_form_in(
+                    form,
+                    boot.password.as_bytes(),
+                    &author,
+                    identity,
+                    now.try_into().map_err(|_| RuntimeError::Protocol)?,
+                    document.temporary(),
+                )?;
+                document.create(seed)?;
+            }
+            let bootstrap = if let Some(operation) = recovery_operation {
+                document.recovery_bootstrap(operation)?
+            } else {
+                None
+            };
+            let port: Box<dyn CipherPersistence> = if recovery_operation.is_some() {
+                let snapshot = match &bootstrap {
+                    Some(bootstrap) => bootstrap
+                        .candidate
+                        .as_ref()
+                        .unwrap_or(&bootstrap.original)
+                        .clone(),
+                    None => document
+                        .snapshot()
+                        .map_err(taypeer_services::ServiceError::from)?,
+                };
+                Box::new(recovery_read::ReadPort::new(
+                    snapshot,
+                    document.working_copy(),
+                ))
+            } else {
+                Box::new(Persistence(Arc::clone(&document)))
+            };
+            let mut author_failure = None;
+            let session =
+                service.open_managed_with_author(port, boot.password.as_bytes(), |snapshot| {
+                    let result = if let Some(bootstrap) = bootstrap
+                        .as_ref()
+                        .filter(|bootstrap| bootstrap.candidate.is_some())
+                    {
+                        let identity = bootstrap
+                            .identity
+                            .ok_or(taypeer_services::ServiceError::InvalidContext)?;
+                        let authenticated = taypeer_services::authenticate_named_trust_recovery(
+                            &bootstrap.original,
+                            snapshot,
+                            bootstrap.source.operation,
+                            bootstrap.source.working_copy,
+                            identity,
+                            boot.password.as_bytes(),
+                        )?;
+                        recovery = Some(recovery::resume(
+                            bootstrap.source.clone(),
+                            bootstrap.original.clone(),
+                            authenticated.name,
+                            boot.password.as_bytes(),
+                        ));
+                        document
+                            .freeze_recovery(
+                                bootstrap.source.operation,
+                                bootstrap.original.fingerprint(),
+                            )
+                            .and_then(|(source, _)| document.author_recovery(&source))
+                            .map(Some)
+                    } else if let Some(operation) = recovery_operation {
+                        document
+                            .freeze_recovery(operation, snapshot.fingerprint())
+                            .and_then(|(source, _)| document.author_recovery(&source))
+                            .map(Some)
+                    } else {
+                        document.author(Some(snapshot.fingerprint()))
+                    };
+                    result.map_err(|error| {
+                        if recovery_operation.is_some() {
+                            author_failure = Some(error);
+                        }
+                        match error {
+                            RuntimeError::Service(error) => error,
+                            _ => taypeer_services::ServiceError::Credentials,
+                        }
                     })
-            },
-        )?;
-        if service.can_write(&session)? {
-            service.apply_received(&session)?;
-        }
-        Ok::<_, RuntimeError>(session)
-    })();
+                });
+            if let Some(error) = author_failure {
+                return Err(error);
+            }
+            let session = session?;
+            if recovery_operation.is_none() && service.can_write(&session)? {
+                service.apply_received(&session)?;
+            }
+            Ok::<_, RuntimeError>(session)
+        })()
+    };
     boot.password.zeroize();
     let session = match opened {
         Ok(session) => session,
@@ -181,13 +363,37 @@ pub fn run_platform_worker(
         .lock()
         .map_err(|_| RuntimeError::Transport)?
         .response(serde_json::to_value(&session.database).map_err(|_| RuntimeError::Protocol))?;
+    let mut enrollment = inputs.map(biometry::Enrollment::new);
     let outcome = (|| loop {
-        let command: crate::Command = channel
+        let incoming: biometry::Incoming = channel
             .lock()
             .map_err(|_| RuntimeError::Transport)?
             .read()?;
-        let locking = matches!(command, crate::Command::Lock);
-        let result = dispatch_platform(&mut service, &session, command, document.as_ref());
+        let locking = matches!(&incoming, biometry::Incoming::Command(crate::Command::Lock));
+        let result = match incoming {
+            biometry::Incoming::Biometry(envelope) if recovery_operation.is_none() => {
+                match enrollment.as_mut() {
+                    Some(enrollment) => enrollment.dispatch(&service, &session, envelope.biometry),
+                    None => Err(taypeer_services::ServiceError::Unauthorized.into()),
+                }
+            }
+            biometry::Incoming::Biometry(_) => Err(taypeer_services::ServiceError::ReadOnly.into()),
+            biometry::Incoming::Command(command) => {
+                if recovery_operation.is_none()
+                    || recovery_read::allowed(&command, recovery_operation)
+                {
+                    dispatch_platform(
+                        &mut service,
+                        &session,
+                        command,
+                        document.as_ref(),
+                        &mut recovery,
+                    )
+                } else {
+                    Err(taypeer_services::ServiceError::ReadOnly.into())
+                }
+            }
+        };
         channel
             .lock()
             .map_err(|_| RuntimeError::Transport)?
@@ -204,8 +410,106 @@ fn dispatch_platform(
     session: &taypeer_services::SessionToken,
     command: crate::Command,
     document: &dyn PlatformDocument,
+    recovery: &mut Option<recovery::WorkingRecovery>,
 ) -> Result<serde_json::Value, RuntimeError> {
+    if recovery.is_some()
+        && !matches!(
+            &command,
+            crate::Command::RecoverWorkingCopy { .. }
+                | crate::Command::Lock
+                | crate::Command::DatabaseInfo
+                | crate::Command::SessionAuthority
+        )
+    {
+        return Err(taypeer_services::ServiceError::ReadOnly.into());
+    }
     match command {
+        crate::Command::RecoverWorkingCopy {
+            operation,
+            name,
+            password,
+        } => recovery::recover(
+            service,
+            session,
+            document,
+            recovery,
+            recovery::Request {
+                operation,
+                name,
+                password,
+            },
+        ),
+        crate::Command::Lock => {
+            *recovery = None;
+            crate::worker::dispatch(service, session, crate::Command::Lock)
+        }
+        crate::Command::EditorView => {
+            let mut view = service.editor_view(session)?;
+            // Android acquires original image bytes only through a bounded
+            // selected output. Expanding those bytes into JSON is neither a
+            // metadata projection nor compatible with the private frame limit.
+            view.icon_preview = None;
+            serde_json::to_value(view).map_err(|_| RuntimeError::Protocol)
+        }
+        crate::Command::ImportSelectedEntryFavicon {
+            request,
+            input,
+            length,
+        } => {
+            // Do not acquire even a disappearing selected provider on an ACK replay.
+            if service.favicon_entry_receipt(session, &request)?.value {
+                return Ok(serde_json::Value::Null);
+            }
+            if length > taypeer_core::ICON_LIMIT {
+                return Err(taypeer_services::ServiceError::Icon(
+                    taypeer_services::icons::IconError::TooLarge,
+                )
+                .into());
+            }
+            service.import_entry_favicon_stream(
+                session,
+                &request,
+                document.selected_input(input).map_err(|_| {
+                    taypeer_services::ServiceError::Icon(taypeer_services::icons::IconError::File)
+                })?,
+                length,
+            )?;
+            Ok(serde_json::Value::Null)
+        }
+        crate::Command::ImportSelectedIcon {
+            draft,
+            input,
+            length,
+            source,
+            operation,
+        } => {
+            if let Some(identity) = service
+                .icon_import_receipt(session, &draft, &source, &operation)?
+                .value
+            {
+                return serde_json::to_value(identity).map_err(|_| RuntimeError::Protocol);
+            }
+            if length > taypeer_core::ICON_LIMIT {
+                return Err(taypeer_services::ServiceError::Icon(
+                    taypeer_services::icons::IconError::TooLarge,
+                )
+                .into());
+            }
+            let identity = service
+                .import_icon_stream(
+                    session,
+                    &draft,
+                    document.selected_input(input).map_err(|_| {
+                        taypeer_services::ServiceError::Icon(
+                            taypeer_services::icons::IconError::File,
+                        )
+                    })?,
+                    taypeer_services::IconImport { length, source },
+                    &operation,
+                )?
+                .value;
+            serde_json::to_value(identity).map_err(|_| RuntimeError::Protocol)
+        }
         crate::Command::ImportSelectedAttachment {
             draft,
             input,
@@ -251,11 +555,34 @@ impl crate::RuntimeHost {
         password: String,
         form: Option<taypeer_services::CreateDatabase>,
     ) -> Result<Worker, RuntimeError> {
+        self.open_platform_with_recovery(launcher, password, form, None)
+    }
+
+    /// Open a constrained authenticated read/recovery process, including a stored control fork.
+    /// This does not start application, network exchange or ordinary old-chain author commands.
+    pub fn open_platform_recovery_worker(
+        &self,
+        launcher: &dyn crate::platform::ProcessLauncher,
+        password: String,
+        operation: Digest,
+    ) -> Result<Worker, RuntimeError> {
+        self.open_platform_with_recovery(launcher, password, None, Some(operation))
+    }
+
+    fn open_platform_with_recovery(
+        &self,
+        launcher: &dyn crate::platform::ProcessLauncher,
+        password: String,
+        form: Option<taypeer_services::CreateDatabase>,
+        recovery: Option<Digest>,
+    ) -> Result<Worker, RuntimeError> {
         let client = Client::connect_platform(launcher.launch()?, &self.sessions)?;
         let mut boot = PlatformBoot {
             password,
             form,
             invitation: None,
+            recovery,
+            biometry: None,
         };
         let opened = client.request(&boot, true);
         boot.password.zeroize();
@@ -266,6 +593,14 @@ impl crate::RuntimeHost {
                     .control
                     .invalidate(crate::session::LockReason::Transport)
             })?;
+        if recovery.is_some() {
+            return Worker::from_recovery_client(
+                client,
+                database,
+                self.runtime.handle(),
+                &self.sessions,
+            );
+        }
         Worker::from_client(
             client,
             database,
@@ -288,6 +623,8 @@ impl crate::RuntimeHost {
             password: String::new(),
             form: None,
             invitation: Some(invitation),
+            recovery: None,
+            biometry: None,
         };
         let proof = client
             .request(&boot, true)
@@ -315,11 +652,19 @@ impl crate::RuntimeHost {
         path: &Path,
     ) -> Result<Arc<PlatformCipherWriter>, RuntimeError> {
         let path = crate::host::canonical_path(path)?;
+        let lifetime = self.context.recovery_writers.acquire(&path)?;
         Ok(Arc::new(PlatformCipherWriter {
             context: Arc::clone(&self.context),
             path,
             registration: Mutex::new(None),
             authentication: Mutex::new(None),
+            recovery_owner: Digest::object(
+                b"taypeer.recovery.worker.v1",
+                &taypeer_services::new_operation_id()?,
+            )
+            .map_err(|_| RuntimeError::Protocol)?,
+            recovery_lease: Mutex::new(None),
+            _recovery_lifetime: lifetime,
         }))
     }
 }
@@ -327,15 +672,18 @@ impl crate::RuntimeHost {
 /// Ciphertext-only side of a platform document port. The host remains the only
 /// file writer; native adapters transfer its snapshots and candidates as leases.
 pub struct PlatformCipherWriter {
-    context: Arc<HostContext>,
-    path: PathBuf,
+    pub(crate) context: Arc<HostContext>,
+    pub(crate) path: PathBuf,
     registration: Mutex<Option<crate::profile::Registration>>,
     // One issued immutable generation per authentication attempt. Consumption
     // prevents an old digest from becoming a reusable author capability.
-    authentication: Mutex<Option<ArchiveSnapshot>>,
+    pub(crate) authentication: Mutex<Option<ArchiveSnapshot>>,
+    pub(crate) recovery_owner: Digest,
+    pub(crate) recovery_lease: Mutex<Option<ArchiveSnapshot>>,
+    _recovery_lifetime: Arc<()>,
 }
 impl PlatformCipherWriter {
-    fn registration(&self) -> Result<crate::profile::Registration, RuntimeError> {
+    pub(crate) fn registration(&self) -> Result<crate::profile::Registration, RuntimeError> {
         let mut registration = self
             .registration
             .lock()

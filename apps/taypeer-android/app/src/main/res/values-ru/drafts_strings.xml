@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="local_drafts_description">Зашифрованы на этом устройстве · не синхронизируются</string>
+    <string name="discard_local_draft_message">Удалить этот локальный черновик (%1$s)? Несохранённый ввод будет потерян. Сохранённые значения базы останутся прежними.</string>
+</resources>

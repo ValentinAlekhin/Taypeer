@@ -6,10 +6,12 @@ import android.os.IBinder
 import android.os.ParcelFileDescriptor
 import android.os.Process
 import dev.taypeer.bridge.WorkerStreams
-import dev.taypeer.bridge.serveDocument
+import dev.taypeer.bridge.PrivateBiometricInputs
+import dev.taypeer.bridge.serveDocumentWithBiometry
 
 /** One real document generation. Only private pipes and transferred ciphertext are reachable. */
 class DocumentService : Service() {
+    private val biometricInputs = PrivateBiometricInputs()
     private var owner: IBinder? = null
     private val ownerDied = IBinder.DeathRecipient { Process.killProcess(Process.myPid()) }
     private val endpoint = object : IDocumentProcess.Stub() {
@@ -22,7 +24,8 @@ class DocumentService : Service() {
                 try {
                     CiphertextDescriptors { temporaryCiphertext(persistence) }.use { files ->
                         PipeStreams(commands, responses).use { streams ->
-                            serveDocument(streams, BinderDocumentPersistence(persistence, files), files, BinderSelectedTransfers(selected))
+                            serveDocumentWithBiometry(streams, BinderDocumentPersistence(persistence, files), files,
+                                BinderSelectedTransfers(selected), biometricInputs)
                         }
                     }
                 } catch (_: Exception) {
@@ -30,6 +33,16 @@ class DocumentService : Service() {
                 } finally { Process.killProcess(Process.myPid()) }
             }, "document-worker").start()
             return Process.myPid()
+        }
+        override fun installBiometricInput(scope: BiometricInputParcel, input: ParcelFileDescriptor) {
+            input.use { held ->
+                try { biometricInputs.installInput(scope.scope, held.fd) }
+                catch (_: Exception) { throw IllegalArgumentException("Biometric input refused") }
+            }
+        }
+        override fun revokeBiometricInput(scope: BiometricInputParcel) {
+            try { biometricInputs.retireInput(scope.scope) }
+            catch (_: Exception) { /* Invalid or stale scope grants no access. */ }
         }
         override fun terminate() { Process.killProcess(Process.myPid()) }
     }

@@ -31,6 +31,11 @@ jobs:
           rustup target add aarch64-linux-android
       - name: Install pinned Android build tools
         run: sdkmanager "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018"
+      - name: Install image comparison tools
+        run: |
+          python3 -m venv .tools/android-qa-venv
+          .tools/android-qa-venv/bin/python -m pip install -r apps/taypeer-android/requirements-qa.txt
+          echo "$PWD/.tools/android-qa-venv/bin" >> "$GITHUB_PATH"
       - name: Rust bridge tests and lints
         run: |
           cargo test --locked -p taypeer-android --lib

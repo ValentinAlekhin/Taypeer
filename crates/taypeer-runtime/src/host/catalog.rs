@@ -42,13 +42,15 @@ struct CatalogFile {
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct RecoveryReceipt {
-    source: WorkingCopy,
-    destination: WorkingCopy,
-    operation: Digest,
-    fingerprint: Digest,
+    pub(super) source: WorkingCopy,
+    pub(super) destination: WorkingCopy,
+    pub(super) operation: Digest,
+    pub(super) fingerprint: Digest,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) intent: Option<crate::RecoveryIntent>,
 }
 impl RecoveryReceipt {
-    fn account(&self) -> Result<String, RuntimeError> {
+    pub(super) fn account(&self) -> Result<String, RuntimeError> {
         Self::account_for(&self.source.database, self.operation)
     }
 
@@ -58,7 +60,7 @@ impl RecoveryReceipt {
         Ok(format!("recovery:{id}"))
     }
 
-    fn verify_destination(&self) -> Result<(), RuntimeError> {
+    pub(super) fn verify_destination(&self) -> Result<(), RuntimeError> {
         let snapshot = ArchiveSnapshot::open(&self.destination.path, Some(self.destination.root))
             .map_err(cipher_ipc::storage)?;
         if snapshot.chain().head().database != self.destination.database
@@ -134,7 +136,7 @@ impl Catalog {
         })
     }
 
-    fn working_directory(&self) -> Result<PathBuf, RuntimeError> {
+    pub(super) fn working_directory(&self) -> Result<PathBuf, RuntimeError> {
         let directory = self.directory.join("working-copies");
         #[cfg(unix)]
         {
@@ -242,7 +244,7 @@ impl Catalog {
         })
     }
 
-    fn record_recovery(&mut self, receipt: RecoveryReceipt) -> Result<(), RuntimeError> {
+    pub(super) fn record_recovery(&mut self, receipt: RecoveryReceipt) -> Result<(), RuntimeError> {
         receipt.verify_destination()?;
         if let Some(prior) = self.recoveries.iter().find(|prior| {
             prior.source.database == receipt.source.database && prior.operation == receipt.operation
@@ -258,7 +260,11 @@ impl Catalog {
         self.publish(self.copies.clone(), recoveries)
     }
 
-    fn adopt_recovery(&mut self, receipt: &RecoveryReceipt) -> Result<(), RuntimeError> {
+    pub(super) fn adopt_recovery(&mut self, receipt: &RecoveryReceipt) -> Result<(), RuntimeError> {
+        if self.copies.get(&receipt.destination.database) == Some(&receipt.destination) {
+            receipt.verify_destination()?;
+            return self.publish(self.copies.clone(), self.recoveries.clone());
+        }
         if self.recovery(
             &receipt.destination.path,
             &receipt.destination.database,
@@ -304,6 +310,15 @@ impl Catalog {
         self.copies = candidate;
         self.recoveries = recoveries;
         Ok(())
+    }
+
+    pub(super) fn reconcile(&mut self) -> Result<(), RuntimeError> {
+        *self = Self::load(&self.directory)?;
+        Ok(())
+    }
+
+    pub(super) fn contains_copy(&self, copy: &WorkingCopy) -> bool {
+        self.copies.get(&copy.database) == Some(copy)
     }
 }
 
@@ -384,6 +399,7 @@ impl Callbacks {
             },
             operation,
             fingerprint: snapshot.fingerprint(),
+            intent: None,
         };
         // A retry authenticates the checkpoint in the child and then reconfirms
         // publication here before its linked intent can authorize a catalog change.
@@ -577,7 +593,10 @@ impl RuntimeHost {
         Ok(worker)
     }
 
-    fn require_closed_recovery_source(&self, database: &DatabaseId) -> Result<(), RuntimeError> {
+    pub(super) fn require_closed_recovery_source(
+        &self,
+        database: &DatabaseId,
+    ) -> Result<(), RuntimeError> {
         if self.sessions.statuses().iter().any(|status| {
             status.database.as_ref() == Some(database)
                 && status.phase != crate::session::SessionPhase::Closed
@@ -606,7 +625,10 @@ impl RuntimeHost {
             .adopt_recovery(receipt)
     }
 
-    fn verify_recovery_proof(&self, receipt: &RecoveryReceipt) -> Result<(), RuntimeError> {
+    pub(super) fn verify_recovery_proof(
+        &self,
+        receipt: &RecoveryReceipt,
+    ) -> Result<(), RuntimeError> {
         let context = self.context.for_database(&receipt.destination.database)?;
         let proof = context
             .profile
@@ -1082,6 +1104,7 @@ mod tests {
             },
             operation: Digest::of(b"PUBLIC forged operation"),
             fingerprint: snapshot.fingerprint(),
+            intent: None,
         };
         host.catalog
             .lock()

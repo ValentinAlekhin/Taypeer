@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="metadata_saved_version">Сохранённая версия</string>
+    <string name="metadata_group_snapshot">Метаданные группы</string>
+    <string name="metadata_database_snapshot">Метаданные БД</string>
+    <string name="metadata_restore_warning">Восстановить выбранные метаданные одной новой версией того же объекта. Остальное содержимое и настройки сохранятся.</string>
+    <string name="metadata_retry_retained">Результат не подтверждён. Повторите ту же версию и назначение.</string>
+    <string name="metadata_frozen_destination">Подтверждённое назначение сохранено для этого повтора.</string>
+    <string name="metadata_retry_restore">Повторить восстановление метаданных…</string>
+</resources>

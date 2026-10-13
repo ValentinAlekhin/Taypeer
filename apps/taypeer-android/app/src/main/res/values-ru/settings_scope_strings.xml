@@ -1,0 +1,4 @@
+<resources>
+    <string name="settings_scope_device">Устройство</string>
+    <string name="settings_scope_database">База данных</string>
+</resources>

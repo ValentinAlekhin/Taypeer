@@ -9,6 +9,8 @@ import dev.taypeer.bridge.Host
 import dev.taypeer.bridge.SaveState
 import dev.taypeer.bridge.TextEdit
 import dev.taypeer.platform.DocumentManager
+import dev.taypeer.platform.CipherPersistenceEndpoint
+import dev.taypeer.platform.SelectedTransfersEndpoint
 import dev.taypeer.platform.KeystoreCredentials
 import dev.taypeer.platform.WorkingCopies
 import dev.taypeer.platform.anonymousCiphertext
@@ -35,6 +37,108 @@ class DocumentTest {
                 DocumentManager(context, host).use { manager -> block(host, manager) }
             }
         } finally { assertTrue(profile.deleteRecursively()) }
+    }
+
+    @Test fun retainedClosedCiphertextCapabilitiesDoNotKeepWriterLocksAcrossHostRestart() {
+        val profile = File(context.noBackupFilesDir, "PUBLIC-retained-capability-${UUID.randomUUID()}")
+        val retained = mutableListOf<CipherPersistenceEndpoint>()
+        val retainedTransfers = mutableListOf<SelectedTransfersEndpoint>()
+        var path = ""
+        var entry = ""
+        try {
+            repeat(3) { lifetime ->
+                Host(profile.path, KeystoreCredentials(context)).use { host ->
+                    DocumentManager(context, host).use { manager ->
+                        val session = if (lifetime == 0) manager.create("PUBLIC retained capability", null, "PUBLIC retained create", password)
+                                      else manager.open(path, password)
+                        if (lifetime == 0) {
+                            beginPublicEntry(session)
+                            val editor = session.patchEntry(EntryTextField.TITLE, TextEdit.Set("PUBLIC retained durable entry"))
+                            assertEquals(SaveState.SAVED, session.save(editor.form.draft, editor.form.revision, "PUBLIC retained snapshot").state)
+                            path = manager.catalog().single().path
+                            entry = session.overview("").entries.single().id
+                        }
+                        assertEquals("PUBLIC retained durable entry", session.entry(entry).title)
+                        // Deliberately keep every old host Binder endpoint strongly reachable.
+                        // Reopen must succeed without garbage collection, sleeps or retries.
+                        retained += manager.process(session).persistenceCapability!!
+                        retainedTransfers += manager.process(session).transfersCapability!!
+                    }
+                }
+            }
+            retained.forEach { endpoint ->
+                val snapshot = endpoint.snapshot()
+                try { assertEquals(6, snapshot.getInt("status")) }
+                finally {
+                    @Suppress("DEPRECATION")
+                    snapshot.getParcelable<android.os.ParcelFileDescriptor>("file")?.close()
+                }
+                assertEquals(6, endpoint.createTemporary().status)
+                assertEquals(6, endpoint.author(null).status)
+                val incoming = anonymousCiphertext(context)
+                assertEquals(6, endpoint.saveDraft(incoming))
+                assertFalse(incoming.fileDescriptor.valid())
+            }
+            retainedTransfers.forEach { endpoint ->
+                assertEquals(6, endpoint.read(1, 0, 1).status)
+                assertEquals(6, endpoint.finish(1))
+                val bytes = byteArrayOf(1)
+                assertEquals(6, endpoint.write(1, 0, bytes).status)
+                assertArrayEquals(byteArrayOf(0), bytes)
+            }
+        } finally { assertTrue(profile.deleteRecursively()) }
+    }
+
+    @Test fun closingPersistenceDefersWriterReleaseUntilAnAcceptedCallCompletes() {
+        val profile = File(context.noBackupFilesDir, "PUBLIC-active-capability-${UUID.randomUUID()}")
+        val blockNext = AtomicBoolean()
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val command = Executors.newSingleThreadExecutor()
+        val host = Host(profile.path, KeystoreCredentials(context))
+        val manager = DocumentManager(context, host) {
+            if (blockNext.compareAndSet(true, false)) {
+                entered.countDown()
+                check(release.await(15, TimeUnit.SECONDS))
+            }
+            anonymousCiphertext(context)
+        }
+        var managerClosed = false
+        var hostClosed = false
+        var pending: java.util.concurrent.Future<dev.taypeer.platform.CipherFileResult>? = null
+        try {
+            val session = manager.create("PUBLIC active capability", null, "PUBLIC active create", password)
+            val path = manager.catalog().single().path
+            val endpoint = manager.process(session).persistenceCapability!!
+            blockNext.set(true)
+            val accepted = command.submit<dev.taypeer.platform.CipherFileResult> { endpoint.createTemporary() }
+            pending = accepted
+            assertTrue(entered.await(10, TimeUnit.SECONDS))
+            manager.close()
+            managerClosed = true
+            host.close()
+            hostClosed = true
+            assertFalse(accepted.isDone)
+            assertEquals(6, endpoint.author(null).status)
+            Host(profile.path, KeystoreCredentials(context)).use { freshHost ->
+                DocumentManager(context, freshHost).use { fresh ->
+                    // The accepted callback still owns the coordinator until it returns.
+                    assertThrows(AndroidException.StorageBusy::class.java) { fresh.open(path, password) }
+                    release.countDown()
+                    val result = accepted.get(5, TimeUnit.SECONDS)
+                    try { assertEquals(0, result.status); assertNotNull(result.file) }
+                    finally { result.file?.close() }
+                    assertEquals("PUBLIC active capability", fresh.open(path, password).overview("").name)
+                }
+            }
+        } finally {
+            release.countDown()
+            try { pending?.get(5, TimeUnit.SECONDS)?.file?.close() } catch (_: Exception) {}
+            command.shutdownNow()
+            try { if (!managerClosed) manager.close() }
+            finally { if (!hostClosed) host.close() }
+            assertTrue(profile.deleteRecursively())
+        }
     }
 
     @Test fun twoRealDocumentsSaveReopenAndLockIndependently() = fixture { _, manager ->
@@ -229,9 +333,11 @@ class DocumentTest {
         val command = Executors.newSingleThreadExecutor()
         try {
             val session = authority.create("PUBLIC proof source", null, "PUBLIC proof create", password)
+            sourceHost.setRelayPreference(dev.taypeer.bridge.RelayPreference.Disabled)
             sourceHost.startExchange()
             val code = session.createInvitation()
             Host(recipientProfile.path, KeystoreCredentials(context)).use { recipientHost ->
+                recipientHost.setRelayPreference(dev.taypeer.bridge.RelayPreference.Disabled)
                 DocumentManager(context, recipientHost).use { recipient ->
                     cancelBeforeBoot(recipient, command) { recipient.join(code) }
                     assertTrue(recipient.catalog().isEmpty())

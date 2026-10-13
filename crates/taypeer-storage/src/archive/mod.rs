@@ -1,5 +1,6 @@
 //! Portable ciphertext composition, independent of unlocked document ownership.
 
+mod export;
 mod read;
 mod write;
 
@@ -378,6 +379,8 @@ pub struct ArchiveStore {
     snapshot: ArchiveSnapshot,
     anchor: Option<Arc<dyn AnchorStore>>,
     uncertain: bool,
+    // One ciphertext candidate proves an exact replay; no arbitrary snapshot read is an ACK.
+    last_commit: Option<(Digest, ArchiveSnapshot)>,
 }
 impl ArchiveStore {
     /// Bind ciphertext object staging to a private host allocator. Commits retain

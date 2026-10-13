@@ -480,7 +480,7 @@ fn deliver_file(from: &Path, to: &Path) {
                 transport.public(),
                 &incoming.chain().head().database,
                 incoming.metadata().manifest.body.objects[&id].clone(),
-                staged,
+                staged.reopen().unwrap().into(),
             )
             .unwrap();
     }

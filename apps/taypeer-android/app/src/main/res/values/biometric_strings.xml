@@ -1,0 +1,16 @@
+<resources>
+    <string name="biometric_setting">Biometrics for this database</string>
+    <string name="biometric_enabled">Enabled on this device</string>
+    <string name="biometric_disabled">Disabled</string>
+    <string name="biometric_needs_master">Unlock with the master password and set up biometrics again</string>
+    <string name="biometric_pending">Setup needs confirmation; retry the pending operation</string>
+    <string name="biometric_checking">Checking biometrics…</string>
+    <string name="biometric_failed">Could not confirm biometrics. Unlock with the master password to try again.</string>
+    <string name="biometric_unavailable">Strong biometrics are unavailable or have not been enrolled on this device</string>
+    <string name="biometric_enable">Enable biometrics</string>
+    <string name="biometric_disable">Disable biometrics</string>
+    <string name="biometric_unlock">Unlock with biometrics</string>
+    <string name="biometric_master_password">Use master password</string>
+    <string name="biometric_prompt_title">Unlock this database</string>
+    <string name="biometric_prompt_subtitle">Confirm with your device biometrics</string>
+</resources>

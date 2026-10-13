@@ -12,6 +12,8 @@ use taypeer_trust::{AuthorKey, Digest, Identity, PublicKey, TransportKey};
 use zeroize::Zeroizing;
 
 mod credentials;
+pub mod device_name;
+pub(crate) mod entry_access;
 mod linux;
 use credentials::Credentials;
 pub use linux::TransportCapability;
@@ -71,6 +73,14 @@ pub struct NativeProfile {
 pub struct ProfileLease {
     profile: NativeProfile,
     _lock: File,
+}
+impl Drop for ProfileLease {
+    fn drop(&mut self) {
+        // A concurrent process launch can inherit this file description until exec.
+        // The unique host lease ends here, even if that incidental descriptor is alive.
+        // If explicit unlock fails, closing our handle still provides the OS fallback.
+        let _ = taypeer_storage::unlock_exclusive(&self._lock);
+    }
 }
 impl ProfileLease {
     /// Public handle passed to workers and platform adapters.

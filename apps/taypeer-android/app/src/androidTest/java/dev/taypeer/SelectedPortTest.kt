@@ -92,7 +92,9 @@ class SelectedPortTest {
             val bytes = byteArrayOf(42, 43)
             assertEquals(2u, output.write(1uL, bytes))
             assertArrayEquals(byteArrayOf(0, 0), bytes)
-            output.finish(); output.close(); output.close()
+            output.finish()
+            assertFalse(writable.fileDescriptor.valid())
+            output.close(); output.close()
             assertFalse(writable.fileDescriptor.valid())
             assertArrayEquals(byteArrayOf(11, 42, 43, 14), file.readBytes())
             assertThrows(AndroidException.InvalidOptions::class.java) { output.finish() }

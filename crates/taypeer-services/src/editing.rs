@@ -4,8 +4,11 @@ use crate::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use taypeer_core::{
-    BlobId, DatabaseMetadataPatch, DraftId, GroupMetadataPatch, IconRef, OperationId,
+    BlobId, DatabaseMetadataPatch, DraftId, GroupMetadataPatch, IconRef, IconSource, OperationId,
 };
+
+// One aggregate budget for durable local operation records, not a per-form limit.
+const MAX_LOCAL_OPERATIONS: usize = 100_000;
 
 /// Monotonic input revision within one local draft, independent of document history.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -89,6 +92,19 @@ pub struct MetadataDraftView {
     pub icon: Option<IconRef>,
     /// Whether the input differs from its confirmed baseline.
     pub dirty: bool,
+    /// Exact group-form parent; None is top level. Database metadata has no parent control.
+    pub parent: Option<GroupId>,
+    /// Valid destinations with labels from the form's original causal context.
+    pub parent_candidates: Vec<GroupParentCandidate>,
+}
+
+/// One valid group-form destination; no content or permission is inferred by the UI.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct GroupParentCandidate {
+    /// Stable group identity.
+    pub id: GroupId,
+    /// Exact name from the form basis.
+    pub name: String,
 }
 
 impl std::fmt::Debug for MetadataDraftView {
@@ -112,6 +128,12 @@ enum MetadataField {
     Icon,
 }
 
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct MetadataParent {
+    baseline: Option<GroupId>,
+    current: Option<GroupId>,
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub(super) struct MetadataDraft {
     identity: DraftIdentity,
@@ -119,6 +141,13 @@ pub(super) struct MetadataDraft {
     baseline: MetadataFields,
     fields: MetadataFields,
     changed: BTreeSet<MetadataField>,
+    // Empty receipts must keep the serialized shape of legacy pending Save
+    // snapshots: their fingerprint covers this entire captured draft.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    binary_receipts: BTreeMap<OperationId, serde_json::Value>,
+    // Never hydrate legacy captured drafts: their typed JSON owns a pending receipt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    parent: Option<MetadataParent>,
 }
 
 impl MetadataDraft {
@@ -126,6 +155,7 @@ impl MetadataDraft {
         target: DraftTarget,
         base: Vec<String>,
         fields: MetadataFields,
+        parent: Option<MetadataParent>,
     ) -> Result<Self, ServiceError> {
         Ok(Self {
             identity: DraftIdentity {
@@ -137,19 +167,71 @@ impl MetadataDraft {
             baseline: fields.clone(),
             fields,
             changed: BTreeSet::new(),
+            binary_receipts: BTreeMap::new(),
+            parent,
         })
     }
-    fn view(&self) -> MetadataDraftView {
-        MetadataDraftView {
+    fn parent(&self, document: &Document) -> Result<Option<GroupId>, ServiceError> {
+        if let Some(parent) = &self.parent {
+            return Ok(parent.current.clone());
+        }
+        match &self.identity.target {
+            DraftTarget::Group(group) => Ok(document.group_parent_at(group, &self.base)?),
+            DraftTarget::NewGroup { parent, .. } => Ok(parent.clone()),
+            DraftTarget::Database => Ok(None),
+            _ => Err(ServiceError::InvalidContext),
+        }
+    }
+    fn is_dirty(&self) -> bool {
+        self.fields != self.baseline
+            || self
+                .parent
+                .as_ref()
+                .is_some_and(|parent| parent.current != parent.baseline)
+    }
+    fn view(&self, document: &Document) -> Result<MetadataDraftView, ServiceError> {
+        let group = match &self.identity.target {
+            DraftTarget::Group(group) => Some(group),
+            DraftTarget::NewGroup { .. } => None,
+            DraftTarget::Database => {
+                return Ok(MetadataDraftView {
+                    identity: self.identity.clone(),
+                    name: self.fields.name.clone(),
+                    description: self.fields.description.clone(),
+                    icon: self.fields.icon.clone(),
+                    dirty: self.is_dirty(),
+                    parent: None,
+                    parent_candidates: Vec::new(),
+                });
+            }
+            _ => return Err(ServiceError::InvalidContext),
+        };
+        Ok(MetadataDraftView {
             identity: self.identity.clone(),
             name: self.fields.name.clone(),
             description: self.fields.description.clone(),
             icon: self.fields.icon.clone(),
-            dirty: self.fields != self.baseline,
-        }
+            dirty: self.is_dirty(),
+            parent: self.parent(document)?,
+            parent_candidates: document
+                .group_parent_candidates(group, &self.base)?
+                .into_iter()
+                .map(|group| GroupParentCandidate {
+                    id: group.id,
+                    name: group.name,
+                })
+                .collect(),
+        })
     }
     fn update(&mut self, fields: MetadataFields) -> Result<(), ServiceError> {
-        if fields == self.fields {
+        self.update_with_parent(fields, self.parent.clone())
+    }
+    fn update_with_parent(
+        &mut self,
+        fields: MetadataFields,
+        parent: Option<MetadataParent>,
+    ) -> Result<(), ServiceError> {
+        if fields == self.fields && parent == self.parent {
             return Ok(());
         }
         self.identity.revision.0 = self
@@ -159,6 +241,7 @@ impl MetadataDraft {
             .checked_add(1)
             .ok_or(ServiceError::InvalidContext)?;
         self.fields = fields;
+        self.parent = parent;
         self.changed.clear();
         if self.fields.name != self.baseline.name {
             self.changed.insert(MetadataField::Name);
@@ -176,6 +259,45 @@ impl MetadataDraft {
             .into_iter()
             .filter_map(|icon| icon.as_ref().and_then(IconRef::blob).cloned())
             .collect()
+    }
+    pub(super) fn icon(&self) -> Result<IconRef, ServiceError> {
+        self.fields.icon.clone().ok_or(ServiceError::InvalidContext)
+    }
+    fn binary_receipt(
+        &self,
+        operation: &OperationId,
+        intent: &serde_json::Value,
+    ) -> Result<bool, ServiceError> {
+        match self.binary_receipts.get(operation) {
+            Some(old) if old == intent => Ok(true),
+            Some(_) => Err(ServiceError::InvalidInput),
+            None => Ok(false),
+        }
+    }
+    pub(super) fn stage_icon(
+        &mut self,
+        icon: IconRef,
+        operation: OperationId,
+        intent: serde_json::Value,
+    ) -> Result<(), ServiceError> {
+        if !matches!(
+            self.identity.target,
+            DraftTarget::Group(_) | DraftTarget::NewGroup { .. }
+        ) {
+            return Err(ServiceError::InvalidContext);
+        }
+        let previous = self.identity.revision;
+        let mut fields = self.fields.clone();
+        fields.icon = Some(icon);
+        self.update(fields)?;
+        if self.identity.revision == previous {
+            self.identity.revision.0 = previous
+                .0
+                .checked_add(1)
+                .ok_or(ServiceError::InvalidContext)?;
+        }
+        self.binary_receipts.insert(operation, intent);
+        Ok(())
     }
     fn save_command(
         &self,
@@ -221,6 +343,16 @@ impl MetadataDraft {
                         name,
                         description,
                         icon,
+                        parent: self
+                            .parent
+                            .as_ref()
+                            .filter(|parent| parent.current != parent.baseline)
+                            .map_or(FieldUpdate::Keep, |parent| {
+                                parent
+                                    .current
+                                    .clone()
+                                    .map_or(FieldUpdate::Clear, FieldUpdate::Set)
+                            }),
                     },
                     &self.base,
                     now,
@@ -228,13 +360,15 @@ impl MetadataDraft {
                 )?;
                 serde_json::to_value(group).map_err(|_| ServiceError::InvalidDocument)
             }
-            DraftTarget::NewGroup { group, parent } => {
+            DraftTarget::NewGroup { group, .. } => {
+                let parent = self.parent(document)?;
+                document.validate_group_parent(None, parent.as_ref(), &self.base)?;
                 let group = document.create_group_metadata_with_id_command(
                     group.clone(),
                     self.fields.name.clone(),
                     self.fields.description.clone(),
                     self.fields.icon.clone().unwrap_or_default(),
-                    parent.clone(),
+                    parent,
                     now,
                     Some(receipt),
                 )?;
@@ -252,23 +386,86 @@ pub(super) enum CapturedDraft {
 }
 
 impl CapturedDraft {
+    pub(super) fn icon(&self) -> Result<IconRef, ServiceError> {
+        match self {
+            Self::Entry(draft) => Ok(draft.document()?.fields().appearance.icon.clone()),
+            Self::Metadata(draft) => draft.icon(),
+        }
+    }
+    fn baseline_icon(&self) -> Option<&IconRef> {
+        match self {
+            Self::Entry(draft) => Some(draft.baseline_icon()),
+            Self::Metadata(draft) => draft.baseline.icon.as_ref(),
+        }
+    }
+    pub(super) fn stage_icon(
+        &mut self,
+        icon: IconRef,
+        operation: OperationId,
+        intent: serde_json::Value,
+    ) -> Result<(), ServiceError> {
+        match self {
+            Self::Entry(draft) => {
+                draft.document_mut()?.fields_mut().appearance.icon = icon;
+                draft.record_binary(operation, intent)
+            }
+            Self::Metadata(draft) => draft.stage_icon(icon, operation, intent),
+        }
+    }
+    pub(super) fn identity(&self) -> DraftIdentity {
+        match self {
+            Self::Entry(draft) => draft.identity(),
+            Self::Metadata(draft) => draft.identity.clone(),
+        }
+    }
+    pub(super) fn binary_receipt(
+        &self,
+        operation: &OperationId,
+        intent: &serde_json::Value,
+    ) -> Result<bool, ServiceError> {
+        match self {
+            Self::Entry(draft) => draft.binary_receipt(operation, intent),
+            Self::Metadata(draft) => draft.binary_receipt(operation, intent),
+        }
+    }
     fn is_dirty(&self) -> bool {
         match self {
             Self::Entry(draft) => draft.is_dirty(),
-            Self::Metadata(draft) => draft.fields != draft.baseline,
+            Self::Metadata(draft) => draft.is_dirty(),
         }
     }
 
-    fn validate_for_confirmation(&self) -> Result<(), ServiceError> {
+    fn validate_for_confirmation(&self, document: &Document) -> Result<(), ServiceError> {
         let valid = match self {
             Self::Entry(draft) => draft.can_save(),
             Self::Metadata(draft) => !draft.fields.name.is_empty(),
         };
-        if valid {
-            Ok(())
-        } else {
-            Err(ServiceError::InvalidInput)
+        if !valid {
+            return Err(ServiceError::InvalidInput);
         }
+        if let Self::Metadata(draft) = self {
+            match &draft.identity.target {
+                DraftTarget::NewGroup { .. } => document
+                    .validate_group_parent(None, draft.parent(document)?.as_ref(), &draft.base)
+                    .map_err(operations::candidate_input_error)?,
+                DraftTarget::Group(group)
+                    if draft
+                        .parent
+                        .as_ref()
+                        .is_some_and(|parent| parent.current != parent.baseline) =>
+                {
+                    document
+                        .validate_group_parent(
+                            Some(group),
+                            draft.parent(document)?.as_ref(),
+                            &draft.base,
+                        )
+                        .map_err(operations::candidate_input_error)?;
+                }
+                _ => {}
+            }
+        }
+        Ok(())
     }
 }
 
@@ -278,6 +475,20 @@ pub(super) struct SnapshotAttempt {
     fingerprint: serde_json::Value,
     captured: Option<CapturedDraft>,
     outcome: Option<DraftSaveOutcome>,
+}
+
+/// Receipt-only ownership preserves replay without retaining a stale clean editor.
+#[derive(Clone, Serialize, Deserialize)]
+struct FormIconReceipt {
+    identity: DraftIdentity,
+    intent: IconReceiptIntent,
+    icon: IconRef,
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) enum IconReceiptIntent {
+    Import(IconSource),
+    StoredFavicon(BlobId),
 }
 
 /// Each form is owned once: the current entry, parked entries or metadata forms.
@@ -296,9 +507,21 @@ pub(super) struct DraftCollection {
     // One explicit OS picker may retain an otherwise clean form through lock.
     #[serde(default)]
     pinned: Option<DraftId>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    imported_icons: BTreeMap<OperationId, FormIconReceipt>,
 }
 
 impl DraftCollection {
+    pub(super) fn active_binary_form(&self, id: &DraftId) -> bool {
+        self.active_metadata.as_ref().map_or_else(
+            || {
+                self.entry
+                    .as_ref()
+                    .is_some_and(|draft| &draft.identity().draft == id)
+            },
+            |active| active == id,
+        )
+    }
     pub(super) fn new(database: DatabaseId) -> Self {
         Self {
             version: 2,
@@ -310,6 +533,7 @@ impl DraftCollection {
             attempts: BTreeMap::new(),
             cancelled: BTreeSet::new(),
             pinned: None,
+            imported_icons: BTreeMap::new(),
         }
     }
     pub(super) fn validate(&self, database: &DatabaseId) -> Result<(), ServiceError> {
@@ -318,7 +542,7 @@ impl DraftCollection {
         }
         if &self.database != database
             || self.entries.len() + self.metadata.len() + usize::from(self.entry.is_some()) > 10_000
-            || self.attempts.len() + self.cancelled.len() > 100_000
+            || self.local_operation_count() > MAX_LOCAL_OPERATIONS
         {
             return Err(ServiceError::InvalidContext);
         }
@@ -385,7 +609,109 @@ impl DraftCollection {
                 _ => return Err(ServiceError::InvalidDocument),
             }
         }
+        for receipt in self.imported_icons.values() {
+            if !matches!(
+                receipt.identity.target,
+                DraftTarget::Entry(_)
+                    | DraftTarget::NewEntry { .. }
+                    | DraftTarget::Group(_)
+                    | DraftTarget::NewGroup { .. }
+            ) {
+                return Err(ServiceError::InvalidDocument);
+            }
+            match (&receipt.intent, &receipt.icon) {
+                (
+                    IconReceiptIntent::Import(source),
+                    IconRef::Image {
+                        source: original, ..
+                    },
+                ) if source == original => {}
+                (
+                    IconReceiptIntent::StoredFavicon(identity),
+                    IconRef::Image {
+                        blob,
+                        source: IconSource::Favicon(_),
+                    },
+                ) if identity == blob => {}
+                _ => return Err(ServiceError::InvalidDocument),
+            }
+        }
         Ok(())
+    }
+    fn local_operation_count(&self) -> usize {
+        self.attempts
+            .len()
+            .saturating_add(self.cancelled.len())
+            .saturating_add(self.imported_icons.len())
+    }
+    pub(super) fn require_icon_capacity(&self) -> Result<(), ServiceError> {
+        if self.local_operation_count() >= MAX_LOCAL_OPERATIONS {
+            Err(ServiceError::InvalidContext)
+        } else {
+            Ok(())
+        }
+    }
+    pub(super) fn form_icon_receipt(
+        &self,
+        draft: &DraftId,
+        intent: &IconReceiptIntent,
+        operation: &OperationId,
+    ) -> Result<Option<DraftIdentity>, ServiceError> {
+        let Some(receipt) = self.imported_icons.get(operation) else {
+            return Ok(None);
+        };
+        if &receipt.identity.draft != draft || &receipt.intent != intent {
+            return Err(ServiceError::InvalidInput);
+        }
+        let identity = match self.captured(draft) {
+            Ok(current) => current.identity(),
+            Err(ServiceError::NoDraft) => receipt.identity.clone(),
+            Err(error) => return Err(error),
+        };
+        Ok(Some(identity))
+    }
+    pub(super) fn record_icon_operation(
+        &mut self,
+        identity: DraftIdentity,
+        intent: IconReceiptIntent,
+        icon: IconRef,
+        operation: OperationId,
+    ) -> Result<(), ServiceError> {
+        self.require_icon_capacity()?;
+        if self.imported_icons.contains_key(&operation) {
+            return Err(ServiceError::InvalidInput);
+        }
+        self.imported_icons.insert(
+            operation,
+            FormIconReceipt {
+                identity,
+                intent,
+                icon,
+            },
+        );
+        Ok(())
+    }
+    pub(super) fn stored_favicon_icon(
+        &self,
+        id: &DraftId,
+    ) -> Result<Option<IconRef>, ServiceError> {
+        let draft = self.captured(id)?;
+        let current = draft.icon()?;
+        if is_favicon(&current) {
+            return Ok(Some(current));
+        }
+        if let Some(receipt) = self
+            .imported_icons
+            .values()
+            .filter(|receipt| &receipt.identity.draft == id && is_favicon(&receipt.icon))
+            .max_by_key(|receipt| receipt.identity.revision)
+        {
+            return Ok(Some(receipt.icon.clone()));
+        }
+        Ok(draft
+            .baseline_icon()
+            .filter(|icon| is_favicon(icon))
+            .cloned())
     }
     pub(super) fn database_id(&self) -> &DatabaseId {
         &self.database
@@ -408,7 +734,7 @@ impl DraftCollection {
         self.entries
             .retain(|id, entry| entry.is_dirty() || self.pinned.as_ref() == Some(id));
         self.metadata.retain(|id, draft| {
-            draft.fields != draft.baseline
+            draft.is_dirty()
                 || self.pinned.as_ref() == Some(id)
                 || self.active_metadata.as_ref() == Some(id)
         });
@@ -452,6 +778,11 @@ impl DraftCollection {
                 None => BTreeSet::new(),
             });
         }
+        references.extend(
+            self.imported_icons
+                .values()
+                .filter_map(|receipt| receipt.icon.blob().cloned()),
+        );
         references
     }
     pub(super) fn interrupt(&mut self) {
@@ -471,7 +802,7 @@ impl DraftCollection {
         self.entries
             .retain(|id, entry| entry.is_dirty() || self.pinned.as_ref() == Some(id));
         self.metadata
-            .retain(|id, draft| draft.fields != draft.baseline || self.pinned.as_ref() == Some(id));
+            .retain(|id, draft| draft.is_dirty() || self.pinned.as_ref() == Some(id));
         if self
             .active_metadata
             .as_ref()
@@ -487,6 +818,7 @@ impl DraftCollection {
             && self.metadata.is_empty()
             && self.attempts.is_empty()
             && self.cancelled.is_empty()
+            && self.imported_icons.is_empty()
     }
 
     pub(super) fn reconcile(&mut self, document: &Document) -> Result<(), ServiceError> {
@@ -528,7 +860,7 @@ impl DraftCollection {
         Ok(())
     }
 
-    fn captured(&self, id: &DraftId) -> Result<CapturedDraft, ServiceError> {
+    pub(super) fn captured(&self, id: &DraftId) -> Result<CapturedDraft, ServiceError> {
         if let Some(entry) = self
             .entry
             .as_ref()
@@ -548,6 +880,30 @@ impl DraftCollection {
             .cloned()
             .map(|draft| CapturedDraft::Metadata(Box::new(draft)))
             .ok_or(ServiceError::NoDraft)
+    }
+
+    /// Replace only an existing exact form without changing which editor is active.
+    pub(super) fn replace_binary_form(&mut self, draft: CapturedDraft) -> Result<(), ServiceError> {
+        let id = draft.identity().draft;
+        match draft {
+            CapturedDraft::Entry(draft) => {
+                if self
+                    .entry
+                    .as_ref()
+                    .is_some_and(|entry| entry.identity().draft == id)
+                {
+                    self.entry = Some(*draft);
+                } else {
+                    let current = self.entries.get_mut(&id).ok_or(ServiceError::NoDraft)?;
+                    *current = *draft;
+                }
+            }
+            CapturedDraft::Metadata(draft) => {
+                let current = self.metadata.get_mut(&id).ok_or(ServiceError::NoDraft)?;
+                *current = *draft;
+            }
+        }
+        Ok(())
     }
 
     fn finish_snapshot(
@@ -582,6 +938,12 @@ impl DraftCollection {
                             .map_err(|_| ServiceError::InvalidDocument)?;
                         current.identity.target = DraftTarget::Group(group.id);
                     }
+                    if let Some(parent) = &mut current.parent {
+                        let DraftTarget::Group(group) = &current.identity.target else {
+                            return Err(ServiceError::InvalidDocument);
+                        };
+                        parent.baseline = document.group_parent_at(group, &current.base)?;
+                    }
                     let fields = current.fields.clone();
                     current.changed.clear();
                     if fields.name != current.baseline.name {
@@ -608,6 +970,16 @@ impl DraftCollection {
         attempt.captured = None;
         Ok(outcome)
     }
+}
+
+fn is_favicon(icon: &IconRef) -> bool {
+    matches!(
+        icon,
+        IconRef::Image {
+            source: IconSource::Favicon(_),
+            ..
+        }
+    )
 }
 
 pub(super) fn new_draft_id() -> Result<DraftId, ServiceError> {
@@ -672,6 +1044,9 @@ impl DatabaseService {
             .databases
             .get_mut(&session.database)
             .ok_or(ServiceError::NotFound)?;
+        if state.pending_icon.is_some() {
+            return Err(StorageError::CommitUncertain.into());
+        }
         if let Some(managed) = &state.managed {
             managed.check_edit_permission()?;
         }
@@ -726,12 +1101,11 @@ impl DatabaseService {
                 .metadata
                 .values()
                 .filter(|draft| {
-                    draft.fields != draft.baseline
-                        || collection.pinned.as_ref() == Some(&draft.identity.draft)
+                    draft.is_dirty() || collection.pinned.as_ref() == Some(&draft.identity.draft)
                 })
                 .map(|draft| DraftSummary {
                     identity: draft.identity.clone(),
-                    dirty: draft.fields != draft.baseline,
+                    dirty: draft.is_dirty(),
                 }),
         );
         summaries.sort_by(|left, right| left.identity.draft.cmp(&right.identity.draft));
@@ -793,7 +1167,12 @@ impl DatabaseService {
         } else {
             collection.entries.remove(id).is_some() || collection.metadata.remove(id).is_some()
         };
-        if !removed {
+        let before = collection.imported_icons.len();
+        collection
+            .imported_icons
+            .retain(|_, receipt| &receipt.identity.draft != id);
+        let removed_receipt = collection.imported_icons.len() != before;
+        if !removed && !removed_receipt {
             return Err(ServiceError::NoDraft);
         }
         if collection.pinned.as_ref() == Some(id) {
@@ -875,7 +1254,7 @@ impl DatabaseService {
                     .metadata
                     .get(&id)
                     .ok_or(ServiceError::NoDraft)?
-                    .view(),
+                    .view(state.document())?,
             ));
         }
         let fields = match &target {
@@ -915,8 +1294,18 @@ impl DatabaseService {
             }
             _ => return Err(ServiceError::InvalidContext),
         };
-        let draft = MetadataDraft::new(target, state.document().heads(), fields)?;
-        let view = draft.view();
+        let base = state.document().heads();
+        let parent = match &target {
+            DraftTarget::Group(group) => Some(state.document().group_parent_at(group, &base)?),
+            DraftTarget::NewGroup { parent, .. } => Some(parent.clone()),
+            _ => None,
+        }
+        .map(|parent| MetadataParent {
+            baseline: parent.clone(),
+            current: parent,
+        });
+        let draft = MetadataDraft::new(target, base, fields, parent)?;
+        let view = draft.view(state.document())?;
         state.drafts.park_entry();
         state.drafts.active_metadata = Some(draft.identity.draft.clone());
         state
@@ -932,13 +1321,9 @@ impl DatabaseService {
         session: &SessionToken,
         id: &DraftId,
     ) -> Result<SessionValue<MetadataDraftView>, ServiceError> {
-        let draft = self
-            .checked(session)?
-            .drafts
-            .metadata
-            .get(id)
-            .ok_or(ServiceError::NoDraft)?;
-        Ok(stamped(session, draft.view()))
+        let state = self.checked(session)?;
+        let draft = state.drafts.metadata.get(id).ok_or(ServiceError::NoDraft)?;
+        Ok(stamped(session, draft.view(state.document())?))
     }
 
     /// Apply only addressed group fields; original heads are preserved until a confirmed save.
@@ -955,17 +1340,49 @@ impl DatabaseService {
         {
             return Err(ServiceError::NotFound);
         }
-        let draft = state
-            .drafts
-            .metadata
-            .get_mut(id)
-            .ok_or(ServiceError::NoDraft)?;
+        let draft = state.drafts.metadata.get(id).ok_or(ServiceError::NoDraft)?;
         if !matches!(
             draft.identity.target,
             DraftTarget::Group(_) | DraftTarget::NewGroup { .. }
         ) {
             return Err(ServiceError::InvalidContext);
         }
+        let selected = match &patch.parent {
+            FieldUpdate::Keep => None,
+            FieldUpdate::Set(parent) => Some(Some(parent.clone())),
+            FieldUpdate::Clear => Some(None),
+        };
+        let parent = match selected {
+            None => draft.parent.clone(),
+            Some(selected) => {
+                let group = match &draft.identity.target {
+                    DraftTarget::Group(group) => Some(group),
+                    _ => None,
+                };
+                state
+                    .document()
+                    .validate_group_parent(group, selected.as_ref(), &draft.base)
+                    .map_err(operations::candidate_input_error)?;
+                let previous = draft.parent(state.document())?;
+                if selected == previous {
+                    draft.parent.clone()
+                } else {
+                    Some(MetadataParent {
+                        baseline: draft
+                            .parent
+                            .as_ref()
+                            .map(|parent| parent.baseline.clone())
+                            .unwrap_or(previous),
+                        current: selected,
+                    })
+                }
+            }
+        };
+        let draft = state
+            .drafts
+            .metadata
+            .get_mut(id)
+            .ok_or(ServiceError::NoDraft)?;
         let mut fields = draft.fields.clone();
         apply_metadata_name(&mut fields.name, patch.name);
         apply_metadata_optional(&mut fields.description, patch.description);
@@ -974,7 +1391,7 @@ impl DatabaseService {
             FieldUpdate::Set(icon) => fields.icon = Some(icon),
             FieldUpdate::Clear => fields.icon = Some(IconRef::default()),
         }
-        draft.update(fields)?;
+        draft.update_with_parent(fields, parent)?;
         Ok(stamped(session, draft.identity.clone()))
     }
 
@@ -1034,7 +1451,7 @@ impl DatabaseService {
                 return Ok(stamped(session, outcome));
             }
         } else {
-            if state.drafts.attempts.len() + state.drafts.cancelled.len() >= 100_000 {
+            if state.drafts.local_operation_count() >= MAX_LOCAL_OPERATIONS {
                 return Err(ServiceError::InvalidContext);
             }
             let captured = state.drafts.captured(id)?;
@@ -1045,7 +1462,7 @@ impl DatabaseService {
             if identity.revision != revision {
                 return Err(ServiceError::InvalidContext);
             }
-            captured.validate_for_confirmation()?;
+            captured.validate_for_confirmation(state.document())?;
             let fingerprint = commands::fingerprint(&(&identity, &captured))?;
             // Check the portable namespace even for unchanged local attempts.
             if state
@@ -1185,6 +1602,11 @@ impl DatabaseService {
         }
         let mut collection = state.drafts.clone();
         collection.reconcile(&document)?;
+        let document_changed = state.document().heads() != document.heads();
+        if let Some(managed) = &mut state.managed {
+            // Mark only after authenticated reload, compatibility, blob and draft validation.
+            managed.reconciled_application |= document_changed;
+        }
         state.drafts = collection;
         state.document = Some(document);
         state.blobs = Some(blobs);
@@ -1256,3 +1678,6 @@ fn apply_metadata_optional<T>(target: &mut Option<T>, update: FieldUpdate<T>) {
         FieldUpdate::Clear => *target = None,
     }
 }
+
+#[cfg(test)]
+mod tests;

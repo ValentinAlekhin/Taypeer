@@ -1,0 +1,31 @@
+<resources>
+    <string name="protection_title">Параметры защиты</string>
+    <string name="limits_title">Лимиты вложений</string>
+    <string name="policy_database_manager">%1$s · управляющее устройство</string>
+    <string name="policy_database_readonly">%1$s · параметры только для чтения</string>
+    <string name="protection_target">Целевое время подготовки ключа</string>
+    <string name="protection_memory">Память</string>
+    <string name="policy_seconds">%1$s с</string>
+    <string name="policy_mib">%1$s МиБ</string>
+    <string name="protection_algorithm_range">Argon2id · диапазон времени 0,5–5 с</string>
+    <string name="protection_passes">Текущие параметры: %1$s проходов · параллелизм %2$s</string>
+    <string name="protection_actual_time">Фактическая подготовка на этом устройстве: %1$s с.</string>
+    <string name="protection_time_unavailable">В этой сессии нет замера подготовки ключа из пароля.</string>
+    <string name="protection_calibrate">Калибровать</string>
+    <string name="protection_preview">Предварительный расчёт для %1$s с: %2$s проходов, замер %3$s с. Не применён.</string>
+    <string name="protection_password_needed">Для смены цели нужен текущий мастер-пароль. Изменение обновит общие параметры защиты.</string>
+    <string name="limits_attachment_mib">Размер одного файла, МиБ</string>
+    <string name="limits_total_mib">Всего вложений, МиБ</string>
+    <string name="limits_used">Занято %1$s МиБ из %2$s МиБ.</string>
+    <string name="limits_retention_note">История, корзина и ожидающие источники могут удерживать содержимое. Одинаковые вложения учитываются один раз.</string>
+    <string name="limits_other_usage">Удерживаемое содержимое: %1$s МиБ. Локальные черновики: %2$s МиБ. Зашифрованный рабочий файл: %3$s МиБ.</string>
+    <string name="limits_exceeded">Принятые вложения превысили лимит. Для новых нужна очистка или повышение лимита.</string>
+    <string name="limits_incomplete">Часть удерживаемого содержимого или ожидающих ссылок недоступна. Расход не позволяет удалять их.</string>
+    <string name="policy_readonly">Общие параметры защиты и лимиты меняет только разблокированное управляющее устройство.</string>
+    <string name="policy_read_failed">Не удалось прочитать действующую политику и расход. Повторите чтение.</string>
+    <string name="policy_number_invalid">Укажите объём в МиБ, соответствующий целому числу байтов.</string>
+    <string name="policy_rejected">Запрос отклонён до публикации. Исправьте значения или текущий мастер-пароль.</string>
+    <string name="policy_retry_exact">Результат не подтверждён. Повторите тот же запрос до следующего изменения.</string>
+    <string name="policy_retained_summary">Отправленный запрос: одно вложение %1$s МиБ, всего %2$s МиБ, целевое время подготовки ключа %3$s с.</string>
+    <string name="policy_calibration_failed">Калибровка не удалась. Параметры не применены.</string>
+</resources>

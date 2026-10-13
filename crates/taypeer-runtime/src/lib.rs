@@ -1,20 +1,34 @@
 //! Private command IPC and independent lifetimes for plaintext workers and ciphertext writers.
+mod application;
 mod cipher_ipc;
 mod host;
+mod management_handoff;
 mod network;
 pub mod platform;
 pub mod platform_worker;
 mod process;
 pub mod profile;
 mod protocol;
+mod recovery;
 pub mod session;
 mod worker;
-pub use host::{RegisteredCompatibility, RelocatedWorkingCopy, RuntimeHost, WorkingCopy};
+pub use application::{ApplicationPhase, ApplicationSnapshot, WorkerApplicationObserver};
+pub use host::{
+    CiphertextExport, CiphertextExportIdentity, RegisteredCompatibility, RelocatedWorkingCopy,
+    RuntimeHost, WorkingCopy,
+};
+pub use management_handoff::{
+    ManagementFailure, ManagementHandoff, ManagementPeerStatus, ManagementPhase, ManagementSession,
+};
 pub use network::{
     DatabaseExchange, DeviceExchange, InvitationCode, JoinProgress, NetworkCancellation,
-    NetworkSnapshot, PeerProgress, PendingJoin, PendingJoinSummary,
+    NetworkSnapshot, PeerProgress, PendingJoin, PendingJoinSummary, RelayPreference,
 };
+pub use profile::entry_access::{AccessClock, SecretAccessGrant};
 pub use protocol::{Command, RuntimeError, erase_view};
+pub use recovery::{
+    PendingRecovery, RecoveryIntent, RecoveryPhase, RecoveryPublication, RecoverySource,
+};
 #[cfg(feature = "ui-test-support")]
 pub use worker::run_test_worker;
 pub use worker::run_worker;
@@ -47,9 +61,32 @@ pub struct Worker {
     apply_task: tokio::task::JoinHandle<()>,
     application: Arc<Mutex<Option<Result<Value, RuntimeError>>>>,
     application_revision: Arc<AtomicU64>,
+    application_observer: WorkerApplicationObserver,
     _sessions: SessionController,
 }
 impl Worker {
+    /// Constrained recovery sessions use the common supervisor without normal application or exchange tasks.
+    /// Recovery bootstrap is explicit; this never weakens the ordinary authority watcher.
+    pub(crate) fn from_recovery_client(
+        client: Arc<Client>,
+        database: DatabaseId,
+        runtime: &tokio::runtime::Handle,
+        sessions: &SessionController,
+    ) -> Result<Self, RuntimeError> {
+        client.control.opened(database.clone())?;
+        let application_observer =
+            WorkerApplicationObserver::new(WorkerControl(Arc::clone(&client.control)));
+        Ok(Self {
+            client,
+            database,
+            watch: runtime.spawn(std::future::pending::<()>()),
+            apply_task: runtime.spawn(std::future::pending::<()>()),
+            application: Arc::new(Mutex::new(None)),
+            application_revision: Arc::new(AtomicU64::new(0)),
+            application_observer,
+            _sessions: sessions.clone(),
+        })
+    }
     pub(crate) fn enroll(
         executable: &Path,
         context: Arc<HostContext>,
@@ -194,16 +231,28 @@ impl Worker {
         let linux_credentials = contexts.profile.is_linux_lazy();
         let application = Arc::new(Mutex::new(None));
         let application_revision = Arc::new(AtomicU64::new(0));
+        let application_observer =
+            WorkerApplicationObserver::new(WorkerControl(Arc::clone(&client.control)));
         // Cover every durable delivery between the child's initial apply and
         // this subscription before exposing an unlocked Worker to the caller.
         let result = client.request(&Command::ApplyReceived, false);
         let retry = retry_application(&result);
-        record_application(&client, result, &application, &application_revision);
+        record_application(
+            &client,
+            result,
+            &application,
+            &application_revision,
+            &application_observer,
+        );
         client.control.check(false)?;
+        watched_context
+            .management
+            .register(database.clone(), &client)?;
         let (apply_send, mut apply_receive) = tokio::sync::mpsc::channel(1);
         let apply_client = Arc::downgrade(&client);
         let updates = Arc::clone(&application);
         let revision = Arc::clone(&application_revision);
+        let observer = application_observer.clone();
         let apply_task = runtime.spawn(async move {
             let mut retry = retry;
             let mut backoff = Duration::from_millis(100);
@@ -224,10 +273,11 @@ impl Worker {
                 }
                 let updates = Arc::clone(&updates);
                 let revision = Arc::clone(&revision);
+                let observer = observer.clone();
                 retry = tokio::task::spawn_blocking(move || {
                     let result = client.request(&Command::ApplyReceived, false);
                     let retry = retry_application(&result);
-                    record_application(&client, result, &updates, &revision);
+                    record_application(&client, result, &updates, &revision, &observer);
                     retry && client.control.check(false).is_ok()
                 })
                 .await
@@ -350,12 +400,18 @@ impl Worker {
             apply_task,
             application,
             application_revision,
+            application_observer,
             _sessions: sessions.clone(),
         })
     }
     /// Independent control handle; does not wait for command I/O or own plaintext.
     pub fn control(&self) -> WorkerControl {
         WorkerControl(Arc::clone(&self.client.control))
+    }
+    /// A content-free application observer independent of this worker owner's
+    /// command mutex. Its snapshot remains bound to this process generation.
+    pub fn application_observer(&self) -> WorkerApplicationObserver {
+        self.application_observer.clone()
     }
     /// Logical identity authenticated during opening.
     pub fn database_id(&self) -> &DatabaseId {
@@ -462,6 +518,7 @@ fn record_application(
     mut result: Result<Value, RuntimeError>,
     updates: &Mutex<Option<Result<Value, RuntimeError>>>,
     revision: &AtomicU64,
+    observer: &WorkerApplicationObserver,
 ) {
     if matches!(
         result,
@@ -487,8 +544,9 @@ fn record_application(
         if let Some(Ok(value)) = status.as_mut() {
             erase_view(value);
         }
+        let next = revision.fetch_add(1, Ordering::Release).wrapping_add(1);
+        observer.publish(next, &result);
         *status = Some(result);
-        revision.fetch_add(1, Ordering::Release);
     } else if let Ok(value) = &mut result {
         erase_view(value);
     }

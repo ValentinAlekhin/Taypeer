@@ -1,0 +1,27 @@
+<resources>
+    <string name="entry_preview">Entry preview</string>
+    <string name="lucide_icons">Lucide Icons…</string>
+    <string name="loaded_favicon">Loaded favicon</string>
+    <string name="icon_from_url">Download from URL…</string>
+    <string name="icon_from_file">Choose file…</string>
+    <string name="icon_original_unavailable">Original image unavailable</string>
+    <string name="select_icon">Choose</string>
+    <string name="download_icon">Download icon</string>
+    <string name="download_icon_action">Download</string>
+    <string name="image_url">Image URL</string>
+    <string name="icon_download_help">The request starts only after Download. Images up to 1 MiB.</string>
+    <string name="icon_outcome_unknown">The icon operation is unconfirmed. Retry the same request before changing or saving this form.</string>
+    <string name="icon_invalid_url">Enter a supported HTTP or HTTPS URL.</string>
+    <string name="icon_network_boundary">The redirect crossed an unsupported network boundary.</string>
+    <string name="icon_network_failed">Could not download the image. Check the connection and try again.</string>
+    <string name="icon_timeout">The download timed out. Try again.</string>
+    <string name="icon_too_large">The image is larger than 1 MiB.</string>
+    <string name="icon_invalid_image">The image format or contents are not supported.</string>
+    <string name="icon_file_failed">Could not read the selected image.</string>
+    <string name="selected_icon_ready">The selected icon is ready.</string>
+    <string name="use_selected_icon">Use selected icon</string>
+    <string name="download_favicon">Download favicon</string>
+    <string name="search_icons">Find an icon…</string>
+    <string name="icon_title">Icon</string>
+    <string name="lucide_picker_title">Lucide icons</string>
+</resources>

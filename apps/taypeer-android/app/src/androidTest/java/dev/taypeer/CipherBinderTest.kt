@@ -14,6 +14,7 @@ import dev.taypeer.platform.CipherFileResult
 import dev.taypeer.platform.CiphertextDescriptors
 import dev.taypeer.platform.ICipherPersistence
 import dev.taypeer.platform.anonymousCiphertext
+import dev.taypeer.platform.code
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -32,6 +33,18 @@ class CipherBinderTest {
         override fun saveDraft(file: ParcelFileDescriptor) = 1
         override fun loadDraft() = CipherFileResult(1, null)
         override fun discardDraft() = 1
+        // This storage-error fixture owns no recovery capability or successful receipt.
+        private fun recoveryRefusal() = code(AndroidException.InvalidOptions())
+        private fun recoveryFailure() = Bundle().apply { putInt("status", recoveryRefusal()) }
+        override fun freezeRecovery(operation: String, authenticated: String) = recoveryFailure()
+        override fun recoverySource(operation: String) = recoveryFailure()
+        override fun authorRecovery(source: ByteArray) = CipherAuthorResult(recoveryRefusal(), null)
+        override fun recoveryCandidate(intent: ByteArray) = recoveryFailure()
+        override fun publishRecovery(intent: ByteArray, controls: ByteArray, objects: Array<ParcelFileDescriptor>, checkpoint: String, baseline: String): Bundle {
+            objects.forEach { it.close() }
+            return recoveryFailure()
+        }
+        override fun confirmRecovery(publication: ByteArray) = recoveryRefusal()
     }
     private val seed = CipherSeed(byteArrayOf(), listOf(), "PUBLIC checkpoint", "PUBLIC baseline")
     private val commit = CipherCommit("PUBLIC expected", "PUBLIC control", byteArrayOf(), listOf(), listOf(), "PUBLIC checkpoint", "PUBLIC baseline", byteArrayOf())
@@ -44,6 +57,12 @@ class CipherBinderTest {
             assertThrows(AndroidException.AlreadyExists::class.java) { changed.create(seed) }
             assertThrows(AndroidException.StorageChanged::class.java) { changed.commit(commit) }
             assertThrows(AndroidException.StorageIo::class.java) { changed.snapshot() }
+            val busy = BinderDocumentPersistence(object : Port() {
+                override fun snapshot() = Bundle().apply { putInt("status", 8) }
+                override fun commit(expected: String, control: String, controls: ByteArray, objects: Array<ParcelFileDescriptor>, remove: Array<String>, checkpoint: String, baseline: String, journal: ByteArray) = Bundle().apply { putInt("status", 8) }
+            }, files)
+            assertThrows(AndroidException.StorageBusy::class.java) { busy.snapshot() }
+            assertThrows(AndroidException.StorageBusy::class.java) { busy.commit(commit) }
             val lost = BinderDocumentPersistence(object : Port() {
                 override fun create(controls: ByteArray, objects: Array<ParcelFileDescriptor>, checkpoint: String, baseline: String): Int = throw RemoteException()
                 override fun snapshot(): Bundle = throw RemoteException()

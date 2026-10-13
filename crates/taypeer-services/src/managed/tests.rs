@@ -8,9 +8,15 @@ use taypeer_trust::{JoinProof, TransportKey};
 const PASSWORD: &[u8] = b"PUBLIC managed fixture password";
 const NEW_PASSWORD: &[u8] = b"PUBLIC independently rotated fixture password";
 
+mod application;
+mod binary_export;
 mod compatibility;
 mod corpus;
 mod drafts;
+mod keyed_open;
+mod management;
+mod policy;
+mod recovery_named;
 mod temporary;
 
 #[test]
@@ -304,6 +310,9 @@ fn handoff_survives_restart_before_successor_delivery_and_rejects_old_manager() 
     copy_to(&a, &ta.database, &bp);
     let (mut sb, tb) = b.open(bp, PASSWORD);
     let operation = Digest::of(b"PUBLIC interrupted handoff");
+    // An admitted foreign checkpoint opens through its accepted baseline. The
+    // runtime performs this acknowledged application before exposing OPEN.
+    sb.apply_received(&tb).unwrap();
     let consent = sb.consent_management(&tb, operation).unwrap();
     sa.transfer_management(&ta, consent.clone()).unwrap();
     let committed = a.coordinator.snapshot(&ta.database).unwrap().fingerprint();
@@ -757,6 +766,47 @@ fn received_source_inspection_extraction_and_discard_survive_repackaging_and_reo
         a.coordinator.snapshot(&ta.database).unwrap().fingerprint()
     );
     let operation = taypeer_core::OperationId::new("PUBLIC extract exact source");
+    let deleted_destination = sa
+        .create_group(
+            &ta,
+            "PUBLIC rejected extraction destination".into(),
+            None,
+            &crate::new_operation_id().unwrap(),
+        )
+        .unwrap()
+        .value
+        .id;
+    for action in [LifecycleAction::Trash, LifecycleAction::Purge] {
+        let review = sa
+            .prepare_lifecycle(
+                &ta,
+                action,
+                ObjectId::Group(deleted_destination.clone()),
+                None,
+            )
+            .unwrap()
+            .value;
+        sa.confirm_lifecycle(&ta, &review, &crate::new_operation_id().unwrap())
+            .unwrap();
+    }
+    let before_rejected = std::fs::read(&ap).unwrap();
+    assert_eq!(
+        sa.extract_received(
+            &ta,
+            change,
+            &original,
+            deleted_destination,
+            &crate::new_operation_id().unwrap(),
+        )
+        .unwrap_err(),
+        ServiceError::InvalidInput
+    );
+    assert_eq!(std::fs::read(&ap).unwrap(), before_rejected);
+    assert!(sa.entries(&ta, None, "").unwrap().value.is_empty());
+    assert_eq!(
+        sa.inspect_received(&ta, change).unwrap().value[0].id,
+        original
+    );
     let extracted = sa
         .extract_received(&ta, change, &original, group.clone(), &operation)
         .unwrap()
@@ -1101,7 +1151,7 @@ fn deliver(from: &Profile, to: &Profile, database: &DatabaseId) {
                 from.transport.public(),
                 database,
                 snapshot.metadata().manifest.body.objects[&id].clone(),
-                temp,
+                temp.reopen().unwrap().into(),
             )
             .unwrap();
     }

@@ -16,7 +16,7 @@ use taypeer_services::{AttachmentEdit, BinaryEdit, BinaryRequest, BinaryTarget};
 /// One explicit SAF selection. Its contents are never copied to a host temporary file.
 #[uniffi::export(callback_interface)]
 pub trait SelectedInput: Send + Sync {
-    /// Exact declared size, checked against the shared attachment policy before reading.
+    /// Exact declared size, checked against the shared binary policy before reading.
     fn length(&self) -> Result<u64, AndroidError>;
     /// Read at most 64 KiB at an independent offset.
     fn read(&self, offset: u64, count: u32) -> Result<Vec<u8>, AndroidError>;
@@ -28,7 +28,8 @@ pub trait SelectedInput: Send + Sync {
 pub trait SelectedOutput: Send + Sync {
     /// Consume at most 64 KiB at the specified offset.
     fn write(&self, offset: u64, bytes: Vec<u8>) -> Result<u32, AndroidError>;
-    /// Flush and confirm durability before reporting export success.
+    /// Complete the destination. File exports require flush/durability;
+    /// bounded previews publish only an ephemeral completed memory value.
     fn finish(&self) -> Result<(), AndroidError>;
     /// Release this selection after success or failure.
     fn close(&self);
@@ -115,9 +116,44 @@ impl SelectedTransfersHost {
             .ok_or(AndroidError::InvalidOptions)
     }
 }
-struct SelectionLease {
+pub(super) struct SelectionLease {
     host: Arc<SelectedTransfersHost>,
-    id: u64,
+    pub(super) id: u64,
+}
+/// Own an input before its first callback, including receipt-only replay cleanup.
+pub(super) struct InputCapability(Option<Arc<dyn SelectedInput>>);
+impl InputCapability {
+    pub(super) fn new(input: Box<dyn SelectedInput>) -> Self {
+        Self(Some(Arc::from(input)))
+    }
+    pub(super) fn length(&self) -> Result<u64, AndroidError> {
+        self.0.as_ref().ok_or(AndroidError::Runtime)?.length()
+    }
+    pub(super) fn register(
+        mut self,
+        host: &Arc<SelectedTransfersHost>,
+        length: u64,
+    ) -> Result<SelectionLease, AndroidError> {
+        host.insert(Selection::Input {
+            stream: self.0.take().ok_or(AndroidError::Runtime)?,
+            length,
+        })
+    }
+}
+impl Drop for InputCapability {
+    fn drop(&mut self) {
+        if let Some(stream) = &self.0 {
+            stream.close();
+        }
+    }
+}
+impl SelectedTransfersHost {
+    pub(super) fn output(
+        self: &Arc<Self>,
+        stream: Arc<dyn SelectedOutput>,
+    ) -> Result<SelectionLease, AndroidError> {
+        self.insert(Selection::Output(stream))
+    }
 }
 impl Drop for SelectionLease {
     fn drop(&mut self) {
@@ -173,7 +209,8 @@ impl SelectedTransfersHost {
         self.checked()?;
         Ok(written)
     }
-    /// Success requires the selected provider's explicit durability confirmation.
+    /// Success requires the selected destination's explicit completion confirmation.
+    /// File-export destinations must confirm durability, unlike memory previews.
     pub fn finish(&self, id: u64) -> Result<(), AndroidError> {
         let selection = self.get(id)?;
         let Selection::Output(stream) = &*selection else {

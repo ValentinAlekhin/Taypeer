@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Lucide / Feather paths, ISC and MIT; see resources/lucide/LICENSE. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="20dp" android:height="20dp" android:viewportWidth="24" android:viewportHeight="24">
+    <path android:pathData="M5 3L19 3C20.104569499661586 3 21 3.8954305003384135 21 5L21 19C21 20.104569499661586 20.104569499661586 21 19 21L5 21C3.8954305003384135 21 3 20.104569499661586 3 19L3 5C3 3.8954305003384135 3.8954305003384126 3 5 3Z" android:fillColor="@android:color/transparent" android:strokeColor="#FF000000" android:strokeWidth="1.75" android:strokeLineCap="round" android:strokeLineJoin="round" />
+    <path android:pathData="M7 9C7 10.104569499661586 7.8954305003384135 11 9 11C10.104569499661586 11 11 10.104569499661586 11 9C11 7.8954305003384135 10.104569499661586 7 9 7C7.8954305003384135 7 7 7.8954305003384135 7 9Z" android:fillColor="@android:color/transparent" android:strokeColor="#FF000000" android:strokeWidth="1.75" android:strokeLineCap="round" android:strokeLineJoin="round" />
+    <path android:pathData="M21 15L17.914 11.914C17.13300029702837 11.133236123334274 15.86699970297163 11.133236123334274 15.086 11.913999999999998L6 21" android:fillColor="@android:color/transparent" android:strokeColor="#FF000000" android:strokeWidth="1.75" android:strokeLineCap="round" android:strokeLineJoin="round" />
+</vector>

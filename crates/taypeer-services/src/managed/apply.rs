@@ -29,6 +29,10 @@ pub struct PendingPacket {
 /// Application counts are returned only after the local encrypted receipt is durable.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApplyReport {
+    /// Original sources or a changed authenticated baseline were durably published.
+    /// Empty packet evaluations alone do not acknowledge a document change.
+    #[serde(default)]
+    pub changed: bool,
     /// Newly accepted original changes, independent of repackaging/delivery count.
     pub applied: usize,
     /// Packets evaluated as complete during this session (original sources are already durable).
@@ -197,7 +201,13 @@ impl ManagedState {
                 report.completed += 1;
             }
         }
-        if report.applied != 0 || new_baseline != self.baseline {
+        // Cold-open can authenticate a newer baseline before it has become this
+        // working copy's acknowledged active checkpoint. Publish that accepted
+        // projection once; reading the received baseline alone is not its ACK.
+        report.changed = report.applied != 0
+            || new_baseline != self.baseline
+            || self.accepted != self.snapshot.metadata().manifest.body.checkpoint;
+        if report.changed {
             let old_baseline = self.baseline;
             self.baseline = new_baseline;
             if let Err(error) = self.persist(&candidate, metadata, Vec::new(), None) {
@@ -397,7 +407,11 @@ impl DatabaseService {
         ) {
             state.write_uncertain = true;
         }
-        let (document, blobs, report) = result?;
+        let (document, blobs, mut report) = result?;
+        // A confirmed reload may already have installed the change; keep its acknowledgement
+        // through failed attempts without causing an extra persistence transaction.
+        report.changed |= managed.reconciled_application;
+        managed.reconciled_application = false;
         state.document = Some(document);
         state.blobs = Some(blobs);
         Ok(stamped(session, report))

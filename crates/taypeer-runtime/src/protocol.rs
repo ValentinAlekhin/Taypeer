@@ -93,6 +93,37 @@ pub enum Command {
     GroupHistory(GroupId),
     /// Read retained versions of database descriptive metadata.
     DatabaseHistory,
+    /// Read one original group confirmation, current metadata and a shared reviewed basis.
+    GroupRevisionView {
+        /// Active group identity.
+        group: GroupId,
+        /// Exact accessible confirmation.
+        revision: RevisionId,
+    },
+    /// Read one original database metadata confirmation and its current projection.
+    DatabaseRevisionView(RevisionId),
+    /// Restore one group's descriptive fields and explicit parent in a single confirmation.
+    RestoreGroupRevision {
+        /// Active group identity.
+        group: GroupId,
+        /// Exact source confirmation.
+        revision: RevisionId,
+        /// Explicit destination, or top level.
+        parent: Option<GroupId>,
+        /// Reviewed current projection heads.
+        heads: Vec<String>,
+        /// Stable identity of the immutable confirmed intent.
+        operation: OperationId,
+    },
+    /// Restore only the name and description of this same logical database.
+    RestoreDatabaseRevision {
+        /// Exact source confirmation.
+        revision: RevisionId,
+        /// Reviewed current projection heads.
+        heads: Vec<String>,
+        /// Stable identity of the immutable confirmed intent.
+        operation: OperationId,
+    },
     /// Explicitly purge exactly the reviewed group revisions.
     PurgeGroupHistory {
         /// Selected group identity.
@@ -145,6 +176,16 @@ pub enum Command {
         /// Attribute, or password when absent.
         attribute: Option<AttributeId>,
     },
+    /// Atomically check saved-object eligibility and reveal its password or protected attribute.
+    /// Ordinary attributes and unfinished forms cannot obtain a host Access permission.
+    RevealSavedForAccess {
+        /// Saved entry identity.
+        entry: EntryId,
+        /// Exact saved revision, or current saved projection.
+        revision: Option<RevisionId>,
+        /// Protected attribute, or password when absent.
+        attribute: Option<AttributeId>,
+    },
     /// Read the unlocked session's authenticated format compatibility.
     Compatibility,
     /// Create a separate trust set without modifying the readable original.
@@ -153,6 +194,15 @@ pub enum Command {
         path: PathBuf,
         /// Explicit retry identity.
         operation: taypeer_trust::Digest,
+        /// New password, confined to the plaintext worker.
+        password: Zeroizing<Vec<u8>>,
+    },
+    /// Recover into a host-selected internal copy using one frozen named request.
+    RecoverWorkingCopy {
+        /// Exact retry identity; never replaced after an uncertain result.
+        operation: taypeer_trust::Digest,
+        /// Exact name, confined to the worker and encrypted receipt.
+        name: String,
         /// New password, confined to the plaintext worker.
         password: Zeroizing<Vec<u8>>,
     },
@@ -189,6 +239,8 @@ pub enum Command {
     /// Read the authority actually loaded by this worker, without refreshing host storage.
     /// Used to reconcile startup and missed network events against the exact opened epoch.
     SessionAuthority,
+    /// Read only management authority whose baseline was durably applied by this worker.
+    ManagementBasis,
     /// Explicitly create and reveal one invitation's bearer material.
     CreateInvitation,
     /// Approve the recipient of a durable request.
@@ -223,6 +275,13 @@ pub enum Command {
     },
     /// Read authenticated shared quota and KDF settings.
     DatabasePolicy,
+    /// Atomically read policy, product/retention usage and current numeric KDF parameters.
+    PolicyDetails,
+    /// Explicitly preview existing bounded calibration; no state is published.
+    CalibrateProtection {
+        /// Requested managing-device budget in milliseconds.
+        target_ms: u32,
+    },
     /// Change manager-controlled policy; password is required when recalibrating KDF.
     SetDatabasePolicy {
         /// Idempotent operation.
@@ -241,6 +300,52 @@ pub enum Command {
         /// Explicit source and target; binary bytes never enter JSON IPC.
         request: taypeer_services::BinaryRequest,
         /// Retry identity.
+        operation: OperationId,
+    },
+    /// Check a frozen icon selection before provider access or an explicit HTTP request.
+    IconImportReceipt {
+        /// Exact causal entry/group form.
+        draft: taypeer_core::DraftId,
+        /// Encrypted provenance, never a request performed by this command.
+        source: taypeer_core::IconSource,
+        /// Stable identity of the original source choice.
+        operation: OperationId,
+    },
+    /// Offer one scoped already-loaded favicon original; never performs HTTP.
+    StoredFavicon(taypeer_core::DraftId),
+    /// Stage the exact offered original into the common form, with its own retry receipt.
+    SelectStoredFavicon {
+        /// Exact causal entry/group form.
+        draft: taypeer_core::DraftId,
+        /// Immutable offered original, not arbitrary blob authority.
+        identity: taypeer_core::BlobId,
+        /// Stable identity of the explicit local selection.
+        operation: OperationId,
+    },
+    /// Select a bounded live group batch without executing any HTTP.
+    PrepareGroupFavicons(taypeer_services::GroupFaviconRequest),
+    /// Reconcile publication and inspect one exact saved-entry receipt before HTTP.
+    FaviconEntryReceipt(taypeer_services::FaviconEntryRequest),
+    /// Import a complete favicon through a platform capability into a saved entry.
+    ImportSelectedEntryFavicon {
+        /// Frozen shared selection; URL is provenance, never a worker HTTP request.
+        request: taypeer_services::FaviconEntryRequest,
+        /// Generation-scoped selected input, never a file path.
+        input: u64,
+        /// Complete original length; exact EOF and common validation precede mutation.
+        length: u64,
+    },
+    /// Stage one selected original image through a generation-scoped capability.
+    ImportSelectedIcon {
+        /// Exact causal entry/group form.
+        draft: taypeer_core::DraftId,
+        /// Host-owned selected stream; never a URI or path.
+        input: u64,
+        /// Exact complete plaintext length.
+        length: u64,
+        /// Frozen acquisition origin, stored only under database encryption.
+        source: taypeer_core::IconSource,
+        /// Same identity on retries, independent of the transient capability.
         operation: OperationId,
     },
     /// Import an explicitly selected stream into this exact active local form.
@@ -546,6 +651,16 @@ impl Command {
             }
             Self::DraftExpiry(value) => value.zeroize(),
             Self::ImportSelectedAttachment { name, .. } => name.zeroize(),
+            Self::FaviconEntryReceipt(request)
+            | Self::ImportSelectedEntryFavicon { request, .. } => request.url.zeroize(),
+            Self::IconImportReceipt { source, .. } | Self::ImportSelectedIcon { source, .. } => {
+                match source {
+                    taypeer_core::IconSource::File => {}
+                    taypeer_core::IconSource::Url(url) | taypeer_core::IconSource::Favicon(url) => {
+                        url.zeroize()
+                    }
+                }
+            }
             Self::PatchAttribute { patch, .. } => {
                 patch.name.zeroize();
                 if let taypeer_services::FieldUpdate::Set(value) = &mut patch.value {
@@ -618,6 +733,11 @@ pub enum RuntimeError {
     OperationInterrupted(crate::session::LockReason),
     /// Access is closed but operating-system process exit has not yet been confirmed.
     ShutdownUnconfirmed,
+    /// The original worker vanished before an encrypted password-bound candidate existed.
+    /// Actual absence has been checked; continuing requires a different operation identity.
+    RecoveryRequiresNewOperation,
+    /// Explicit management workflow refusal, separate from transport/persistence uncertainty.
+    Management(crate::ManagementFailure),
 }
 impl From<crate::profile::ProfileError> for RuntimeError {
     fn from(error: crate::profile::ProfileError) -> Self {

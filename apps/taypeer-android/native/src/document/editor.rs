@@ -54,6 +54,8 @@ pub struct EntryProperties {
     pub tags: Vec<String>,
     /// Selected appearance.
     pub appearance: AppearanceView,
+    /// Device-local latest accepted secret access in UTC milliseconds; absent before access.
+    pub accessed_at: Option<i64>,
 }
 fn appearance(
     icon: taypeer_core::IconRef,
@@ -70,6 +72,34 @@ fn appearance(
         image,
         foreground: foreground.map(|c| u32::from_be_bytes(c.0)),
         background: background.map(|c| u32::from_be_bytes(c.0)),
+    }
+}
+fn properties(view: taypeer_services::EntryView, accessed_at: Option<i64>) -> EntryProperties {
+    EntryProperties {
+        entry: view.id.to_string(),
+        created_at: view.created_at,
+        modified_at: view.modified_at,
+        expires_at: view.expires_at,
+        tags: view.tags,
+        appearance: appearance(
+            view.appearance.icon,
+            view.appearance.foreground,
+            view.appearance.background,
+        ),
+        accessed_at,
+    }
+}
+impl DocumentSession {
+    fn local_properties(
+        &self,
+        view: taypeer_services::EntryView,
+    ) -> Result<EntryProperties, AndroidError> {
+        let database = taypeer_core::DatabaseId::new(identifier(self.identity()?.0)?);
+        let accessed_at = self
+            .host
+            .accessed_at(&database, &view.id)
+            .map_err(crate::credentials::host_error)?;
+        Ok(properties(view, accessed_at))
     }
 }
 #[uniffi::export]
@@ -115,18 +145,21 @@ impl DocumentSession {
     pub fn entry_properties(&self, entry: String) -> Result<EntryProperties, AndroidError> {
         let view: taypeer_services::EntryView =
             self.command(Command::Entry(EntryId::new(identifier(entry)?)))?;
-        Ok(EntryProperties {
-            entry: view.id.to_string(),
-            created_at: view.created_at,
-            modified_at: view.modified_at,
-            expires_at: view.expires_at,
-            tags: view.tags,
-            appearance: appearance(
-                view.appearance.icon,
-                view.appearance.foreground,
-                view.appearance.background,
-            ),
-        })
+        self.local_properties(view)
+    }
+    /// Read one accessible saved revision's timestamps, tags and appearance.
+    /// The existing worker validates the entry/revision and session access;
+    /// this projection neither reveals protected values nor writes history.
+    pub fn revision_properties(
+        &self,
+        entry: String,
+        revision: String,
+    ) -> Result<EntryProperties, AndroidError> {
+        let view: taypeer_services::EntryView = self.command(Command::Revision {
+            entry: EntryId::new(identifier(entry)?),
+            revision: RevisionId::new(identifier(revision)?),
+        })?;
+        self.local_properties(view)
     }
     /// Read the active draft's selected appearance.
     pub fn form_appearance(&self) -> Result<AppearanceView, AndroidError> {
@@ -219,6 +252,7 @@ impl DocumentSession {
                 icon,
                 name: FieldUpdate::Keep,
                 description: FieldUpdate::Keep,
+                parent: FieldUpdate::Keep,
             },
         })?;
         self.metadata(draft)

@@ -1,5 +1,285 @@
 # Проверки
 
+Автоматическая ARM64 Android-матрица, UI/network suites, camera denial и
+reviewed visual baseline описаны в [Android QA runbook](android-testing.md).
+
+## Android: текущие сценарии и границы приёмки
+
+Runner проверяет настоящий JNI, isolated worker, Binder, Keystore, clipboard,
+local direct/TLS exchange, QR virtual camera и UI. `full`/`ui` сначала выполняют
+отказ камеры отдельной instrumentation; `network` автоматически подготавливает
+строго проверяемый локальный TLS relay для offline/restart и поздних источников.
+Отдельные UI classes включают secret focus, password change и history/comparison.
+
+История сравнивает выбранную сохранённую версию и текущую проекцию без записи;
+раскрытие/копирование сторон независимо, incoming refresh и lock отзывают старые
+защищённые ответы. `ReceivedSourcesTest` различает аутентифицированные поздние
+события закрытой generation и непринятые исходные changes. Оно проверяет
+маскирование альтернатив, exact origins, новое извлечение и прежний OperationId
+при потерянном ответе через Back/Open/reset/lock/reopen. Device settings проверяют
+native startup load, durable-before-hot apply, corrupt/invalid rejection,
+перезапуск и clipboard no-clean/foreign value/publication denial.
+Восстановление версии сохраняет ID записи и создаёт новую Restore-версию;
+клонирование отдельно создаёт новый ID. `RestoreRevisionStateTest` проходит
+native commit с потерянным ответом, позднее независимое перемещение, смену БД,
+lock/reopen и повтор с точным прежним intent. Ошибка открытия проекции после
+acknowledgement не превращает надёжную запись в новый restoration request.
+`LifecycleStateTest` аналогично удерживает clone/move intent после Back, смены БД,
+lock/reopen и очистки источника; поздний callback не возвращает прежний экран.
+`SecretFocusUiTest` отдельно вызывает window focus loss без `onStop`, маскирует
+защищённый ввод и сохраняет несохранённую форму/параметры генерации. Типизированный
+результат ротации отделяет `REJECTED` (`InvalidInput`/`InvalidOptions` до commit)
+от `UNCERTAIN`, при котором пароль, revoke и OperationId остаются тем же запросом.
+`RevisionPropertiesTest` различает saved/current tags, expiry, icon и RGBA,
+проверяет неизменность ciphertext/history при чтении и отказ после lock.
+Исторические свойства получаются из общей saved EntryView, без повторной
+бизнес-валидации или новой runtime-команды в Android bridge.
+
+Это inventory сценариев, а не результат нового полного прогона. Успех каждого
+образа подтверждают его JUnit, environment и APK hashes; общий workspace check,
+host build, visual builder matrix и hardware acceptance сообщаются отдельно.
+Артефакты новых интегрированных прогонов добавляются после их завершения.
+Реализованные действия и открытые gaps перечислены в
+[Android README](../apps/taypeer-android/README.md#матрица-реализации), платформенные
+условия — в [roadmap](roadmap.md#android-соответствие-макетам-и-автоматическая-проверка--2026-10-07).
+
+### Последние проверки изображений и нового bridge — 2026-10-07
+
+Промежуточный APK с исправленным завершением выбранного output имеет SHA-256
+`c14612abb55f79da8eb85fa5c3f019f6a0e22818d72e7878d3c26d925d98efa8`, test APK —
+`f2c8576450ad1d1cc009e5c26e37185f717a9df5e108c4ee657bf14a314cbe14`.
+В `icons-completion-bounded-smoke-api31`, `icons-completion-bounded-smoke-api36`
+и `icons-completion-bounded-smoke-api36-16k` каждый JUnit подтверждает 17 passed,
+0 failed, 0 skipped. Проверены реальные selected descriptors и вложения,
+ошибки завершения после fsync/close, точная историческая image-версия и повторный
+выбор изображения незаписанной формы через background / повторную аутентификацию.
+
+Прежние `icons-completion-smoke-*` завершились по тайм-ауту при подготовке
+70 записей, а не прошли. Подготовка заменена одним настоящим импортом и
+69 настоящими clone-командами; проверки видимости, cache eviction и пикселей
+сохранены. Повтор `parent-access-eager70-api36-16k` дошёл до всех 70 записей,
+затем завершился отказом обновления UI overview за 20 секунд; это FAIL,
+причина исследуется. Текущая visual matrix содержит
+228 PNG (38 экранов × 6 профилей); она просмотрена, но после исправления размеров
+icon sheet и добавления двух форм родителя группы нужна новая матрица.
+
+`parent-access-common-check-linted.log` подтверждает полный общий
+`scripts/check.sh`: LikeC4, fmt/check/Clippy, workspace tests, 23 AppView-сценария,
+Rustdoc, release workspace и smoke. Отдельно прошли 12 shared parent-регрессий,
+9 runtime Access-регрессий, один настоящий процессный сценарий Access и один
+Native credential mapping сценарий. Python QA utility: 40/40.
+Covered Parent/Access product APK имеет SHA-256
+`9ed0801dd9b6d34359617530c039cdd334e3a44a014f323c83969472e65bb07b`,
+test APK после исправления порядка реального draw в PUBLIC fixture —
+`15fbcadbd5db485c4bf13a595f7c9fa8adc8bdeb8d6ce2b561b7c9f8653ab8ed`.
+`parent-access-target-api31-drawn` подтверждает 21 passed, 0 failed, 0 skipped:
+4 Parent UI, 3 Native Access, 6 Access UI, 4 CredentialPublication и 4 Comparison.
+На API36 `parent-access-fixture-draw-search-api36` подтверждает 2 passed:
+accepted draw/lock/late ACK и поиск по всей БД. Product APK при исправлении
+draw fixture не менялся. Первый прерванный общий прогон не является PASS;
+его unreadable execution data не используется для покрытия. Новый расширенный
+прогон `parent-access-regression-api36-covered-except-eager70` завершился:
+153 passed, 1 failed, 0 skipped из 154. Единственный отказ — прежнее ожидание
+`Credentials` вместо фактического `ProfileInvalid` после намеренного повреждения
+protected credential; ожидание исправлено, но новый Android-повтор ещё нужен.
+Eager70 и отдельный camera-denial stage в этот явно выбранный набор не входили.
+Его валидный отчёт JaCoCo, связанный с frozen original classes/source и APK выше,
+содержит 4325/5136 строк (84,21%) и 3182/5326 ветвей (59,74%). Это промежуточное
+покрытие Parent/Access, не полная матрица и не покрытие новых Recovery/Handoff/SAF/Bio.
+Android recovery, handoff и биометрические flows прошли whole-model validation;
+это не подтверждает их реализацию или Android-приёмку.
+
+Следующий source checkpoint: shared keyed-open 6 passed, private bounded key FD
+reader 4 passed, Runtime management handoff 5 passed (2 protected receipt и
+3 настоящих Iroh/worker сценария), весь Native bridge с android-test-support
+30 passed. Новый Recovery runtime cold-resume набор ранее дал 10 passed.
+Отдельный строго hash-bound read-only audit PUBLIC eager70 ciphertext прошёл:
+70 записей, 1 группа, реальные originals/history, нулевые writer callbacks и
+неизменный encrypted файл. Он не заменяет ещё не прошедший Android eager70.
+
+### Следующий исходный срез — 2026-10-08
+
+Предыдущий covered host checkpoint `recovery-handoff-saf-host-covered-recovery-closure-fixed`
+прошёл JVM, lint, build, ELF/ZIP; app SHA-256
+`cd3031834945f05cce588498279574f3bddba382e611edd07f80f2cf6a151a96`, test APK
+`038b0108ae8a38e7986eca2da5246f96d9cc2c694fe58ff482da3d4b2890abca`.
+API36 regression `recovery-handoff-eager-api36-regression-fixed-covered`:
+7 passed, 4 failed, 0 skipped из 11. Все четыре `RecoveryTest` и три ранее
+падавшие Management проверки прошли. Три `RecoveryUiTest` получили новую БД,
+но преждевременно проверили ещё не обновлённый каталог; ожидание exact нового
+root/path исправлено в исходнике. Eager70 прошёл настоящий импорт, но истёк срок
+первого preview; теперь перед ожиданием строка действительно прокручивается
+в viewport. Эти четыре исправленных проверки ещё требуют новой сборки и запуска.
+Не засчитывать этот целевой набор как полный или использовать его покрытие
+вместо полной матрицы. Предыдущий checkpoint подтверждает 8/8 SAF и 6/6
+Platform/Binder на API36; последняя Native recovery сборка дала 40/40 тестов,
+новый runtime OS-close regression — 1/1, существующий recovery набор — 10/10.
+
+Следующий covered host `search-biometry-host-covered-integration-fixed` прошёл
+54 Python QA-проверки, JVM, lint, build и ELF/ZIP; app SHA-256
+`740e0eca0f3136708ba0f42451c2658385c5adc099c8a69f1dc97829915a2b5c`, test APK
+`b50ea30a431fa149358a9d8ea9c56df84a5671bbe8fba062b9ba8e94ce252984`.
+`search-biometry-api36-regression-covered`: 12 passed, 2 failed из 14 —
+ContextActions 4/4, Recovery UI 3/3, private biometric input port 3/3,
+Search UI 2/4. Ошибки поиска воспроизвели исчезновение результатов при
+обновлении и устаревший Compose selector после прокрутки; исправления в
+исходниках пока не подтверждены повторным прогоном. Корректный отдельный
+`eager-seventy-api31-covered` дошёл до настоящего импорта и видимой первой
+строки, но первый Native preview не уложился в прежние 20 секунд. Проверки
+всех 70 строк, eviction/revisit и pixels не достигнуты; результат остаётся FAIL.
+Для него добавлен bounded DEBUG-only счётчик фазы, без чтения содержимого БД.
+
+`product-biometry-api36-16k-settings-wait-covered` выполняет реальные действия
+MainActivity/Settings и OS CryptoObject: 2 passed, 1 failed из 3. Прошли
+включение, сохранённое состояние, biometric unlock, отключение exact generation
+и отмена системного диалога с master fallback. Сценарий ухода в фон после
+OS success до provider выявил повторную загрузку статуса из фонового Compose
+экрана; ограничение загрузки состоянием RESUMED внесено, но ещё не проверено
+новой сборкой. Runner дополнительно отмечает провал всей biometry stage;
+это не четвёртый продуктовый сценарий. PUBLIC enrollment receipt и stage
+подтверждают восстановление исходной блокировки. Report-only JaCoCo этих
+трёх targeted запусков завершён на неизменённых classes и frozen Java capture.
+Это не полный набор трёх AVD и не доказательство аппаратной биометрии.
+
+Переданная промежуточная сборка `intermediate-2026-10-08/Taypeer-intermediate.apk`
+имеет иной SHA-256 `9d181beea2fee2810856577d237c4143b645924ce0bcd92480b3159cb9cd0a99`.
+Она не включает новую продуктовую биометрию и поиск по нескольким БД.
+
+Прямой owned FD путь подтверждён отдельным стендом с actual generated Native
+library/bindings: `biometric-safe-native-fd-api31` и
+`biometric-safe-native-fd-api36-16k` — по 13/13; actual OS-auth отдельные наборы
+`biometric-safe-native-os-auth-api31` и
+`biometric-safe-native-os-auth-api36-16k` — по 3/3. Проверяется настоящий
+isolated UID, synchronous safe dup удерживаемого PFD, exact32+EOF и отказ
+file/socket/writer/nonblocking/короткого/лишнего/неверного PUBLIC input.
+Rust OAEP → actual Keystore CryptoObject → JNI → isolated Native проходит
+на обеих версиях. Product `BiometricPromptCoordinatorTest` — 2/2 на API31
+и 2/2 на API36/16 КиБ; UI lifecycle продолжает использовать настоящий OS prompt.
+Это первый срез, а не полный enrollment/keyed-open/settings путь. Исторический
+standalone API31 early-cancel FAIL ниже сохраняется отдельно.
+
+Runner имеет 54/54 Python-проверок. Полный набор явно включает biometry stage
+и требует `--authorize-public-biometry`; `platform` его не включает. PUBLIC
+PIN/finger setup и restore используют same-boot receipt и проверенную пустую
+credential, без предположения, что ошибка означает отсутствие блокировки.
+Оба созданных runner receipts API31/API36-16K восстановлены (`restored=true`).
+Физический sensor/TEE/StrongBox/OEM и очистка всех provider copies не подтверждены.
+
+Ciphertext Save a copy прошёл 11 отдельных Rust/Native проверок: storage 2,
+runtime 4, Native 5. Проверены точный encrypted archive, сохранённые history/blobs,
+исключение unfinished local sidecar, сохранность захваченного inode после нового
+Save/закрытия host, bounded output, отказ finish/write, отмена и отсутствие ACK
+для повреждённого или неполного источника. Kotlin SAF сценарии ещё не запускались.
+
+Проекция списка прошла два causal regression теста; query-local индекс operation
+timestamps сохраняет свежие проверки snapshot и отбрасывает декодированные
+revisions. Сервисный audit того же corpus дал GroupInfo 1307 мс и Entries 1259 мс
+вместо 2057/2007 мс до изменения; это локальная read-only проверка, не Android
+deadline. Коммитируемый PUBLIC corpus с точным checksum теперь проверяется
+обычным `cargo test -p taypeer-services --test android_public_eager_fixture`.
+Eager70 Android-тест открывает его через настоящий Native worker и дополнительно
+посещает все 70 строк, проверяя предел 64 previews и eviction/revisit.
+
+Отдельный `biometric-os-rust-auth-api36-16k-platform-cancel-comparison`:
+12 passed, 0 failed, 0 skipped. Настоящие per-use Keystore key, новый Cipher,
+OS CryptoObject, product JNI, exact32+EOF и Rust OAEP wrapper проверены;
+это не managed worker enrollment или аппаратная приёмка. API31 standalone
+ранняя отмена AndroidX prompt (`biometric-api31-early-androidx-cancel-independent`)
+остаётся FAIL. Отдельная отмена после rejected PUBLIC finger
+(`biometric-api31-started-cancel-independent`) прошла 1/1; объединённый набор
+показывает нестабильную очистку OS requests и не считается PASS.
+Настоящий isolated UID (`biometric-api31-isolated-pipe-diagnostic`) отказал
+в `/proc/self/fd` reopen с EACCES, но прочитал тот же granted FIFO напрямую
+(exact32 PUBLIC bytes и EOF). Предлагаемый direct safe dup требует отдельного
+Native/Android доказательства до подключения биометрического worker boot.
+Native JNI библиотека экспортирует только три объявленные JNI-функции;
+копии STL symbols скрыты. Hardware security level, OEM и память не подтверждены.
+
+Промежуточные `rust-icons-*-coverage.json` не используются как итоговая метрика:
+изменение исходников между LLVM-прогонами смешало карты покрытия. Причина записана
+в `artifacts/android/rust-icons-coverage-validity.md`; необходим чистый прогон
+после заморозки Rust. Kotlin-метрика следующего абзаца относится только к APK
+имени устройства, а не к текущим изображениям, родителю или Access.
+
+Следующая промежуточная сборка с локальным именем устройства имеет SHA-256
+`3ba4d52559d3647da827e3b2ef32172b60cbda410219d9e27df56ea383eff967`, test APK —
+`12495abdec129c7d245233915e8b53c594bdec696a7214b68f6f70b9977d126e`.
+`device-name-host-rerun` подтверждает 28 Python-проверок runner/coverage guard,
+JVM-тесты, lint, APK и 16-КиБ ELF/ZIP. Полные API31/API36/API36-16КиБ прогоны
+`device-name-full-*` завершились: каждый основной JUnit содержит 117 passed,
+2 failed, 0 skipped из 119; отдельный camera-denial — 1 passed на каждом образе.
+Новые проверки имени устройства и relay Native state прошли, кроме общего
+`PreferencesUiTest.onlyLocalExchangeLabelUsesAcknowledgedNativeNameInsteadOfUnsubmittedDraft`:
+fixture пытался повторно установить content через rule уже открытой MainActivity.
+Ещё по одному отказу каждого образа приходится на ожидание маршрута после unlock:
+`AndroidNavigationTest.invalidNavigationSaveKeepsTheEditorAndPendingDestination`
+(API31), `DocumentUiTest.openingAndUnlockingKeepTheDrawerClosedAndGroupCreationTouchable`
+(API36) и `AndroidNavigationTest.lockClearsComparisonAndPasswordDraftSynchronouslyBeforePolling`
+(API36 / 16 КиБ). Native проверки очистки и сохранённого файла до unlock прошли;
+ожидание реального IME и подтверждения касания проверяется следующим повтором.
+Сетевые и shutdown-отказы предыдущей сборки не повторились. Это промежуточная
+матрица, пользовательские изображения в её APK ещё не входят.
+
+Исправленный JaCoCo report API36 прошёл guard 42 product-классов с `R` в начале
+имени и сопоставление оригинальных class IDs. Для этой сборки Kotlin product
+coverage составляет 3731 / 4522 строки (82,5%) и 2569 / 4407 ветвей (58,3%):
+`artifacts/android/device-name-full-api36-covered/coverage/coverage.xml`.
+`RestoreRevisionState`, `ReceivedSourcesState`, `RelaySettingsState` и
+`DeviceSettingsState` имеют реальные исполненные пробы. Это не покрытие Rust
+или аппаратных условий и не результат следующей сборки с изображениями.
+Повтор общего check завершился после успешных Rust unit-наборов, но rustdoc
+обнаружил изменённый во время прогона Native source с ещё не собранной зависимостью
+`image`; результат не засчитывается как общий check финального исходного состояния.
+
+Промежуточная сборка с исправленными отказами назначения и явным источником
+ciphertext staging имеет SHA-256
+`98e3b639855806bddafdf66b83d1ad97e5a60712b71800c4766e15ae0d21ef12`.
+Все 8 сценариев `P2PTest`, `ReceivedSourcesTest` и `IncomingUiTest` прошли на
+API 31 (`staging-network-api31`). На API 36 прошли регрессии отклонения назначения,
+повтора восстановления и закрытых источников; на API 36 / 16 КиБ — все 5
+`HistoryUiTest` и 4 `AndroidNavigationTest`. Целевые наборы целиком ещё не прошли:
+они выявили две ошибки fixtures — перекрывающиеся корневые элементы relay selector
+и создание новой формы вместо `resumeForm` в shutdown regression. Исправленные
+fixtures и новое имя устройства проверяются следующей сборкой.
+
+`staging-visual-all` содержит 35 экранов во всех шести профилях, 210 PNG и 6
+успешных capture-сценариев. Просмотр выявил дублирование действий на вкладке истории
+сохранённой версии; его исправление требует новых снимков. Эти PNG ещё не являются
+reviewed regression baseline. `integrated-staging-common-check-rerun.log`
+подтверждает полный общий check до добавления локального имени устройства.
+Новый JaCoCo guard и report прошли; в целевых execution data появились настоящие
+пробы `RestoreRevisionState` и `ReceivedSourcesState`. Общий процент этого
+ограниченного набора не является метрикой полного покрытия приложения.
+
+Завершённая интеграционная матрица от 2026-10-07 выявила отказы; она не является
+приёмкой. Product debug APK во всех трёх прогонах имеет SHA-256
+`62e86755d394041172ce031e14f6b22d00e4256e06f78ba0a15d71b5d6bfe298`.
+Каждый образ дополнительно прошёл один отдельный camera-denial тест.
+
+| Образ ARM64 | Основной набор | Артефакты в `artifacts/android/` |
+| --- | --- | --- |
+| API 31, 4 КиБ | 94 passed / 9 failed / 0 skipped | `integrated-camera-compat-api31` |
+| API 36, 4 КиБ | 100 passed / 3 failed / 0 skipped | `integrated-durable-api36` |
+| API 36, 16 КиБ | 98 passed / 5 failed / 0 skipped | `integrated-durable-api36-16k` |
+
+Общие отказы связаны с типом отклонения удалённого назначения и извлечения
+закрытого источника. На API 31 отдельно воспроизведён `StorageIo` при получении
+одобренного приглашения (`api31-enrollment-diagnostic`). API 36 / 16 КиБ также
+выявил раннее действие тестовой формы группы и ошибку закрытия worker.
+Исправления и новые regression-сценарии требуют новой сборки и повторной матрицы;
+успех прежнего APK их не подтверждает. `integrated-common-check-serial.log`
+подтверждает завершённый общий check на промежуточном состоянии, отдельно от Android.
+
+В отчёте JaCoCo этого неуспешного API 36 прогона есть данные исполнения,
+но пропуски реально вызываемых state-классов ещё проверяются. Его проценты
+не используются как достоверная итоговая оценка покрытия. Диагностические
+32 PNG в `visual-current-diagnostic-ru-dark` сверены с текущим FIG; они выявили
+оставшиеся расхождения, а не закрыли визуальную приёмку.
+
+CI Android job устанавливает закреплённые QA-зависимости и выполняет host
+unit/lint/build/packaging checks. Его конфигурация не обещает эмуляторную матрицу,
+публичный NAT/relay, физическую камеру, биометрию, IME/TalkBack или memory acceptance.
+
 ## Приёмка ручного сохранения dev7
 
 Эта матрица задаёт новые обязательные результаты по [спецификации](../spec.md).
@@ -102,7 +382,9 @@ workspace, Clippy без предупреждений, тестовый harness,
 
 CI выполняет общую проверку на macOS и Ubuntu; на Ubuntu дополнительно запускает
 `pnpm arch:build` и сохраняет сайт как артефакт. До первого удалённого запуска
-это конфигурация CI и локальные результаты. Android SDK и UI в неё не включены.
+это конфигурация CI и локальные результаты. Отдельный
+[Android workflow](../.github/workflows/android.yml) устанавливает SDK/NDK и
+выполняет host checks; AVD UI/network матрица пока запускается локально runner.
 GPUI подключается на macOS и Linux; обе платформы запускают общие Rust UI-сценарии.
 Production Nix-пакет отдельно собирается в CI и проверяет приватный worker. Runner `macos-15` соответствует ARM64 согласно
 [справочнику GitHub](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).

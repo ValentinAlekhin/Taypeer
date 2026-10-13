@@ -1,0 +1,11 @@
+<resources>
+    <string name="save_database_copy">Save a copy</string>
+    <string name="copy_filename">File name</string>
+    <string name="copy_default_filename">Database.taypeer</string>
+    <string name="choose_copy_location">Choose location…</string>
+    <string name="database_copy_note">The encrypted copy is saved only after writing finishes. Cancelling leaves the working copy unchanged.</string>
+    <string name="database_copy_saved">Copy saved.</string>
+    <string name="database_copy_capture_failed">Could not prepare this encrypted copy. The working copy is unchanged.</string>
+    <string name="database_copy_output_failed">Could not finish writing. The destination may contain a partial copy. Choose another location to retry.</string>
+    <string name="database_copy_unconfirmed">Could not confirm that the destination was saved. It may already contain the copy. Choose another location to retry.</string>
+</resources>

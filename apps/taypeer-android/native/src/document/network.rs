@@ -6,6 +6,90 @@ use taypeer_runtime::{Command, InvitationCode, JoinProgress, NetworkCancellation
 use taypeer_trust::{Digest, InvitationStatus};
 use zeroize::Zeroizing;
 
+/// Device-local product relay choices; only HTTPS custom relays are supported.
+#[derive(uniffi::Enum)]
+pub enum RelayPreference {
+    /// Public relays and address lookup; prefer a reachable direct path.
+    Public,
+    /// Direct paths only, without public relay or address lookup.
+    Disabled,
+    /// An explicitly selected HTTPS relay with ordinary certificate verification.
+    Custom {
+        /// Bounded HTTPS URL.
+        url: String,
+    },
+}
+impl From<taypeer_runtime::RelayPreference> for RelayPreference {
+    fn from(value: taypeer_runtime::RelayPreference) -> Self {
+        match value {
+            taypeer_runtime::RelayPreference::Public => Self::Public,
+            taypeer_runtime::RelayPreference::Disabled => Self::Disabled,
+            taypeer_runtime::RelayPreference::Custom(url) => Self::Custom { url },
+        }
+    }
+}
+impl From<RelayPreference> for taypeer_runtime::RelayPreference {
+    fn from(value: RelayPreference) -> Self {
+        match value {
+            RelayPreference::Public => Self::Public,
+            RelayPreference::Disabled => Self::Disabled,
+            RelayPreference::Custom { url } => Self::Custom(url),
+        }
+    }
+}
+#[uniffi::export]
+impl Host {
+    /// Read validated local settings without unlocking any database.
+    pub fn relay_preference(&self) -> Result<RelayPreference, AndroidError> {
+        self.runtime
+            .relay_preference()
+            .map(Into::into)
+            .map_err(runtime)
+    }
+    /// Persist only after live reconfiguration succeeds; failures restore the
+    /// previous preference and never claim a working or durable new configuration.
+    pub fn set_relay_preference(&self, preference: RelayPreference) -> Result<(), AndroidError> {
+        self.runtime
+            .set_relay_preference(preference.into())
+            .map_err(runtime)
+    }
+}
+
+#[cfg(feature = "android-test-support")]
+#[uniffi::export]
+impl Host {
+    /// Debug instrumentation capability for a loopback TLS relay. Trust is pinned
+    /// to the explicit test certificate; certificate/host verification stays on.
+    /// Direct paths are disabled and this setting never enters product preferences.
+    pub fn start_public_test_relay(
+        &self,
+        url: String,
+        root_der: Vec<u8>,
+    ) -> Result<(), AndroidError> {
+        if !url.starts_with("https://")
+            || url.len() > 2048
+            || root_der.is_empty()
+            || root_der.len() > 64 * 1024
+        {
+            return Err(AndroidError::InvalidOptions);
+        }
+        let url = url
+            .parse::<taypeer_sync::RelayUrl>()
+            .map_err(|_| AndroidError::InvalidOptions)?;
+        if !matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "[::1]")) {
+            return Err(AndroidError::InvalidOptions);
+        }
+        self.runtime.stop_configured_network();
+        self.runtime
+            .start_network(taypeer_sync::RelaySetting::RelayOnly {
+                url,
+                root_der: Some(root_der),
+            })
+            .map(|_| ())
+            .map_err(runtime)
+    }
+}
+
 /// A locked enrollment result, never a claim that plaintext was applied.
 #[derive(uniffi::Enum)]
 pub enum EnrollmentProgress {

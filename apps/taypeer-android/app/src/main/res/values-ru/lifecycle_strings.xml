@@ -1,0 +1,17 @@
+<resources>
+    <string name="clone_entry">Клонировать запись</string>
+    <string name="new_subgroup">Создать подгруппу</string>
+    <string name="clone_group">Клонировать группу</string>
+    <string name="move_entry">Переместить запись</string>
+    <string name="move_group">Переместить группу</string>
+    <string name="clone_action">Клонировать</string>
+    <string name="move_action">Переместить</string>
+    <string name="destination_group">Группа назначения</string>
+    <string name="top_level_groups">Корень базы</string>
+    <string name="restore_from_trash">Восстановить из корзины</string>
+    <string name="restore_action">Восстановить</string>
+    <string name="trash_title">Корзина</string>
+    <string name="trash_empty">Корзина пуста</string>
+    <string name="trash_review_counts">Проверено: групп — %1$s, записей — %2$s.</string>
+    <string name="trash_purge_warning">Выбранные объекты и их сохранённые версии будут удалены безвозвратно.</string>
+</resources>

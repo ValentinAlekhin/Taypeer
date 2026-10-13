@@ -51,6 +51,8 @@ impl Server {
                         }
                         let request = String::from_utf8_lossy(&bytes).into_owned();
                         let response = response(&request);
+                        // Receiving the response must imply that its complete
+                        // HTTP request is already observable by the assertions.
                         request_log.lock().unwrap().push(request);
                         let _ = socket.write_all(&response);
                     }
@@ -97,7 +99,15 @@ fn explicitly_requested_local_favicon_follows_html_without_credentials() {
     let bytes = favicon(&format!("{}/page", server.url)).unwrap();
     assert_eq!(bytes.as_slice(), SVG.as_bytes());
     let requests = server.requests.lock().unwrap();
-    assert_eq!(requests.len(), 2);
+    assert_eq!(
+        requests.len(),
+        2,
+        "PUBLIC fixture request lines: {:?}",
+        requests
+            .iter()
+            .filter_map(|request| request.lines().next())
+            .collect::<Vec<_>>()
+    );
     assert!(requests[0].starts_with("GET /page "));
     assert!(requests[1].starts_with("GET /assets/public.svg "));
     for request in requests.iter() {

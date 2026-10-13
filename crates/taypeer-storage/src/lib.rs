@@ -8,6 +8,7 @@ mod ciphertext_file;
 mod crypto;
 mod encrypted_object;
 mod file;
+mod kdf;
 mod local_state;
 mod locking;
 mod publication;
@@ -29,8 +30,12 @@ pub use bundle::BundleReader;
 pub use ciphertext_file::{CiphertextFile, CiphertextIo};
 pub use crypto::ReadKey;
 pub use file::{BinaryDraft, FileStore};
+pub use kdf::{
+    KdfCalibration, KdfMeasurement, KdfParameters, calibrate_password_kdf, password_kdf_parameters,
+    password_key_binding_matches,
+};
 pub use local_state::{LocalCredentialStore, LocalStateKey, LocalStateStore};
-pub use locking::try_lock_exclusive;
+pub use locking::{try_lock_exclusive, unlock_exclusive};
 pub use publication::{PublicationMode, publish_file};
 pub use temporary::{TemporaryFileProvider, TemporaryStorage};
 

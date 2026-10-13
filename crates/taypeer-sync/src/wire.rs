@@ -1,4 +1,4 @@
-use crate::{EndpointAddr, Error};
+use crate::{EndpointAddr, Error, ManagementIntent, ManagementReply};
 use iroh::endpoint::{RecvStream, SendStream};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{collections::BTreeSet, time::Duration};
@@ -22,6 +22,24 @@ pub(crate) const CHUNK: usize = 1024 * 1024;
     deny_unknown_fields
 )]
 pub enum Command {
+    /// Persist a correlated management proposal before acknowledging Pending.
+    /// The supplied route must belong to the actual authenticated source transport.
+    ManagementProposal {
+        /// Exact source-approved trust/control and successor.
+        intent: ManagementIntent,
+        /// Fresh response correlation, never a reusable readiness capability.
+        challenge: Digest,
+        /// Actual source endpoint route for the recipient's explicit acceptance check.
+        address: EndpointAddr,
+    },
+    /// Read a saved decision and freshly checked OPEN basis for one exact handoff.
+    /// This never creates a proposal, signs consent, or unlocks a worker.
+    ManagementStatus {
+        /// Original handoff, retained through lost replies/restart.
+        intent: ManagementIntent,
+        /// Fresh correlation for this authenticated exchange.
+        challenge: Digest,
+    },
     /// Request the selected database's signed ciphertext inventory.
     Inventory {
         /// Selected logical database, not a public database listing.
@@ -60,6 +78,8 @@ pub enum Command {
     deny_unknown_fields
 )]
 pub enum Reply {
+    /// Saved handoff phase and freshly observed readiness, bound to caller challenge.
+    Management(ManagementReply),
     /// Signed portable metadata; receiving it alone is not a complete database download.
     Inventory(Box<ArchiveMetadata>),
     /// Ciphertext objects absent from the receiver's durable generation.
