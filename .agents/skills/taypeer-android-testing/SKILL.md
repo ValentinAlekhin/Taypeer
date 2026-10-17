@@ -14,7 +14,7 @@ From repository root, respecting local RTK instructions:
 
 ```sh
 rtk proxy python3 apps/taypeer-android/qa.py doctor
-rtk proxy python3 apps/taypeer-android/qa.py test --serial emulator-5554
+rtk proxy python3 apps/taypeer-android/qa.py test --serial emulator-5554 --suite full --authorize-public-biometry
 rtk proxy python3 apps/taypeer-android/qa.py visual --skip-build --serial emulator-5554
 ```
 
@@ -24,6 +24,9 @@ stop a pre-existing emulator or reset shared adb. Keep one invocation per serial
 
 Select `ui`, `platform`, `network` or exact `--test-class` for a regression;
 use full API31/API36/API36-16K matrix after integrated behavior changes.
+The full suite includes real OS biometric prompts on a dedicated PUBLIC AVD;
+`--authorize-public-biometry` explicitly authorizes its temporary PIN/finger setup
+and restoration. Use that flag only for this authorized test environment.
 `full`/`ui` camera denial is a separate stage: revocation kills the UID and
 must precede instrumentation. Keep the stage intact. P2P offline/restart requires
 the runner-owned local strict-TLS relay; do not enable public relay for tests.

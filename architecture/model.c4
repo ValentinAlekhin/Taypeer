@@ -175,10 +175,10 @@ model {
       metadata { source 'apps/taypeer-android/app/src/main/java/dev/taypeer/platform/DocumentService.kt'; evidence 'apps/taypeer-android/README.md'; contract 'docs/architecture.md' }
     }
     androidBiometry = component 'Приватный OS crypto adapter' {
-      #planned
+      #partial
       technology 'Rust Native; Android Keystore; AndroidX; JNI / C++'
       description 'Fixed trusted OS port при создании Host; Native bounded durable registry и auth-bound RSA wrapper одной копии. Настоящий CryptoObject и private owned FD; UI, runtime host и сеть не получают ReadKey.'
-      metadata { contract 'docs/android-biometry.md' }
+      metadata { contract 'docs/android-biometry.md'; source 'apps/taypeer-android/app/src/main/java/dev/taypeer/platform/AndroidOsBiometry.kt'; evidence 'apps/taypeer-android/app/src/androidTest/java/dev/taypeer/ProductBiometryUiTest.kt' }
     }
     vault = store 'Рабочий файл .taypeer' {
       #partial
@@ -187,9 +187,9 @@ model {
       metadata { source 'crates/taypeer-storage/src/file.rs'; contract 'docs/data-model.md#1-границы-хранения' }
     }
     local = store 'Локальное состояние устройства' {
-      #planned
+      #partial
       description 'Приватные допуски, биометрия, зашифрованные черновики с квитанциями и оригиналами значков, настройки и отметки доступа. Локальное состояние не синхронизируется.'
-      metadata { contract 'docs/data-model.md#8-локальная-модель' }
+      metadata { contract 'docs/data-model.md#8-локальная-модель'; source 'crates/taypeer-runtime/src/profile.rs' }
     }
     demo = store 'Демонстрационные данные в памяти' {
       #partial
@@ -275,35 +275,35 @@ model {
   taypeer.macPlatform -> macos 'API ОС'
   taypeer.androidPlatform -> androidos 'API ОС; lifecycle камеры и разрешение по действию пользователя'
   taypeer.android -> taypeer.androidBiometry 'Явное действие и публичный статус выбранной БД' {
-    #planned
+    #partial
     metadata { contract 'docs/android-biometry.md' }
   }
   taypeer.ffi -> taypeer.androidBiometry 'Фиксированный trusted OS port при Host bootstrap; exact Native registry' {
-    #planned
+    #partial
     metadata { contract 'docs/android-biometry.md' }
   }
   taypeer.androidPlatform -> taypeer.androidBiometry 'Приватный launch stamp и одноразовый FD' {
-    #planned
+    #partial
     metadata { contract 'docs/android-biometry.md' }
   }
   taypeer.androidBiometry -> androidos 'Auth-bound Keystore key; настоящий CryptoObject prompt' {
-    #planned
+    #partial
     metadata { contract 'docs/android-biometry.md' }
   }
   taypeer.androidBiometry -> taypeer.local 'Надёжная scoped запись только RSA ciphertext и публичной связи' {
-    #planned
+    #partial
     metadata { contract 'docs/android-biometry.md' }
   }
   taypeer.secretWorker -> taypeer.androidBiometry 'Private OS-key capability; wrapped ciphertext без plaintext ответа' {
-    #planned
+    #partial
     metadata { contract 'docs/android-biometry.md' }
   }
   taypeer.androidBiometry -> taypeer.secretWorker 'Ровно 32 байта ReadKey через одноразовый private FD' {
-    #planned
+    #partial
     metadata { contract 'docs/android-biometry.md'; source 'apps/taypeer-android/native/src/biometry/key_fd.rs' }
   }
   taypeer.sessionGuard -> taypeer.androidBiometry 'Отменить attempt и закрыть FD независимо от provider I/O' {
-    #planned
+    #partial
     metadata { contract 'docs/android-biometry.md' }
   }
   taypeer.macPlatform -> taypeer.local 'Защита локальных данных'
@@ -312,19 +312,19 @@ model {
   taypeer.androidPlatform -> taypeer.ffi 'Lifecycle и блокировка'
   taypeer.ffi -> taypeer.sync 'Фоновое получение'
   taypeer.ffi -> taypeer.host 'Сценарий и квитанции передачи управления' {
-    #planned
+    #partial
     metadata { contract 'docs/management-handoff.md' }
   }
   taypeer.sync -> taypeer.host 'Аутентифицированные запросы передачи управления' {
-    #planned
+    #partial
     metadata { contract 'docs/management-handoff.md' }
   }
   taypeer.host -> taypeer.sessionGuard 'Проверить живое OPEN-поколение передачи' {
-    #planned
+    #partial
     metadata { contract 'docs/management-handoff.md' }
   }
   taypeer.host -> taypeer.secretWorker 'Явное согласие и точный переход управления' {
-    #planned
+    #partial
     metadata { contract 'docs/management-handoff.md' }
   }
   taypeer.macPlatform -> taypeer.sync 'Фоновое получение'

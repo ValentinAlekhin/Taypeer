@@ -4,10 +4,11 @@
 Пользовательские файлы, credentials и внешние данные не использовались. Отдельная
 лицензия набора не назначена; лицензия проекта остаётся открытым пунктом roadmap.
 
-Это экспериментальная схема 6, не стабильный формат и не свидетельство приёмки
-безопасности. Старый [dev5](../dev5/README.md) сохранён без перезаписи; его документы
-не мигрируются и не открываются текущим reader. Подписанный шифротекст с неизвестной
-схемой может проверяться и передаваться отдельно от чтения документа.
+Это историческая экспериментальная схема 6, не стабильный формат и не свидетельство
+приёмки безопасности. Текущий reader не открывает и не мигрирует dev6 или
+[dev5](../dev5/README.md); оба набора сохранены без перезаписи. Текущий corpus
+находится в [dev7](../dev7/README.md). Подписанный шифротекст с неизвестной схемой
+может проверяться и передаваться отдельно от чтения документа.
 
 - Контейнер: 1; компоновка архива: 5; документ: 6; control: 2; manifest/envelope: 1.
 - Automerge: 0.7.4 из Cargo.lock.
@@ -33,17 +34,12 @@
 исходные варианты и origins, историю, blobs, отметки очистки и полученные источники.
 `SHA256SUMS` закрепляет все входы; обычный запуск тестов их не обновляет.
 
-Генераторы находятся в [service corpus](../../../crates/taypeer-services/src/managed/tests/corpus.rs)
-и [document corpus](../../../crates/taypeer-document/src/tests/corpus.rs). Из корня
-репозитория, только в новую директорию:
+Генераторы [service corpus](../../../crates/taypeer-services/src/managed/tests/corpus.rs)
+и [document corpus](../../../crates/taypeer-document/src/tests/corpus.rs) теперь
+создают dev7. Имя директории `dev6` не выбирает старый writer; текущий скрипт
+не воспроизводит этот набор. Команды актуального корпуса — в
+[README dev7](../dev7/README.md).
 
-```sh
-rtk proxy sh scripts/create-compatibility-corpus.sh /private/tmp/taypeer-dev6-new
-rtk cargo test --locked -p taypeer-core -p taypeer-document
-rtk cargo test --locked -p taypeer-services --lib managed::tests::corpus
-rtk cargo test --locked -p taypeer-runtime --lib worker::tests::compatibility
-```
-
-Production RNG не подменён: повтор создаёт новые ID и шифротекст, а не одинаковые
-байты. Корпус проверяет reader/writer и обращения через временные копии, но не
-нативные события, Keystore/Keychain, физическую очистку памяти или работу на Android.
+Production RNG при создании набора не подменялся: повтор давал новые ID и ciphertext.
+Сохранённые байты и `SHA256SUMS` не обновляются обычными тестами. Исторические
+результаты не подтверждают нативные события, Keystore/Keychain или очистку памяти.

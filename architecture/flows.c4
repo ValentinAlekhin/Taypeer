@@ -1,9 +1,9 @@
 // Steps show architectural interactions, not exhaustive state machines or wire protocols.
-// mac service flows are planned UI integration, except the existing headless demoEdit smoke.
+// Contract views do not establish native or security acceptance.
 views 'Сценарии' {
   dynamic view androidGroupFavicons {
     title 'Явная групповая загрузка favicon на Android'
-    description 'Целевой контракт docs/runtime.md: Rust фиксирует строки и фильтры одной живой попытки; host выполняет HTTP вне worker mutex. У каждого результата отдельный durable receipt; lock отзывает оставшиеся действия, не откатывая подтверждённых соседей.'
+    description 'Контракт docs/runtime.md: Rust фиксирует строки и фильтры одной живой попытки; host выполняет HTTP вне worker mutex. У каждого результата отдельный durable receipt; lock отзывает оставшиеся действия, не откатывая подтверждённых соседей.'
     taypeer.android -> taypeer.ffi 'Явно подтвердить группу, подгруппы и замену существующих значков'
     taypeer.ffi -> taypeer.secretWorker 'Подготовить точный план текущей OPEN-сессии'
     taypeer.secretWorker -> taypeer.sessions 'Отобрать записи и заморозить URL и дочерние operation ID'
@@ -21,7 +21,7 @@ views 'Сценарии' {
   }
   dynamic view androidProtectionSettings {
     title 'Защита и лимиты БД на Android'
-    description 'Целевой контракт docs/android-policy.md: отдельные FIG-формы, реальные параметры header и расход квоты. Время успешной password KDF связано с текущим epoch; keyed open его не выдумывает. Preview калибровки не изменяет БД.'
+    description 'Контракт docs/android-policy.md: отдельные FIG-формы, реальные параметры header и расход квоты. Время успешной password KDF связано с текущим epoch; keyed open его не выдумывает. Preview калибровки не изменяет БД.'
     taypeer.android -> taypeer.ffi 'Прочитать политику, расход и параметры выбранной OPEN-БД'
     taypeer.ffi -> taypeer.secretWorker 'Одна typed команда текущего поколения'
     taypeer.secretWorker -> taypeer.sessions 'Проверить сессию и собрать согласованную числовую проекцию'
@@ -41,7 +41,7 @@ views 'Сценарии' {
   }
   dynamic view androidMetadataHistory {
     title 'История групп и метаданных БД на Android'
-    description 'Целевой контракт docs/metadata-history.md: точный typed snapshot и сравнение без записи; явное восстановление сохраняет ID и одну новую версию. Retry использует прежний receipt, lock очищает снимки и preview.'
+    description 'Контракт docs/metadata-history.md: точный typed snapshot и сравнение без записи; явное восстановление сохраняет ID и одну новую версию. Retry использует прежний receipt, lock очищает снимки и preview.'
     taypeer.android -> taypeer.ffi 'Выбрать объект и доступную сохранённую revision'
     taypeer.ffi -> taypeer.secretWorker 'Typed metadata history query текущего поколения'
     taypeer.secretWorker -> taypeer.sessions 'Проверить сессию; один saved/current view и reviewed basis'
@@ -146,7 +146,7 @@ views 'Сценарии' {
   }
   dynamic view androidTransferManagement {
     title 'Двусторонняя передача управления на Android'
-    description 'Целевой сценарий: обе стороны подтверждают в живых OPEN-сессиях. Peer представляет второй экземпляр тех же runtime-компонентов; его consent и Applied ACK следуют надёжной записи. Получение ciphertext не означает применения роли. Контракт: docs/management-handoff.md.'
+    description 'Обе стороны подтверждают в живых OPEN-сессиях. Peer представляет второй экземпляр тех же runtime-компонентов; его consent и Applied ACK следуют надёжной записи. Получение ciphertext не означает применения роли. Контракт: docs/management-handoff.md.'
     taypeer.android -> taypeer.ffi 'Явно предложить выбранному устройству передачу'
     taypeer.ffi -> taypeer.host 'Фиксировать exact intent и owner поколения'
     taypeer.host -> taypeer.sessionGuard 'Проверить OPEN независимо от command I/O'
@@ -176,7 +176,7 @@ views 'Сценарии' {
   }
   dynamic view androidBiometricUnlock {
     title 'Android: локальная биометрическая разблокировка'
-    description 'Целевой контракт docs/android-biometry.md. Регистрация создаётся после мастер-пароля; каждый unlock аутентифицирует текущий snapshot до author callback. OS adapter — узкое расширение plaintext границы host UID, не доступ RuntimeHost к ключу. Получение ciphertext не вызывает биометрию.'
+    description 'Контракт docs/android-biometry.md. Регистрация создаётся после мастер-пароля; каждый unlock аутентифицирует текущий snapshot до author callback. OS adapter — узкое расширение plaintext границы host UID, не доступ RuntimeHost к ключу. Получение ciphertext не вызывает биометрию.'
     taypeer.android -> taypeer.androidPlatform 'Выбрать зарегистрированную локальную копию; новый launch stamp'
     taypeer.androidPlatform -> taypeer.secretWorker 'Pending isolated worker и ciphertext snapshot'
     taypeer.secretWorker -> taypeer.sessions 'Проверить публичное управление и scope текущего snapshot'
@@ -193,7 +193,7 @@ views 'Сценарии' {
   }
   dynamic view androidBiometricEnroll {
     title 'Android: включение биометрии для одной БД'
-    description 'Целевой контракт. Worker provenance требует текущую password-authenticated сессию. Private capability проверяет actual KeyInfo; UI не выбирает public key для экспорта ReadKey. RSA wrapper и proof prompt остаются одним exact intent.'
+    description 'Worker provenance требует текущую password-authenticated сессию. Private capability проверяет actual KeyInfo; UI не выбирает public key для экспорта ReadKey. RSA wrapper и proof prompt остаются одним exact intent.'
     taypeer.android -> taypeer.ffi 'Явно включить для выбранной открытой копии; без SPKI'
     taypeer.ffi -> taypeer.androidBiometry 'Native intent через fixed bootstrap OS owner'
     taypeer.androidBiometry -> androidos 'Создать scoped per-use RSA key и проверить actual KeyInfo'
@@ -352,7 +352,7 @@ views 'Разбор сетевых источников' {
 
   dynamic view androidSaveCiphertextCopy {
     title 'Android: сохранить внешнюю копию БД'
-    description 'Целевой контракт docs/runtime.md: один проверенный ciphertext snapshot захватывается до SAF. Открытый документ и ReadKey не требуются. Отмена и смена выбранной копии не подтверждают запись; успех следует только finish выбранного output.'
+    description 'Контракт docs/runtime.md: один проверенный ciphertext snapshot захватывается до SAF. Открытый документ и ReadKey не требуются. Отмена и смена выбранной копии не подтверждают запись; успех следует только finish выбранного output.'
     taypeer.android -> taypeer.ffi 'Явно выбрать зарегистрированную рабочую копию и начать export attempt'
     taypeer.ffi -> taypeer.host 'Проверить точные catalog, registration, DatabaseId и root'
     taypeer.host -> taypeer.coordinator 'Захватить одну текущую ciphertext generation без author capability'
@@ -372,7 +372,7 @@ views 'Разбор сетевых источников' {
 
   dynamic view androidRecoverTrust {
     title 'Восстановление управления на Android'
-    description 'Целевой контракт: отдельный ciphertext snapshot фиксирует источник повтора. Имя входит в новый зашифрованный кандидат. Принятие требует защищённого proof и фактического закрытия прежних писателей; исходный файл и свидетельство fork сохраняются.'
+    description 'Отдельный ciphertext snapshot фиксирует источник повтора. Имя входит в новый зашифрованный кандидат. Принятие требует защищённого proof и фактического закрытия прежних писателей; исходный файл и свидетельство fork сохраняются.'
     taypeer.android -> taypeer.ffi 'Подтвердить точное имя новой копии, пароль и ID восстановления'
     taypeer.ffi -> taypeer.secretWorker 'Открыть разрешённое чтение; при fork использовать отдельный recovery режим'
     taypeer.secretWorker -> taypeer.sessions 'Зафиксировать источник, fingerprint, полную локальную identity и намерение'

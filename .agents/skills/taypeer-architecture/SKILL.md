@@ -55,4 +55,4 @@ with `pnpm arch:build` when changing tooling or preparing a shareable artifact.
 
 The checks validate documentation artifacts, not Rust behavior or the chronological
 order of edits. Report product tests separately; architecture tooling does not
-close security, Android, memory or KDBX acceptance gates.
+close security, native-platform or memory acceptance gates. KDBX is outside v1.

@@ -69,11 +69,11 @@ rtk proxy python3 apps/taypeer-android/qa.py test --skip-build --serial emulator
 | Набор | Состав |
 | --- | --- |
 | `full` | Все `*Test.kt`, кроме visual harness; отказ камеры и enrolled biometry отдельными стадиями |
-| `ui` | Document, generator, preferences, relay settings, invitation, camera, navigation, Activity lifecycle, secret focus, password change, history/comparison и incoming sync → UI; отказ камеры отдельной стадией |
-| `network` | P2P реплик, received-source purge/late peer и lifecycle exchange |
+| `ui` | Документ/генератор, настройки/защита/лимиты, поиск, история, recovery/handoff, внешняя копия, изображения, навигация и lifecycle; отказ камеры отдельной стадией |
+| `network` | P2P реплик, received-source purge/late peer, management handoff и lifecycle exchange |
 | `platform` | Binder, descriptors, Keystore, clipboard, import, attachments, worker; enrolled OS prompt находится в `biometry` |
 | `camera-denied` | Настоящий permission dialog: отказ камеры сохраняет ручной ввод |
-| `biometry` | Настоящие auth-bound CryptoObject, отмена/EOF/dismissal и recreation без повторного authenticate |
+| `biometry` | Настоящие auth-bound CryptoObject и продуктовые enrollment/unlock/disable; отмена/EOF/dismissal, background и recreation без повторного authenticate |
 
 `biometry` и `full` требуют явного `--authorize-public-biometry`: runner на
 выделенном ARM64 AVD создаёт PUBLIC PIN/finger, записывает durable boot-bound
@@ -142,7 +142,8 @@ change различаются по предметному типу; просмо
 Сетевые сценарии проверяют реальный общий протокол, приём ciphertext при
 блокировке, применение после unlock, offline правки и convergence после
 перезапуска host. Это не измерение публичного relay, NAT или OEM-ограничений фона.
-Точные условия — [P2P acceptance](p2p-acceptance.md).
+Контракт обмена — [P2P](p2p.md); датированные результаты — в
+[testing.md](testing.md).
 
 `DeviceSettingsTest` и Rust preferences tests проверяют загрузку интервала
 автоблокировки при создании Host, сохранение через restart, явный clipboard
@@ -251,7 +252,7 @@ rtk proxy python3 -m unittest discover -s apps/taypeer-android -p test_qa.py
 coverage configuration:
 
 ```sh
-rtk proxy python3 apps/taypeer-android/qa.py test --coverage --serial emulator-5556 --suite full
+rtk proxy python3 apps/taypeer-android/qa.py test --coverage --serial emulator-5556 --suite full --authorize-public-biometry
 ```
 
 HTML/XML сохраняются в `artifacts/android/<UTC>/coverage/`. Runner забирает только
@@ -292,12 +293,15 @@ virtual camera lifecycle проверяются автоматически. Оп
 их пройденными. Актуальные результаты — в [testing.md](testing.md), открытые
 продуктовые условия — в [roadmap](roadmap.md).
 
-Точный состав реализованного Android UI и оставшихся различий с FIG — в
-[матрице Android](../apps/taypeer-android/README.md#матрица-реализации).
-Биометрия, перенос рабочего файла и двусторонняя передача управления остаются
-реализационными задачами. Имя устройства и изображения имеют промежуточные
-Android-доказательства; Access и parent selector должны пройти новый APK.
-Наличие кода и покрытие соседнего Rust API не заменяют эту проверку.
+Точный состав подключённых возможностей — в
+[матрице Android](../apps/taypeer-android/README.md#матрица-реализации),
+оставшиеся проверки — в [roadmap](roadmap.md#android-оставшиеся-проверки).
+Биометрия, recovery/handoff, внешняя SAF-копия, поиск по нескольким БД,
+изображения, parent/Access и защита/лимиты имеют отдельные сценарии; наличие
+их кода не является успешным прогоном. После изменений нужны точные APK hashes
+и результаты соответствующей сборки. Frozen evidence, первоначальный background
+FAIL и последующий целевой PASS биометрии сохраняются в testing с отдельными hashes;
+они не заменяют матрицу новых исходников.
 
 Штатные команды: [instrumentation](https://developer.android.com/studio/test/command-line),
 [headless emulator](https://developer.android.com/studio/run/emulator-commandline).

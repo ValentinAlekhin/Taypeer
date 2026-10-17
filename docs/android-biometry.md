@@ -1,14 +1,14 @@
 # Android: локальная биометрическая разблокировка
 
-Статус: **planned, контракт интеграции от 2026-10-08**. Полный продуктовый путь
-ещё не реализован. Shared keyed-open и частные OS/JNI проверки существуют;
-они не подтверждают интеграцию с продуктовым isolated worker. Целевые компоненты, размещение и flows
-`androidBiometricEnroll` / `androidBiometricUnlock` внесены в LikeC4; успешную
-whole-model validation нужно зафиксировать до кода. Действующие password boot,
-`RuntimeHost` и ciphertext-only `PlatformDocument` сохраняют прежний контракт.
-Сборки и действующий Parent/Access checkpoint остаются отдельно.
+Продуктовые enrollment, отключение и keyed unlock подключены к Native Host,
+приватному OS adapter, isolated worker и Compose UI. Этот документ задаёт
+границы ключей, FD, долговечной настройки и отмены; наличие кода не подтверждает
+полную приёмку. [Результаты и frozen APK](testing.md) фиксируют целевой набор 6/6,
+включая исправленный background-сценарий, отдельно от текущих изменённых исходников;
+оставшиеся условия — в
+[roadmap](roadmap.md#android-оставшиеся-проверки).
 
-## Требование и существующий путь
+## Требование и владельцы
 
 [spec.md](../spec.md#биометрия-и-восстановление-доступа) разрешает включить
 биометрию после успешного ввода мастер-пароля, отдельно для БД на этом устройстве.
@@ -24,14 +24,13 @@ whole-model validation нужно зафиксировать до кода. Де
 аутентификации показывает ОС. Схема не требует собственной имитации системного
 prompt или общей настройки биометрии для всех БД.
 
-| Существующий участок | Что можно переиспользовать | Чего пока нет |
-| --- | --- | --- |
-| `DatabaseService::open_managed_with_author`, `crates/taypeer-services/src/managed/mod.rs` | Выбор актуального checkpoint/baseline, совместимость, проверка перед author handshake, admission, blobs и черновики | Managed open с уже аутентифицированным текущим `ReadKey` |
-| `codec::read_checkpoint`, `EncryptedObject` | Проверка и расшифровка выбранного snapshot существующим ключом | Узкий keyed-open вход с теми же guards |
-| `PlatformDocument`, `crates/taypeer-runtime/src/platform_worker.rs` | Ciphertext persistence и публичный author/control handshake | Отдельный приватный источник ключа при boot |
-| `DocumentManager`, `BoundDocumentProcess`, `DocumentService` | Pending launch epoch, отдельный isolated UID, private FD, независимое закрытие | Биометрический launch и одноразовый key FD |
-| `KeystoreCredentials` | Общие protected credentials и durable publication | Auth-bound ключ на одну локальную БД; существующий `CredentialPort` для `ReadKey` не подходит |
-| `MainActivity` | Compose, маскировка при потере focus, lock при настоящем `onStop` | OS prompt и его lifecycle owner |
+| Участок | Ответственность |
+| --- | --- |
+| Общий managed-сервис | Аутентификация текущего checkpoint ключом, authority/schema/admission guards и авторский handshake |
+| Runtime worker | Отдельный keyed boot, enrollment proof и независимый контроль доступа |
+| Native Android biometry adapter | Scoped registry, exact publication/retry и приватные input leases |
+| `AndroidOsBiometry` / JNI broker | Auth-bound Keystore key, настоящий CryptoObject и передача ключа в принадлежащий worker FD |
+| `DocumentManager` / Compose | Время жизни pending worker, локальный выбор БД, enrollment/disable/unlock и master fallback |
 
 ## Владение и доверенная граница
 
@@ -70,7 +69,7 @@ JNI broker имеет отдельную узкую платформенную �
 
 ## OS key и совместимость OAEP
 
-Планируемая схема локального wrapper: RSA-2048, exponent F4, OAEP с main digest
+Схема локального wrapper: RSA-2048, exponent F4, OAEP с main digest
 SHA-256, MGF1 SHA-1 и пустым label. Worker использует эти параметры явно; настройки
 по умолчанию другой Rust/JCA библиотеки не считаются совместимыми. Android
 рекомендует задавать оба digest через `OAEPParameterSpec`:
@@ -119,9 +118,9 @@ JCA output-capacity contract.
 [Cipher ByteBuffer API](https://developer.android.com/reference/javax/crypto/Cipher).
 
 Эта схема защищает только локальный wrapper. Она не меняет формат БД, её KDF,
-шифрование checkpoint, keyring или portable protocol. Перед продуктовым кодом
-обязателен реальный Rust-wrap → Android-authenticated-decrypt → isolated worker
-spike с указанными параметрами на API 31 и 36.
+шифрование checkpoint, keyring или portable protocol. Результаты проверки
+Rust-wrap → Android-authenticated-decrypt → isolated worker на API 31 и 36
+хранятся в [testing.md](testing.md) отдельно от приёмки продукта.
 
 ## Scoped registry и публикация
 
@@ -130,15 +129,16 @@ spike с указанными параметрами на API 31 и 36.
 prefix, opaque scope digest и случайной key generation. Не включать название БД,
 человеческое имя устройства, путь или строку alias из внешнего файла.
 
-Предлагаемая запись в `noBackupFilesDir` содержит version, scheme, scope, key
-generation, digest публичного SPKI и RSA ciphertext фиксированной длины 256.
-Лимит всей записи — 4 KiB. Private registry хранит связь scope→alias; alias не
-выбирается из произвольного wrapper header. ReadKey или пароль в записи отсутствуют.
+Запись version 1 в `noBackupFilesDir` содержит scheme, scope, key generation,
+digest публичного SPKI и RSA ciphertext фиксированной длины 256 байт.
+Лимит всей записи — 4 KiB; точная схема указана в
+[контракте registry](#exact-registry-version-1). Alias не выбирается
+из произвольного wrapper header. ReadKey или пароль в записи отсутствуют.
 Публикация использует временный файл, fsync, rename и syncDirectory с существующим
 различением definitive failure и `CommitUncertain`. Повреждённая/будущая запись
 сохраняется, показывается ошибка и остаётся мастер-пароль; не выдавать её за
-первое включение или молча заменять. Новый local version/serializer уточнить в
-контракте до кода, не добавляя portable поля.
+первое включение или молча заменять. Версия локального registry независима
+от переносимого формата БД.
 
 Обычное Save меняет checkpoint, но не должно отключать биометрию той же epoch.
 Поэтому постоянная запись **не привязана к одному checkpoint digest**. Каждый
@@ -220,9 +220,9 @@ worker, не Kotlin `DocumentService`.
 
 ## Lifecycle, отмена и инвалидация
 
-AndroidX `BiometricPrompt` требует Fragment/FragmentActivity. Минимальный будущий
-UI change — `MainActivity` на `FragmentActivity` с сохранением Compose/viewModels,
-закреплённая AndroidX biometric зависимость и normal `USE_BIOMETRIC` permission.
+AndroidX `BiometricPrompt` использует `MainActivity` на `FragmentActivity`,
+с сохранением Compose/viewModels, закреплённой AndroidX biometric зависимостью
+и разрешением `USE_BIOMETRIC`.
 При конфигурационной recreation новый prompt owner переподключает callback к
 тому же opaque attempt; второй `authenticate` не запускается. Cipher, ReadKey и
 FD не сериализуются в saved state.
@@ -252,44 +252,7 @@ checkpoint ещё старый, а current baseline уже новый. Это н
 стереть незнающее об отзыве offline устройство или отменить доступ к старому
 файлу с известным паролем. Биометрия не меняет эти свойства модели.
 
-## Изменения перед реализацией
-
-Модель должна добавить private OS crypto adapter/broker в Android host UID,
-auth-bound Keystore key, scoped wrapper registry, отдельную secret FD capability
-к isolated worker и keyed-authentication interaction перед author handshake.
-RuntimeHost/transport/credential зависимости к ReadKey не появляются. Deployment
-сохраняет отдельный document UID и независимый supervisor.
-
-Планируемые узкие исходные изменения:
-
-- Android private broker/store и OS prompt owner; публичные состояния
-  Unavailable/NeedsMaster/Ready/InFlight и typed safe errors, строки en/ru.
-- Приватный native JNI/JCA bridge и одноразовый FD boot вход; opaque attempt
-  API без ReadKey getter/export или plaintext buffer в generated bindings.
-- Отдельная native worker bootstrap ветвь с public binding metadata; private
-  key bytes вне JSON `PlatformBoot` и всех host streams.
-- Shared managed helper, общий с password-open после получения current key:
-  один authority/schema/admission алгоритм, не копия бизнес-правил в Kotlin.
-- `DocumentManager` pending lifetime и AIDL private initialization для key FD;
-  новая launch ветвь использует текущий supervisor, epoch guards и закрытие.
-- Локальный профильный wrapper serializer/publication contract и tests; без
-  изменений переносимого формата, catalog identity или сетевого admission.
-
-Предлагаемый порядок private calls, не public UniFFI ABI:
-
-| Вызов между владельцами | Результат / ограничение |
-| --- | --- |
-| Broker → текущий worker: enroll с one-shot OS-key capability и public SPKI | Только RSA ciphertext + authenticated public scope; requires current password-authenticated session |
-| Pending worker → broker: prepare unlock challenge | Проверенный public copy/database/root/epoch/snapshot stamp, без author credentials или ключа |
-| OS adapter → native broker: finish exact CryptoObject attempt | Внутренняя запись 32 bytes в заранее связанный FD; возвращает public status, не buffer |
-| Native worker: consume key FD и keyed managed open | Один `ReadKey` owner; auth current archive до author, затем публичный session ACK |
-| UI → broker: cancel/disable/query status | Только opaque attempt/scope; cannot mint authenticated capability or return plaintext |
-
-До кода уточнить exact private signatures, record version и FFI ownership вместе
-с моделью. Если реальный provider/FD spike не удовлетворяет контракту, доступна
-только master fallback; boolean «биометрия прошла» не является заменой.
-
-### Фиксированный OS port и порядок интеграции
+## Фиксированный OS port
 
 OS port — доверенная платформенная граница, установленная **один раз при создании
 application-owned Native Host**, до доступа UI. Конкретный private
@@ -298,8 +261,8 @@ leases. Его нельзя заменить setter, передать занов
 из данных файла. Это доверие к владельцу Android adapter, а не криптографическое
 доказательство из callback DTO с флагом `verified=true`.
 
-Существующий `Host(directory, credentials)` остаётся совместимым входом без
-биометрии. Новый bootstrap constructor
+`Host(directory, credentials)` остаётся совместимым входом без
+биометрии. Bootstrap constructor
 `Host.withOsBiometry(directory, credentials, osPort)` устанавливает private
 владельца. Callback interface существует для платформенного bootstrap; Compose
 и `DocumentState` не конструируют его и не передают SPKI. Rust Native хранит
@@ -332,10 +295,9 @@ checkpoint/baseline. Она передаёт только публичные с�
 authority. Permanent record не закрепляет checkpoint; каждый новый attempt
 заново проверяет current selection общим Rust helper.
 
-Интеграция выполняется в двух конечных срезах. До каждого среза Root проверяет
-полную модель; Android acceptance привязывается к exact исходникам/APK.
+## Передача ключа через принадлежащий Native FD
 
-**Первый срез: Native owned key FD.** Isolated UID не должен переоткрывать
+Isolated UID не должен переоткрывать
 `/proc/self/fd`: реальная проверка Android получила EACCES, хотя прямое чтение
 уже переданного дескриптора разрешено. Используется существующая закреплённая
 `filedescriptor = 0.8.3` через workspace. Safe
@@ -355,7 +317,7 @@ FD и устаревший attempt не принимаются. После succe
 закрывается; sole Native duplicate закрывается один раз при drop. Повторный
 `close` после EINTR не выполняется.
 
-Только с `android-test-support` временно экспортируется
+Только с `android-test-support` экспортируется
 `verifyPublicBiometricPipe(fd: Int): Boolean`. Он дублирует и проверяет private
 FIFO, внутри Native читает ровно 32 публичных байта `0x50` и EOF, сравнивает
 фиксированный PUBLIC pattern и возвращает только результат. Ни массив байтов,
@@ -367,8 +329,9 @@ duplicate, EOF, неверная длина/pattern, file/socket/writer refusal 
 после закрытия оригинала. Успех C++ pipe или обычного FileInputStream отдельно
 не подтверждает этот Native путь.
 
-**Второй срез: enrollment и keyed boot.** После PASS actual owned-FD path
-Native использует тот же узкий helper в private worker entry. Обычные
+## Enrollment и keyed boot
+
+Native использует тот же узкий owned-FD helper в private worker entry. Обычные
 `serveDocument` / password boot сохраняются wrappers; key FD не добавляется
 к `WorkerStreams`, `CiphertextFiles`, `PlatformDocument` или JSON payload.
 Платформенный input owner передаётся worker отдельно. Он связывает один FD с
@@ -382,7 +345,7 @@ Native использует тот же узкий helper в private worker entr
 | --- | --- |
 | `Host.biometryStatus(copy)` | Disabled / Enabled / NeedsMaster / Pending; public binding, available action и pending operation; повреждённый/future record остаётся ошибкой |
 | `DocumentSession.prepareBiometricEnrollment()` | Opaque `BiometricEnrollment` без public constructor; actual password provenance и fresh exact scope; SPKI не является аргументом |
-| `BiometricEnrollment.identity()` | Только `BiometricAttemptScope` |
+| `BiometricEnrollment.identity()` | Только публичный `BiometricInputSpec`, проекция точной scope/lease |
 | Private coordinator: получить prompt request и установить proof FD | Только fixed owner lease, wrapped RSA ciphertext и публичный attempt; ReadKey не возвращается |
 | `BiometricEnrollment.confirm()` | Worker проверяет actual key из exact proof FD на том же current checkpoint и повторно проверяет password provenance; Native сохраняет exact record; Enabled только после durable ACK |
 | `BiometricEnrollment.cancel()` | Немедленно retire lease/input и инвалидировать attempt; уже начатая unknown publication сохраняет encrypted intent |
@@ -439,18 +402,17 @@ Native cancellation fence не зависит от AndroidX/SDK success callback
 фактической скорости скрытия системного prompt. Она сначала отзывает attempt,
 закрывает private writer/input owner и отменяет pending launch, затем вызывает
 OS cancellation. Late provider/result лишь освобождается и очищается.
-Наблюдавшееся отдельное API31 отклонение OS cancel остаётся acceptance issue;
-его нельзя выдать за PASS из-за работающего Native fence или компенсировать
-ослаблением guards/положительным timeout.
+Фактическое завершение OS cancel проверяется отдельно от Native fence.
+Исторический API31 standalone FAIL и последующие coordinator/product результаты
+относятся к своим checkpoint в [testing.md](testing.md); cleanup не превращает
+неисполненный сценарий в PASS.
 
-### Exact private ABI второго среза
+## Приватные интерфейсы
 
-Это контракт предстоящей реализации, а не объявление готовых bindings. Он
-уточняет существующие связи `ffi → androidBiometry`,
+Интерфейсы реализуют связи `ffi → androidBiometry`,
 `androidBiometry ↔ secretWorker` и `sessionGuard → androidBiometry`:
-фиксированный OS port, отдельный key FD и независимый отзыв. Нового компонента,
-доступа `RuntimeHost` к ключу или зависимости `PlatformDocument` от биометрии
-не добавляется. Полная модель проверяется Root до реализации этого среза.
+фиксированный OS port, отдельный key FD и независимый отзыв. `RuntimeHost`
+не получает ключ; `PlatformDocument` не зависит от биометрии.
 
 `BiometricAttemptScope { namespace, managed, generation, attempt }` проецирует
 поля `BiometricBinding` и общего `ManagedKeyScope` один раз, реальное
@@ -474,10 +436,10 @@ author. Их создаёт Native; UI не выбирает generation, input �
 | `BiometricInputs.retire(lease)` | Rust-only отзыв exact slot/attempt; повторный отзыв идемпотентен |
 | `validate_biometric_spki(&[u8]) -> Digest` | Единый bounded canonical RSA2048/F4 parser для fixed Native OS owner и worker wrap; digest не доказывает KeyInfo/prompt/authority |
 | `PrivateBiometricInputs.install(lease, fd: Int)` | Private service bootstrap синхронно дублирует удерживаемый original PFD и удовлетворяет только уже armed slot; не создаёт scope |
-| `IDocumentProcess.installBiometricInput(spec: BiometricInputSpec, input: ParcelFileDescriptor)` | Отдельный private Binder вызов; service вызывает Native install до ACK и закрывает original в `finally` |
-| `IDocumentProcess.revokeBiometricInput(attempt)` | Независимый control вызов; host enqueue не ждёт Binder/provider или command pipe |
-| `DocumentProcess.installBiometricInput(lease, fd: Int)` | Private launcher callback: held host FD дублируется в PFD и передаётся exact service; не читает ключ |
-| `OsBiometryPort.runPrompt(call: BiometricPromptCall) -> OsPromptOutcome` | Fixed port ожидает private future off-main; OS prompt и JNI принадлежат этому owner |
+| `IDocumentProcess.installBiometricInput(scope: BiometricInputParcel, input: ParcelFileDescriptor)` | Отдельный private Binder вызов; service вызывает Native install до ACK и закрывает original в `finally` |
+| `IDocumentProcess.revokeBiometricInput(scope: BiometricInputParcel)` | Независимый control вызов; host enqueue не ждёт Binder/provider или command pipe |
+| `DocumentProcess.installBiometricInput(spec: BiometricInputSpec, fd: Int)` | Private launcher callback: held host FD дублируется в PFD и передаётся exact service; не читает ключ |
+| `OsBiometryPort.runPrompt(call: BiometricPromptCall) -> BiometricPromptOutcome` | Fixed port ожидает private future off-main; OS prompt и JNI принадлежат этому owner |
 
 `BiometricInputSpec` — точный типизированный Binder projection lease; поля
 ограничены до transfer и проверяются Native после transfer. Он не содержит
@@ -500,7 +462,7 @@ owner; terminal IDs никогда не вытесняются. После ис�
 `install` проверяет exact attempt/generation/scope/purpose, выполняет owned dup
 вне ownership mutex и повторно проверяет slot после dup. Original живёт до
 возврата; cancellation между проверками закрывает новый duplicate и не даёт ACK.
-Принятый duplicate проходит FIFO/read-only/blocking guards первого среза.
+Принятый duplicate проходит описанные выше FIFO/read-only/blocking guards.
 Повторный install/consume, чужая scope и retired attempt отклоняются. Cancel
 **терминально отзывает** lease, даже если input ещё не установлен; этот attempt
 нельзя заново arm или использовать для нового prompt. Новый attempt имеет новую
@@ -593,16 +555,9 @@ Product Rust не использует RSA private key для unwrap: эту о�
 Первичный локальный source этих версий и прошедший
 `spikes/android-biometric-pipe/rust-wrap` подтверждают точный вызов.
 
-При реализации зависимости объявляются через workspace:
-`rsa = =0.9.10`, `default-features = false`, features `std`, `u64_digit`;
-`sha1 = =0.10.6`; existing `sha2 = =0.10.9`, `rand_core = =0.6.4` и
-`zeroize = =1.9.0`. Эти RSA/SHA-1 зависимости уже закреплены в main workspace
-и Cargo.lock для worker foundation;
-транзитивный `sha1 = 0.11.0` использует другой digest trait и не заменяет 0.10.6.
-Для Native registry нужен workspace `base64 = =0.22.1`, уже присутствующий
-транзитивно в main lockfile и теперь объявленный напрямую для Native registry.
-Manifest/lock изменения проверены offline metadata; отдельный spike остаётся
-самостоятельным workspace.
+Зависимости и точные ревизии закреплены в workspace и Cargo.lock.
+Отдельный `spikes/android-biometric-pipe` сохраняет собственный workspace
+и результаты проверки взаимодействия Rust OAEP, OS CryptoObject и Native FD.
 
 ### Exact registry version 1
 
@@ -625,8 +580,8 @@ Digest/opaque fields имеют exact canonical lengths. `DatabaseId` сохра
 Alias точно `taypeer_biometry_v1_<binding digest 64>_<generation 32>`:
 117 ASCII bytes, без имени БД или пути. SPKI не хранится: fixed resolver
 возвращает actual проверенный DER, Native вычисляет и сравнивает digest.
-Current `BiometricOsKey.registered` с expected DER требует narrow adapter
-вызова для этого actual-key resolver, а не добавления DER в registry.
+`BiometricOsKey.registeredDigest` проверяет actual OS key по scoped alias
+и ожидаемому SPKI digest; DER в registry не добавляется.
 
 Ciphertext сериализуется [base64 STANDARD](https://docs.rs/base64/0.22.1/base64/engine/general_purpose/constant.STANDARD.html)
 с обязательным padding: ровно 344 ASCII characters, decode ровно 256 bytes;
@@ -661,7 +616,7 @@ registry сохраняется; отсутствие usable OS alias возвр
 Все fixtures искусственные PUBLIC. Тесты проверяют actual OS prompt, actual
 Keystore key use и actual isolated worker, а не ручной вызов success callback.
 
-Конечный обязательный Rust/Native набор для второго среза:
+Значимые Rust/Native сценарии:
 
 - Bounded record: максимальный shared DatabaseId с worst JSON escaping,
   `u64::MAX`, active+Enable+receipt укладываются в 4096; 4097/truncated/unknown
@@ -699,7 +654,7 @@ Keystore key use и actual isolated worker, а не ручной вызов succ
 | Документ и сеть | Enroll/unlock не меняют main ciphertext/history/catalog count; reopen работает; network receive не вызывает prompt/unwrap и не получает key |
 | Граница секретов | Private APIs/FD ownership проверены по типам и fault tests; UI/generated DTO/streams не содержат ReadKey, мастер-пароль не сохраняется, secret logging отсутствует |
 
-Планируемая QA stage использует отдельные runner-owned ARM64 AVD API31/API36 и
+QA stage использует отдельные runner-owned ARM64 AVD API31/API36 и
 16-KiB вариант, exact serial и приватные PUBLIC profiles. OS credential и enrollment
 не изменяют на чужих или уже занятых AVD. Enrollment производится через публичную
 Settings UI; finger events — через официальный emulator console во время реального
@@ -712,8 +667,10 @@ enrollment или неисполненный key test не превращает�
 или физическую очистку памяти. Отдельная аппаратная приёмка проверяет actual
 security level, enrollment invalidation, lock/background и Keystore поведение.
 
-Порядок реализации: whole-model validation → actual Native owned-FD probe →
-keyed worker/enrollment и scoped durable registry → существующий экран
-разблокировки и emulator suite → frozen APK регрессии и аппаратная приёмка.
-Shared keyed-open и отдельные private OS/JNI/PUBLIC проверки подтверждают свои
-границы; полного продуктового enrollment/unlock доказательства пока нет.
+Результаты owned-FD/OS-auth стенда и продуктовых UI-прогонов сохранены в
+[testing.md](testing.md). После первоначального background FAIL целевой набор
+6/6 на frozen APK подтвердил также исправленный переход после OS success.
+Текущие исходники отличаются от capture, полная матрица остаётся открытой. Исторический
+API31 early-cancel FAIL сохраняется как результат своего standalone checkpoint.
+Актуальные команды и PUBLIC enrollment/restore — в
+[Android QA runbook](android-testing.md).
