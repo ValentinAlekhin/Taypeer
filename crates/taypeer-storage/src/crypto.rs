@@ -159,12 +159,19 @@ pub(super) fn same_key_binding(left: &[u8], right: &[u8]) -> bool {
 }
 
 pub(super) fn create_header(password: &[u8], target_ms: u32) -> Result<(Vec<u8>, ReadKey), Error> {
+    create_header_with_magic(password, target_ms, MAGIC)
+}
+pub(super) fn create_header_with_magic(
+    password: &[u8],
+    target_ms: u32,
+    magic: &[u8; 8],
+) -> Result<(Vec<u8>, ReadKey), Error> {
     validate_kdf_target(target_ms)?;
     let salt = random::<16>()?;
     let (kek, measurement) = calibrated_kek(password, &salt, target_ms)?;
     let iterations = measurement.parameters.iterations;
     let key = ReadKey(Zeroizing::new(random()?));
-    let mut bytes = Vec::from(MAGIC.as_slice());
+    let mut bytes = Vec::from(magic.as_slice());
     bytes.extend([1, 0, 3, 0]);
     bytes.extend(iterations.to_le_bytes());
     bytes.extend(salt);
@@ -202,7 +209,10 @@ pub(super) fn calibrated_kek(
 }
 
 pub(super) fn kdf_parameters(header: &[u8]) -> Result<KdfParameters, Error> {
-    if header.len() != HEADER || &header[..8] != MAGIC || header[8..12] != [1, 0, 3, 0] {
+    kdf_parameters_with_magic(header, MAGIC)
+}
+fn kdf_parameters_with_magic(header: &[u8], magic: &[u8; 8]) -> Result<KdfParameters, Error> {
+    if header.len() != HEADER || &header[..8] != magic || header[8..12] != [1, 0, 3, 0] {
         return Err(Error::InvalidFile);
     }
     let iterations = iterations(header)?;
@@ -223,7 +233,21 @@ pub(super) fn unlock_key_measured(
     header: &[u8],
     password: &[u8],
 ) -> Result<(ReadKey, KdfMeasurement), Error> {
-    let parameters = kdf_parameters(header)?;
+    unlock_key_measured_with_magic(header, password, MAGIC)
+}
+pub(super) fn unlock_key_with_magic(
+    header: &[u8],
+    password: &[u8],
+    magic: &[u8; 8],
+) -> Result<ReadKey, Error> {
+    unlock_key_measured_with_magic(header, password, magic).map(|(key, _)| key)
+}
+fn unlock_key_measured_with_magic(
+    header: &[u8],
+    password: &[u8],
+    magic: &[u8; 8],
+) -> Result<(ReadKey, KdfMeasurement), Error> {
+    let parameters = kdf_parameters_with_magic(header, magic)?;
     let (kek, measurement) = derive_measured(password, &header[16..32], parameters.iterations)?;
     let raw = open(
         &kek,

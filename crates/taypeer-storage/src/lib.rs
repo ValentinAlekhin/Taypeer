@@ -34,7 +34,9 @@ pub use kdf::{
     KdfCalibration, KdfMeasurement, KdfParameters, calibrate_password_kdf, password_kdf_parameters,
     password_key_binding_matches,
 };
-pub use local_state::{LocalCredentialStore, LocalStateKey, LocalStateStore};
+pub use local_state::{
+    LocalCredential, LocalCredentialScope, LocalCredentialStore, LocalStateKey, LocalStateStore,
+};
 pub use locking::{try_lock_exclusive, unlock_exclusive};
 pub use publication::{PublicationMode, publish_file};
 pub use temporary::{TemporaryFileProvider, TemporaryStorage};
@@ -67,7 +69,7 @@ pub enum Error {
     AlreadyExists,
     /// Another writer changed the file; reopen before further edits.
     Changed,
-    /// Replacement occurred but directory synchronization failed; reopen to reconcile.
+    /// Publication may have occurred but durability is unconfirmed; reopen to reconcile.
     CommitUncertain,
     /// The operating system could not supply random bytes.
     Random,

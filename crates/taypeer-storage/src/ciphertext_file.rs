@@ -22,11 +22,45 @@ impl CiphertextIo for File {
         Ok(self.metadata()?.len())
     }
     fn read_at(&self, bytes: &mut [u8], offset: u64) -> io::Result<usize> {
-        std::os::unix::fs::FileExt::read_at(self, bytes, offset)
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::FileExt::read_at(self, bytes, offset)
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::FileExt;
+            // ReOpenFile creates an independent cursor; try_clone does not.
+            reopen(self, false)?.seek_read(bytes, offset)
+        }
     }
     fn write_at(&self, bytes: &[u8], offset: u64) -> io::Result<usize> {
-        std::os::unix::fs::FileExt::write_at(self, bytes, offset)
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::FileExt::write_at(self, bytes, offset)
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::FileExt;
+            reopen(self, true)?.seek_write(bytes, offset)
+        }
     }
+}
+
+#[cfg(windows)]
+fn reopen(file: &File, write: bool) -> io::Result<File> {
+    use std::os::windows::io::AsHandle;
+    use winx::file::{AccessMode, Flags, ShareMode, reopen_file};
+    let access = if write {
+        AccessMode::GENERIC_WRITE
+    } else {
+        AccessMode::GENERIC_READ
+    };
+    reopen_file(
+        file.as_handle(),
+        access,
+        ShareMode::all(),
+        Flags::FILE_FLAG_RANDOM_ACCESS,
+    )
 }
 
 /// Owned ciphertext capability with an independent cursor per clone. It does not
@@ -102,5 +136,43 @@ impl Seek for CiphertextFile {
         .ok_or(io::ErrorKind::InvalidInput)?;
         self.position = next;
         Ok(next)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn positioned_io_preserves_external_cursor_and_parallel_reader_offsets() {
+        let mut file = tempfile::tempfile().unwrap();
+        file.write_all(b"PUBLIC positioned ciphertext").unwrap();
+        file.seek(SeekFrom::Start(3)).unwrap();
+        let external = file.try_clone().unwrap();
+        let source = CiphertextFile::from(file);
+        let mut first = source.clone();
+        let mut second = source.clone();
+        first.seek(SeekFrom::Start(7)).unwrap();
+        second.seek(SeekFrom::Start(18)).unwrap();
+        let a = std::thread::spawn(move || {
+            let mut bytes = [0; 10];
+            first.read_exact(&mut bytes).unwrap();
+            bytes
+        });
+        let b = std::thread::spawn(move || {
+            let mut bytes = [0; 10];
+            second.read_exact(&mut bytes).unwrap();
+            bytes
+        });
+        assert_eq!(&a.join().unwrap(), b"positioned");
+        assert_eq!(&b.join().unwrap(), b"ciphertext");
+        let mut write = source;
+        write.seek(SeekFrom::Start(7)).unwrap();
+        write.write_all(b"POSITIONED").unwrap();
+        assert_eq!((&external).stream_position().unwrap(), 3);
+        let mut check = CiphertextFile::from(external);
+        let mut all = String::new();
+        check.read_to_string(&mut all).unwrap();
+        assert_eq!(all, "PUBLIC POSITIONED ciphertext");
     }
 }

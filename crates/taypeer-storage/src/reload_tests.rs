@@ -1,6 +1,7 @@
 //! Reconciliation of an unconfirmed replacement without a second password prompt.
 
 use super::*;
+use std::fs;
 
 fn create(path: &Path, document: &[u8], blobs: &BlobStore) -> (FileStore, ReadKey) {
     let reader = blobs.bundle(document).unwrap();

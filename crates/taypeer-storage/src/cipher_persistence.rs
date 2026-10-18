@@ -134,7 +134,11 @@ pub fn read_local_draft_in(
     if !source.try_exists()? {
         return Ok(None);
     }
-    let object = EncryptedObject::open_file(File::open(&source)?, chain, temporary)?;
+    let mut file = File::open(&source)?;
+    if crate::publication::is_discarded(&mut file)? {
+        return Ok(None);
+    }
+    let object = EncryptedObject::open_file(file, chain, temporary)?;
     if object.envelope().kind != ObjectKind::LocalDraft {
         return Err(Error::InvalidFile);
     }
@@ -142,11 +146,8 @@ pub fn read_local_draft_in(
 }
 /// Durably discard an editor. Absence is idempotent; I/O errors remain distinct.
 pub fn discard_local_draft(path: &Path, working_copy: Digest) -> Result<(), Error> {
-    match std::fs::remove_file(file::sibling(path, &format!(".{working_copy}.draft"))) {
-        Ok(()) => File::open(file::parent(path)?)?
-            .sync_all()
-            .map_err(Error::from),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(_) => Err(Error::Io),
-    }
+    crate::publication::remove_published_file(&file::sibling(
+        path,
+        &format!(".{working_copy}.draft"),
+    ))
 }

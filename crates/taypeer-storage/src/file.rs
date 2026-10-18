@@ -1,7 +1,7 @@
 use crate::{BlobStore, Error, MAX_FILE_SIZE, ReadKey, crypto, stream::DecryptReader};
 use sha2::{Digest, Sha256};
 use std::{
-    fs::{self, File, OpenOptions},
+    fs::{File, OpenOptions},
     io::{Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
 };
@@ -316,9 +316,7 @@ impl FileStore {
             BlobStore::read_bundle(DecryptReader::new(&mut input, key, candidate.clone())?)?;
         // Reading a visible replacement alone cannot confirm that an earlier
         // failed directory synchronization made it durable.
-        input.sync_all().map_err(|_| Error::CommitUncertain)?;
-        File::open(parent(&self.path)?)
-            .and_then(|directory| directory.sync_all())
+        crate::publication::confirm_published_file(&self.path)
             .map_err(|_| Error::CommitUncertain)?;
         if fingerprint(&mut input)? != before
             || fingerprint(&mut File::open(&self.path)?)? != before
@@ -354,6 +352,9 @@ impl FileStore {
             return Ok(None);
         }
         let mut input = File::open(path)?;
+        if crate::publication::is_discarded(&mut input)? {
+            return Ok(None);
+        }
         let mut header = vec![0; crypto::HEADER];
         input.read_exact(&mut header)?;
         if &header[..8] != b"TAYDRFT3" || header[8..104] != self.header[8..104] {
@@ -464,18 +465,16 @@ impl FileStore {
         if !path.try_exists()? {
             return Ok(None);
         }
-        crypto::open_draft(&self.header, key, &read(&path)?).map(Some)
+        let bytes = read(&path)?;
+        if bytes == crate::publication::DRAFT_DISCARDED {
+            return Ok(None);
+        }
+        crypto::open_draft(&self.header, key, &bytes).map(Some)
     }
 
     /// Explicitly discard the local form and durably record its removal.
     pub fn discard_draft(&self) -> Result<(), Error> {
-        match fs::remove_file(sibling(&self.path, ".draft")) {
-            Ok(()) => File::open(parent(&self.path)?)?
-                .sync_all()
-                .map_err(Error::from),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(_) => Err(Error::Io),
-        }
+        crate::publication::remove_published_file(&sibling(&self.path, ".draft"))
     }
 }
 

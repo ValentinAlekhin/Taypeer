@@ -195,9 +195,7 @@ impl ArchiveStore {
                 return Err(Error::Changed);
             }
         }
-        input.sync_all().map_err(|_| Error::CommitUncertain)?;
-        File::open(file::parent(&self.path)?)
-            .and_then(|directory| directory.sync_all())
+        crate::publication::confirm_published_file(&self.path)
             .map_err(|_| Error::CommitUncertain)?;
         if Digest::from_bytes(file::fingerprint(&mut input)?) != fingerprint
             || Digest::from_bytes(file::fingerprint(&mut File::open(&self.path)?)?) != fingerprint

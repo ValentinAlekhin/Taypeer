@@ -3,6 +3,9 @@ use crate::{Error, FileStore, ReadKey, crypto};
 use std::path::Path;
 use zeroize::Zeroizing;
 
+mod credential;
+pub use credential::{LocalCredential, LocalCredentialScope};
+
 const STATE_MAGIC: &[u8; 8] = b"TAYLOC1\0";
 const CREDENTIAL_MAGIC: &[u8; 8] = b"TAYCRD1\0";
 
@@ -56,6 +59,26 @@ impl LocalStateStore {
 /// This separate domain prevents a local state file being substituted for credentials.
 pub struct LocalCredentialStore(FileStore);
 impl LocalCredentialStore {
+    /// Create a typed credential after explicit enrollment and epoch authentication.
+    pub fn create_record(
+        path: &Path,
+        epoch: &ReadKey,
+        record: &LocalCredential,
+    ) -> Result<Self, Error> {
+        Self::create(path, epoch, &record.clear()?)
+    }
+    /// Authenticate the entire record and its exact database, trust root and epoch.
+    pub fn unlock_record(
+        &self,
+        epoch: &ReadKey,
+        expected: &LocalCredentialScope,
+    ) -> Result<LocalCredential, Error> {
+        LocalCredential::from_clear(&self.unlock(epoch)?, expected)
+    }
+    /// Persist a replacement record; success follows the existing durable commit contract.
+    pub fn save_record(&mut self, epoch: &ReadKey, record: &LocalCredential) -> Result<(), Error> {
+        self.save(epoch, &record.clear()?)
+    }
     /// Create credentials at an explicitly enrolled local path.
     pub fn create(path: &Path, epoch: &ReadKey, clear: &[u8]) -> Result<Self, Error> {
         FileStore::create_keyed_object(path, epoch, clear, CREDENTIAL_MAGIC).map(Self)

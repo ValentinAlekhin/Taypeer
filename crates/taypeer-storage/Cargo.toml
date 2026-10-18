@@ -22,5 +22,9 @@ tempfile.workspace = true
 [target.'cfg(target_os = "android")'.dependencies]
 rustix.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+atomicwrites.workspace = true
+winx.workspace = true
+
 [lints]
 workspace = true
