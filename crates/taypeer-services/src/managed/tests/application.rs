@@ -97,6 +97,22 @@ fn same_epoch_baseline_reports_change_only_after_durable_application() {
     let path = directory.path().join("PUBLIC member.taypeer");
     copy_to(&manager, &session.database, &path);
     let (mut registered, registered_session) = member.open(path.clone(), PASSWORD);
+    // Direct service opening does not perform the runtime's initial durable baseline ACK.
+    let admitted = registered
+        .apply_received(&registered_session)
+        .unwrap()
+        .value;
+    assert!(admitted.changed);
+    assert_eq!(admitted.applied, 0);
+    let admitted_bytes = std::fs::read(&path).unwrap();
+    assert!(
+        !registered
+            .apply_received(&registered_session)
+            .unwrap()
+            .value
+            .changed
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), admitted_bytes);
     registered.lock(&registered_session).unwrap();
     drop(registered);
     let deny_next = Arc::new(AtomicBool::new(false));
