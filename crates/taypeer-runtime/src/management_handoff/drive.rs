@@ -486,7 +486,7 @@ impl RuntimeHost {
         if reply.intent != *intent || reply.challenge != challenge {
             return Err(RuntimeError::Protocol);
         }
-        Ok(reply)
+        Ok(*reply)
     }
 }
 

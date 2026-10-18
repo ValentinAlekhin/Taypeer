@@ -401,9 +401,9 @@ impl Owner {
                         | RuntimeError::SessionClosed(_)
                         | RuntimeError::OperationInterrupted(_),
                     ) => {
-                        return Ok(taypeer_sync::Reply::Management(
+                        return Ok(taypeer_sync::Reply::Management(Box::new(
                             self.reply(context, intent, challenge, direction)?,
-                        ));
+                        )));
                     }
                     Err(error) => return Err(error),
                 };
@@ -434,9 +434,9 @@ impl Owner {
                 .profile
                 .save_state("routes", &context.coordinator.routes().map_err(sync_error)?)?;
         }
-        Ok(taypeer_sync::Reply::Management(
+        Ok(taypeer_sync::Reply::Management(Box::new(
             self.reply(context, intent, challenge, direction)?,
-        ))
+        )))
     }
 }
 

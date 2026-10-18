@@ -79,7 +79,7 @@ pub enum Command {
 )]
 pub enum Reply {
     /// Saved handoff phase and freshly observed readiness, bound to caller challenge.
-    Management(ManagementReply),
+    Management(Box<ManagementReply>),
     /// Signed portable metadata; receiving it alone is not a complete database download.
     Inventory(Box<ArchiveMetadata>),
     /// Ciphertext objects absent from the receiver's durable generation.
@@ -154,4 +154,35 @@ pub(crate) async fn eof(stream: &mut RecvStream) -> Result<(), Error> {
         return Err(Error::Protocol);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn boxed_management_reply_preserves_the_protocol_representation() {
+        let fixed = "00".repeat(32);
+        let expected = serde_json::json!({
+            "kind": "management",
+            "value": {
+                "intent": {
+                    "database": "PUBLIC wire fixture",
+                    "root": fixed,
+                    "previous": fixed,
+                    "operation": fixed,
+                    "manager": fixed,
+                    "recipient": fixed
+                },
+                "challenge": fixed,
+                "decision": { "kind": "waiting" },
+                "readiness": { "kind": "locked" }
+            }
+        });
+        let reply: Reply = serde_json::from_value(expected.clone()).unwrap();
+        assert!(
+            matches!(&reply, Reply::Management(body) if body.intent.database.as_str() == "PUBLIC wire fixture")
+        );
+        assert_eq!(serde_json::to_value(reply).unwrap(), expected);
+    }
 }
