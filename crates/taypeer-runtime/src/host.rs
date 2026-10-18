@@ -388,6 +388,7 @@ impl RuntimeHost {
                 .coordinator
                 .unregister(database)
                 .map_err(sync_error)?;
+            self.forget_network_observation(database)?;
             copies.remove(&path);
         }
         Ok(())

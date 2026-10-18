@@ -205,8 +205,8 @@ class PreferencesUiTest {
     }
 
     @Test fun onlyLocalExchangeLabelUsesAcknowledgedNativeNameInsteadOfUnsubmittedDraft() {
-        val local = DeviceRow("PUBLIC-local-device-identity", true, true, null)
-        val remote = DeviceRow("PUBLIC-remote-device-identity", false, false, null)
+        val local = DeviceRow("PUBLIC-local-device-identity", true, true, null, dev.taypeer.bridge.PeerAvailability.UNKNOWN, dev.taypeer.bridge.ExchangePhase.WAITING)
+        val remote = DeviceRow("PUBLIC-remote-device-identity", false, false, null, dev.taypeer.bridge.PeerAvailability.UNKNOWN, dev.taypeer.bridge.ExchangePhase.WAITING)
         compose.waitUntil(20_000) { !application.deviceSettings.busy && application.deviceSettings.settings != null }
         compose.activityRule.scenario.onActivity { activity -> activity.setContent { TaypeerTheme { Column {
             ExchangeDeviceLabel(local, application.deviceSettings.settings?.deviceName)

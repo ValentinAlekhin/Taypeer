@@ -93,6 +93,14 @@
     <string name="waiting_approval">Waiting for manager approval</string>
     <string name="invitation_code">Invitation code</string>
     <string name="encrypted_exchange_note">Received ciphertext is applied only after unlocking.</string>
+    <string name="peer_connected">Connected</string>
+    <string name="peer_unknown">Availability unknown</string>
+    <string name="exchange_phase_waiting">Waiting for peer</string>
+    <string name="exchange_phase_connecting">Connecting</string>
+    <string name="exchange_phase_transferring">Transferring encrypted data</string>
+    <string name="exchange_phase_completed">Exchange completed</string>
+    <string name="exchange_phase_failed">Exchange failed</string>
+    <string name="exchange_phase_cancelled">Exchange cancelled</string>
     <string name="refresh">Refresh</string>
     <string name="stop_exchange">Stop active exchange</string>
     <string name="managing_device">Manager</string>

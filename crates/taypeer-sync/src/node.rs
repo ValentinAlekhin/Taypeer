@@ -1,5 +1,6 @@
 use crate::{
     Backend, Command, EndpointAddr, Error, RelayUrl, Reply,
+    observation::{ExchangePhase, InboundObservation, Observations, PeerObservation},
     wire::{self, Request},
 };
 use iroh::{
@@ -64,6 +65,7 @@ pub struct Node {
     temporary: TemporaryStorage,
     task: Mutex<Option<JoinHandle<()>>>,
     exchanges: Mutex<ExchangeGates>,
+    observations: Observations,
 }
 impl Node {
     /// Bind the profile's persistent transport identity and start accepting exchanges.
@@ -124,18 +126,33 @@ impl Node {
         let listener = endpoint.clone();
         let handler = Arc::clone(&backend);
         let staging = temporary.clone();
-        let task = tokio::spawn(async move { serve(listener, handler, staging).await });
+        let observations = Observations::default();
+        let incoming = observations.clone();
+        let task = tokio::spawn(async move { serve(listener, handler, staging, incoming).await });
         Self {
             endpoint,
             backend,
             temporary,
             task: Mutex::new(Some(task)),
             exchanges: Mutex::new(Default::default()),
+            observations,
         }
     }
     /// Current routes, suitable for an invitation or an admitted peer's address book.
     pub fn address(&self) -> EndpointAddr {
         self.endpoint.addr()
+    }
+    /// Current endpoint observations, including inbound-only authorized connections.
+    /// A completed exchange remains separate from current connection availability.
+    pub fn observations(
+        &self,
+    ) -> Result<std::collections::BTreeMap<(DatabaseId, PublicKey), PeerObservation>, Error> {
+        self.observations.snapshot()
+    }
+    /// Remove the selected database's observations when its working copy is closed.
+    /// Late callbacks from its old attempts cannot change a newly opened projection.
+    pub fn forget_database(&self, database: &DatabaseId) -> Result<(), Error> {
+        self.observations.forget(database)
     }
     /// Wait for relay connectivity when an externally usable invitation route is needed.
     pub async fn online(&self) -> Result<(), Error> {
@@ -146,6 +163,7 @@ impl Node {
     }
     /// Explicit close waits for transport shutdown and terminates outstanding handlers.
     pub async fn close(&self) {
+        self.observations.close();
         self.endpoint.close().await;
         let task = self.task.lock().ok().and_then(|mut task| task.take());
         if let Some(task) = task {
@@ -161,9 +179,31 @@ impl Node {
     }
     /// Send an explicit control request, including one-time admission presentation.
     pub async fn request(&self, address: EndpointAddr, command: Command) -> Result<Reply, Error> {
-        let connection = self.connect(address).await?;
-        let result = rpc(&connection, command).await;
-        connection.close(0_u8.into(), b"complete");
+        let attempt = command_database(&command)
+            .map(|database| {
+                self.observations
+                    .begin(database, PublicKey::from_bytes(*address.id.as_bytes()))
+            })
+            .transpose()?;
+        if let Some(attempt) = &attempt {
+            attempt.phase(ExchangePhase::Connecting);
+        }
+        let result = async {
+            let connection = self.connect(address).await?;
+            let result = rpc(&connection, command).await;
+            // A successful selected-database reply confirms peer authorization.
+            let _authorized = result
+                .as_ref()
+                .ok()
+                .and(attempt.as_ref())
+                .map(|attempt| attempt.authorized());
+            connection.close(0_u8.into(), b"complete");
+            result
+        }
+        .await;
+        if let Some(attempt) = attempt {
+            attempt.finish(result.is_ok());
+        }
         result
     }
     /// Exchange missing ciphertext in both directions. Only complete durable objects
@@ -173,6 +213,10 @@ impl Node {
         address: EndpointAddr,
         database: DatabaseId,
     ) -> Result<ExchangeReport, Error> {
+        let attempt = self.observations.begin(
+            database.clone(),
+            PublicKey::from_bytes(*address.id.as_bytes()),
+        )?;
         let gate = {
             let mut gates = self.exchanges.lock().map_err(|_| Error::State)?;
             gates.retain(|_, gate| Arc::strong_count(gate) > 1);
@@ -183,11 +227,17 @@ impl Node {
             )
         };
         let _attempt = gate.lock().await;
-        let connection = self.connect(address.clone()).await?;
-        let result = self
-            .exchange_connected(&connection, address, database)
-            .await;
-        connection.close(0_u8.into(), b"complete");
+        attempt.phase(ExchangePhase::Connecting);
+        let result = async {
+            let connection = self.connect(address.clone()).await?;
+            let result = self
+                .exchange_connected(&connection, address, database, &attempt)
+                .await;
+            connection.close(0_u8.into(), b"complete");
+            result
+        }
+        .await;
+        attempt.finish(result.is_ok());
         result
     }
     async fn exchange_connected(
@@ -195,6 +245,7 @@ impl Node {
         connection: &Connection,
         peer_address: EndpointAddr,
         database: DatabaseId,
+        attempt: &crate::observation::Attempt,
     ) -> Result<ExchangeReport, Error> {
         let peer = public(connection);
         let backend = Arc::clone(&self.backend);
@@ -206,6 +257,7 @@ impl Node {
             Reply::Inventory(metadata) => metadata,
             _ => return Err(Error::Protocol),
         };
+        let _authorized = attempt.authorized();
         let needed = match rpc(connection, Command::Offer(local)).await? {
             Reply::Needed(ids) => ids,
             _ => return Err(Error::Protocol),
@@ -247,6 +299,7 @@ impl Node {
                 database.clone(),
                 &descriptor,
                 self.temporary.clone(),
+                None,
             )
             .await?;
             let backend = Arc::clone(&self.backend);
@@ -267,15 +320,42 @@ impl Node {
         database: DatabaseId,
         descriptor: CipherObject,
     ) -> Result<CiphertextFile, Error> {
-        let connection = self.connect(address).await?;
-        let result = fetch(&connection, database, &descriptor, self.temporary.clone()).await;
-        connection.close(0_u8.into(), b"complete");
+        let attempt = self.observations.begin(
+            database.clone(),
+            PublicKey::from_bytes(*address.id.as_bytes()),
+        )?;
+        attempt.phase(ExchangePhase::Connecting);
+        let result = async {
+            let connection = self.connect(address).await?;
+            let result = fetch(
+                &connection,
+                database,
+                &descriptor,
+                self.temporary.clone(),
+                Some(&attempt),
+            )
+            .await;
+            connection.close(0_u8.into(), b"complete");
+            result
+        }
+        .await;
+        attempt.finish(result.is_ok());
         result
     }
 }
 
 fn public(connection: &Connection) -> PublicKey {
     PublicKey::from_bytes(*connection.remote_id().as_bytes())
+}
+fn command_database(command: &Command) -> Option<DatabaseId> {
+    match command {
+        Command::Inventory { database, .. } => Some(database.clone()),
+        Command::Offer(metadata) => Some(metadata.manifest.body.database.clone()),
+        Command::ManagementProposal { intent, .. } | Command::ManagementStatus { intent, .. } => {
+            Some(intent.database.clone())
+        }
+        Command::Join { .. } | Command::JoinStatus { .. } => None,
+    }
 }
 async fn blocking<T: Send + 'static>(
     work: impl FnOnce() -> Result<T, Error> + Send + 'static,
@@ -285,7 +365,12 @@ async fn blocking<T: Send + 'static>(
         .map_err(|_| Error::State)?
 }
 
-async fn serve(endpoint: Endpoint, backend: Arc<dyn Backend>, temporary: TemporaryStorage) {
+async fn serve(
+    endpoint: Endpoint,
+    backend: Arc<dyn Backend>,
+    temporary: TemporaryStorage,
+    observations: Observations,
+) {
     let mut handlers = JoinSet::new();
     loop {
         tokio::select! {
@@ -294,13 +379,17 @@ async fn serve(endpoint: Endpoint, backend: Arc<dyn Backend>, temporary: Tempora
                 let Some(incoming) = incoming else { break; };
                 let backend = Arc::clone(&backend);
                 let temporary = temporary.clone();
+                let observations = observations.clone();
                 handlers.spawn(async move {
                     let connection = match timeout(CONNECT, incoming).await {
                         Ok(Ok(connection)) => connection,
                         _ => return,
                     };
                     // A malformed/failed stream closes this exchange without a success receipt.
-                    if serve_connection(&connection, backend, temporary).await.is_err() {
+                    let mut observed = InboundObservation::new(observations, public(&connection));
+                    let result = serve_connection(&connection, backend, temporary, &mut observed).await;
+                    observed.finish(result.is_ok());
+                    if result.is_err() {
                         connection.close(1_u8.into(), b"exchange failed");
                     }
                 });
@@ -313,6 +402,7 @@ async fn serve_connection(
     connection: &Connection,
     backend: Arc<dyn Backend>,
     temporary: TemporaryStorage,
+    observed: &mut InboundObservation,
 ) -> Result<(), Error> {
     loop {
         let (mut send, mut recv) = match timeout(wire::IDLE, connection.accept_bi()).await {
@@ -325,19 +415,35 @@ async fn serve_connection(
         match request {
             Request::Command(command) => {
                 wire::eof(&mut recv).await?;
+                let database = command_database(&command);
                 let handler = Arc::clone(&backend);
                 let result = blocking(move || handler.command(peer, *command)).await;
+                if result.is_ok()
+                    && let Some(database) = &database
+                {
+                    observed.authorized(database.clone())?;
+                }
+                if result.is_err()
+                    && let Some(database) = database
+                {
+                    observed.failed(&database);
+                }
                 wire::write(&mut send, &result).await?;
             }
             Request::Fetch { database, id } => {
                 wire::eof(&mut recv).await?;
                 let handler = Arc::clone(&backend);
-                match blocking(move || handler.object(peer, &database, id)).await {
+                let selected = database.clone();
+                match blocking(move || handler.object(peer, &selected, id)).await {
                     Ok((descriptor, reader)) => {
+                        observed.authorized(database)?;
                         wire::write(&mut send, &Ok::<_, Error>(&descriptor)).await?;
                         send_body(&mut send, reader).await?;
                     }
-                    Err(error) => wire::write(&mut send, &Err::<CipherObject, _>(error)).await?,
+                    Err(error) => {
+                        observed.failed(&database);
+                        wire::write(&mut send, &Err::<CipherObject, _>(error)).await?;
+                    }
                 }
             }
             Request::Put {
@@ -348,10 +454,15 @@ async fn serve_connection(
                 let db = database.clone();
                 let check = descriptor.clone();
                 blocking(move || handler.authorize_object(peer, &db, &check)).await?;
+                observed.authorized(database.clone())?;
                 let file = receive_body(&mut recv, descriptor.length, temporary.clone()).await?;
                 let handler = Arc::clone(&backend);
+                let selected = database.clone();
                 let result =
                     blocking(move || handler.receive(peer, &database, descriptor, file)).await;
+                if result.is_err() {
+                    observed.failed(&selected);
+                }
                 wire::write(&mut send, &result).await?;
             }
         }
@@ -396,6 +507,7 @@ async fn fetch(
     database: DatabaseId,
     descriptor: &CipherObject,
     temporary: TemporaryStorage,
+    attempt: Option<&crate::observation::Attempt>,
 ) -> Result<CiphertextFile, Error> {
     let (mut send, mut recv) = connection.open_bi().await.map_err(|_| Error::Transport)?;
     wire::write(
@@ -411,6 +523,8 @@ async fn fetch(
     if actual? != *descriptor {
         return Err(Error::Protocol);
     }
+    // The authenticated peer has explicitly authorized this exact selected object.
+    let _authorized = attempt.map(|attempt| attempt.authorized());
     receive_body(&mut recv, descriptor.length, temporary).await
 }
 async fn send_body(send: &mut SendStream, mut reader: ObjectReader) -> Result<(), Error> {
@@ -499,6 +613,7 @@ mod tests;
 
 impl Drop for Node {
     fn drop(&mut self) {
+        self.observations.close();
         if let Ok(task) = self.task.get_mut()
             && let Some(task) = task.take()
         {

@@ -45,6 +45,8 @@ pub struct DeviceExchange {
     pub local: bool,
     /// This member is the database's manager.
     pub manager: bool,
+    /// Current authorized connections and attempt phase; historical success grants no presence.
+    pub observation: PeerObservation,
     /// Latest outbound exchange; never a claim of remote application or presence.
     pub progress: Option<PeerProgress>,
 }
@@ -82,6 +84,14 @@ impl RuntimeHost {
             databases: Vec::new(),
         };
         for context in self.context.active_contexts()? {
+            let observations = self
+                .network
+                .lock()
+                .map_err(|_| RuntimeError::Transport)?
+                .get(&context.transport.public())
+                .map(|network| network.node.observations().map_err(sync_error))
+                .transpose()?
+                .unwrap_or_default();
             let databases: Vec<_> = context
                 .copies
                 .lock()
@@ -102,6 +112,10 @@ impl RuntimeHost {
                         id: member.identity.device,
                         local: member.identity.transport == context.transport.public(),
                         manager: member.identity.device == head.manager,
+                        observation: observations
+                            .get(&(database.clone(), member.identity.transport))
+                            .copied()
+                            .unwrap_or_default(),
                         progress: progress
                             .iter()
                             .find(|p| p.database == database && p.peer == member.identity.transport)

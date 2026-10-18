@@ -203,6 +203,13 @@ async fn forward(relay: Option<RelayUrl>, schema: taypeer_core::SchemaDescriptor
             .await
             .is_err()
     );
+    assert!(
+        nodes[0]
+            .observations()
+            .unwrap()
+            .keys()
+            .all(|(_, peer)| *peer != key.public())
+    );
     stranger.close().await;
     for node in &mut nodes {
         node.close().await;
@@ -259,6 +266,13 @@ async fn unknown_document_schema_can_be_received_and_forwarded_directly_and_over
 struct LostReceipt {
     coordinator: Arc<Coordinator>,
     fail: AtomicBool,
+    hold: Option<Arc<ReceiveGate>>,
+}
+#[derive(Default)]
+struct ReceiveGate {
+    entered: tokio::sync::Notify,
+    released: Mutex<bool>,
+    ready: std::sync::Condvar,
 }
 impl Backend for LostReceipt {
     fn command(&self, peer: PublicKey, command: Command) -> Result<Reply, Error> {
@@ -288,6 +302,17 @@ impl Backend for LostReceipt {
         descriptor: CipherObject,
         file: CiphertextFile,
     ) -> Result<Digest, Error> {
+        if let Some(gate) = &self.hold {
+            gate.entered.notify_one();
+            let released = gate.released.lock().map_err(|_| Error::State)?;
+            let (released, _) = gate
+                .ready
+                .wait_timeout_while(released, Duration::from_secs(15), |value| !*value)
+                .map_err(|_| Error::State)?;
+            if !*released {
+                return Err(Error::Timeout);
+            }
+        }
         let id = self.coordinator.receive(peer, database, descriptor, file)?;
         if self.fail.swap(false, Ordering::SeqCst) {
             return Err(Error::Storage(taypeer_storage::Error::CommitUncertain));
@@ -302,10 +327,18 @@ async fn a_lost_durable_receipt_retries_without_duplicating_ciphertext() {
     let failure = Arc::new(LostReceipt {
         coordinator: f.coordinators[1].clone(),
         fail: AtomicBool::new(true),
+        hold: None,
     });
     let b = test_node(&f.keys[1], failure, None).await;
     let result = a.exchange(b.address(), f.database.clone()).await;
     assert!(result.is_err());
+    assert_eq!(
+        a.observations().unwrap()[&(f.database.clone(), f.keys[1].public())],
+        crate::PeerObservation {
+            availability: crate::PeerAvailability::Unknown,
+            phase: crate::ExchangePhase::Failed,
+        }
+    );
     let before = f.coordinators[1].snapshot(&f.database).unwrap();
     assert!(
         before
@@ -326,6 +359,52 @@ async fn a_lost_durable_receipt_retries_without_duplicating_ciphertext() {
     );
     a.close().await;
     b.close().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn authorized_inbound_and_outbound_connections_have_independent_live_observations() {
+    let f = fixture();
+    let a = Arc::new(test_node(&f.keys[0], f.coordinators[0].clone(), None).await);
+    let gate = Arc::new(ReceiveGate::default());
+    let b = test_node(
+        &f.keys[1],
+        Arc::new(LostReceipt {
+            coordinator: f.coordinators[1].clone(),
+            fail: AtomicBool::new(false),
+            hold: Some(Arc::clone(&gate)),
+        }),
+        None,
+    )
+    .await;
+    let database = f.database.clone();
+    let address = b.address();
+    let sender = Arc::clone(&a);
+    let exchange = tokio::spawn(async move { sender.exchange(address, database).await });
+    timeout(Duration::from_secs(10), gate.entered.notified())
+        .await
+        .unwrap();
+    let expected = crate::PeerObservation {
+        availability: crate::PeerAvailability::Connected,
+        phase: crate::ExchangePhase::Transferring,
+    };
+    assert_eq!(
+        a.observations().unwrap()[&(f.database.clone(), f.keys[1].public())],
+        expected
+    );
+    assert_eq!(
+        b.observations().unwrap()[&(f.database.clone(), f.keys[0].public())],
+        expected
+    );
+    *gate.released.lock().unwrap() = true;
+    gate.ready.notify_all();
+    assert_eq!(exchange.await.unwrap().unwrap().sent, 1);
+    let completed = a.observations().unwrap()[&(f.database.clone(), f.keys[1].public())];
+    assert_eq!(completed.availability, crate::PeerAvailability::Unknown);
+    assert_eq!(completed.phase, crate::ExchangePhase::Completed);
+    a.close().await;
+    b.close().await;
+    assert!(a.observations().unwrap().is_empty());
+    assert!(b.observations().unwrap().is_empty());
 }
 
 #[tokio::test]

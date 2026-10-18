@@ -93,6 +93,14 @@
     <string name="waiting_approval">Ожидание допуска управляющим устройством</string>
     <string name="invitation_code">Код приглашения</string>
     <string name="encrypted_exchange_note">Полученный шифротекст применяется после разблокировки.</string>
+    <string name="peer_connected">Подключено</string>
+    <string name="peer_unknown">Доступность неизвестна</string>
+    <string name="exchange_phase_waiting">Ожидание пира</string>
+    <string name="exchange_phase_connecting">Подключение</string>
+    <string name="exchange_phase_transferring">Передача зашифрованных данных</string>
+    <string name="exchange_phase_completed">Обмен завершён</string>
+    <string name="exchange_phase_failed">Ошибка обмена</string>
+    <string name="exchange_phase_cancelled">Обмен отменён</string>
     <string name="refresh">Обновить</string>
     <string name="stop_exchange">Остановить активный обмен</string>
     <string name="managing_device">Управляющее</string>

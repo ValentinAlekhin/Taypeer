@@ -18,6 +18,7 @@ use std::{
 use taypeer_core::{DatabaseId, OperationId};
 use taypeer_storage::{ArchiveCandidate, ArchiveMetadata, ArchiveStore, EncryptedObject};
 use taypeer_sync::{Command, EndpointAddr, ExchangeReport, Node, RelaySetting, Reply};
+pub use taypeer_sync::{ExchangePhase, PeerAvailability, PeerObservation};
 use taypeer_trust::{Digest, Invitation, InvitationSecret, JoinProof, PublicKey};
 pub use view::{DatabaseExchange, DeviceExchange, NetworkCancellation, NetworkSnapshot};
 use zeroize::Zeroizing;
@@ -288,6 +289,21 @@ impl RuntimeHost {
             .get(&context.transport.public())
             .map(|network| Arc::clone(&network.node))
             .ok_or(RuntimeError::Closed)
+    }
+    pub(crate) fn forget_network_observation(
+        &self,
+        database: &DatabaseId,
+    ) -> Result<(), RuntimeError> {
+        // close() already owns the working-copy lock; do not rediscover its context here.
+        for network in self
+            .network
+            .lock()
+            .map_err(|_| RuntimeError::Transport)?
+            .values()
+        {
+            network.node.forget_database(database).map_err(sync_error)?;
+        }
+        Ok(())
     }
     /// Local endpoint routes for an invitation or explicit authenticated peer exchange.
     pub fn network_address(&self) -> Result<EndpointAddr, RuntimeError> {

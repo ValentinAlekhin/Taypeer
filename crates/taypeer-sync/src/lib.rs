@@ -6,6 +6,7 @@
 mod coordinator;
 mod management;
 mod node;
+mod observation;
 mod persistence;
 mod wire;
 
@@ -15,6 +16,7 @@ pub use management::{
     ManagementApplied, ManagementDecision, ManagementIntent, ManagementReadiness, ManagementReply,
 };
 pub use node::{ExchangeReport, Node, RelaySetting};
+pub use observation::{ExchangePhase, PeerAvailability, PeerObservation};
 pub use persistence::CoordinatorPersistence;
 pub use taypeer_storage::PreparedCommit;
 pub use wire::{Command, Reply};

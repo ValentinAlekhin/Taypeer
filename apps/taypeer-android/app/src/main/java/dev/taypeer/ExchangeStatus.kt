@@ -30,6 +30,16 @@ internal fun ExchangeStatus(exchange: ExchangeView, application: ApplicationStat
 
 @Composable
 internal fun DeviceExchangeStatus(device: DeviceRow) {
+    Text(stringResource(if (device.availability == PeerAvailability.CONNECTED) R.string.peer_connected else R.string.peer_unknown),
+        Modifier.testTag("peer-availability-${device.id}"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Text(stringResource(when (device.exchangePhase) {
+        ExchangePhase.WAITING -> R.string.exchange_phase_waiting
+        ExchangePhase.CONNECTING -> R.string.exchange_phase_connecting
+        ExchangePhase.TRANSFERRING -> R.string.exchange_phase_transferring
+        ExchangePhase.COMPLETED -> R.string.exchange_phase_completed
+        ExchangePhase.FAILED -> R.string.exchange_phase_failed
+        ExchangePhase.CANCELLED -> R.string.exchange_phase_cancelled
+    }), Modifier.testTag("peer-phase-${device.id}"), style = MaterialTheme.typography.bodySmall)
     Text(stringResource(when (device.lastExchangeSucceeded) {
         true -> R.string.device_exchange_succeeded
         false -> R.string.device_exchange_failed

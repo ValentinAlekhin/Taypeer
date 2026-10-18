@@ -151,7 +151,51 @@ pub struct InvitationRow {
     /// Verified recipient device, if presented.
     pub recipient: Option<String>,
 }
-/// Verified member and latest attempt, not a presence claim.
+/// Current authenticated connection availability, independent of past exchanges.
+#[derive(uniffi::Enum)]
+pub enum PeerAvailability {
+    /// No currently authorized connection is observed.
+    Unknown,
+    /// A live authenticated connection is authorized for this database.
+    Connected,
+}
+impl From<taypeer_runtime::PeerAvailability> for PeerAvailability {
+    fn from(value: taypeer_runtime::PeerAvailability) -> Self {
+        match value {
+            taypeer_runtime::PeerAvailability::Unknown => Self::Unknown,
+            taypeer_runtime::PeerAvailability::Connected => Self::Connected,
+        }
+    }
+}
+/// Current transport attempt; never an unlocked-document or durable-apply claim.
+#[derive(uniffi::Enum)]
+pub enum ExchangePhase {
+    /// No exchange attempt is active.
+    Waiting,
+    /// Establishing the authenticated connection.
+    Connecting,
+    /// Exchanging encrypted inventories or objects.
+    Transferring,
+    /// The last observed transport attempt completed.
+    Completed,
+    /// The attempt failed, independently of earlier durable results.
+    Failed,
+    /// The attempt was cancelled.
+    Cancelled,
+}
+impl From<taypeer_runtime::ExchangePhase> for ExchangePhase {
+    fn from(value: taypeer_runtime::ExchangePhase) -> Self {
+        match value {
+            taypeer_runtime::ExchangePhase::Waiting => Self::Waiting,
+            taypeer_runtime::ExchangePhase::Connecting => Self::Connecting,
+            taypeer_runtime::ExchangePhase::Transferring => Self::Transferring,
+            taypeer_runtime::ExchangePhase::Completed => Self::Completed,
+            taypeer_runtime::ExchangePhase::Failed => Self::Failed,
+            taypeer_runtime::ExchangePhase::Cancelled => Self::Cancelled,
+        }
+    }
+}
+/// Verified member, current observation and separately retained exchange result.
 #[derive(uniffi::Record)]
 pub struct DeviceRow {
     /// Stable author identity.
@@ -162,6 +206,10 @@ pub struct DeviceRow {
     pub manager: bool,
     /// Last exchange succeeded, failed, or has not happened.
     pub last_exchange_succeeded: Option<bool>,
+    /// Fresh connection observation for the selected database.
+    pub availability: PeerAvailability,
+    /// Current attempt phase.
+    pub exchange_phase: ExchangePhase,
 }
 /// Content-free exchange projection available while locked.
 #[derive(uniffi::Record)]
@@ -271,6 +319,8 @@ impl Host {
                         local: device.local,
                         manager: device.manager,
                         last_exchange_succeeded: device.progress.map(|p| p.result.is_ok()),
+                        availability: device.observation.availability.into(),
+                        exchange_phase: device.observation.phase.into(),
                     })
                     .collect(),
                 db.invitations

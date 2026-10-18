@@ -21,8 +21,9 @@ pub use management_handoff::{
     ManagementFailure, ManagementHandoff, ManagementPeerStatus, ManagementPhase, ManagementSession,
 };
 pub use network::{
-    DatabaseExchange, DeviceExchange, InvitationCode, JoinProgress, NetworkCancellation,
-    NetworkSnapshot, PeerProgress, PendingJoin, PendingJoinSummary, RelayPreference,
+    DatabaseExchange, DeviceExchange, ExchangePhase, InvitationCode, JoinProgress,
+    NetworkCancellation, NetworkSnapshot, PeerAvailability, PeerObservation, PeerProgress,
+    PendingJoin, PendingJoinSummary, RelayPreference,
 };
 pub use profile::entry_access::{AccessClock, SecretAccessGrant};
 pub use protocol::{Command, RuntimeError, erase_view};

@@ -10,6 +10,7 @@ use gpui_kit::{
     prelude::FluentBuilder,
     *,
 };
+use taypeer_runtime::{ExchangePhase, PeerAvailability, PeerObservation};
 use taypeer_trust::InvitationStatus;
 use taypeer_ui::style::*;
 
@@ -187,7 +188,7 @@ impl<H: SyncHost> SyncView<H> {
                 } else {
                     format!("{} · {}", tr("sync.device"), &full[..12])
                 };
-                let exchange = device.progress.as_ref().map_or_else(
+                let last_exchange = device.progress.as_ref().map_or_else(
                     || tr("sync.no_exchange").to_string(),
                     |progress| match progress.result {
                         Ok(report) => format!(
@@ -199,6 +200,11 @@ impl<H: SyncHost> SyncView<H> {
                         ),
                         Err(_) => tr("sync.network_error").to_string(),
                     },
+                );
+                let exchange = format!(
+                    "{} · {}",
+                    tr(exchange_phase_key(device.observation.phase)),
+                    last_exchange
                 );
                 let identity = Button::new(SharedString::from(format!("identity-{full}")))
                     .ghost()
@@ -225,6 +231,7 @@ impl<H: SyncHost> SyncView<H> {
                         identity_label: label,
                         local: device.local,
                         manager: device.manager,
+                        observation: device.observation,
                         exchange,
                         action,
                     },
@@ -547,11 +554,23 @@ fn device_header(cx: &App) -> AnyElement {
         )
         .into_any_element()
 }
+fn exchange_phase_key(phase: ExchangePhase) -> &'static str {
+    match phase {
+        ExchangePhase::Waiting => "sync.phase_waiting",
+        ExchangePhase::Connecting => "sync.phase_connecting",
+        ExchangePhase::Transferring => "sync.phase_transferring",
+        ExchangePhase::Completed => "sync.phase_completed",
+        ExchangePhase::Failed => "sync.phase_failed",
+        ExchangePhase::Cancelled => "sync.phase_cancelled",
+    }
+}
+
 struct DeviceCells {
     identity: Button,
     identity_label: String,
     local: bool,
     manager: bool,
+    observation: PeerObservation,
     exchange: String,
     action: Option<Button>,
 }
@@ -566,6 +585,7 @@ fn device_row(
         identity_label,
         local,
         manager,
+        observation,
         exchange,
         action,
     } = cells;
@@ -607,7 +627,10 @@ fn device_row(
                 .child(tr(if local {
                     "sync.this_device"
                 } else {
-                    "sync.presence_unknown"
+                    match observation.availability {
+                        PeerAvailability::Unknown => "sync.presence_unknown",
+                        PeerAvailability::Connected => "sync.presence_connected",
+                    }
                 })),
         )
         .child(
@@ -918,7 +941,7 @@ fn invitation_copy(button: Button) -> AnyElement {
 #[derive(Clone, Copy)]
 /// Public offline layouts without a network or real invitation capability.
 pub enum SyncPreviewCase {
-    /// Device rows use only the current public projection: unknown remote presence.
+    /// Device rows use the same live-observation projection as the product view.
     Devices,
     /// Static nonusable invitation code and matching bundled QR.
     Invitation,
@@ -950,6 +973,7 @@ pub fn sync_preview(case: SyncPreviewCase, window: &mut Window, cx: &mut App) ->
                             identity_label: "MacBook Pro".to_owned(),
                             local: true,
                             manager: true,
+                            observation: PeerObservation::default(),
                             exchange: tr("sync.no_exchange").to_string(),
                             action: None,
                         },
@@ -969,6 +993,7 @@ pub fn sync_preview(case: SyncPreviewCase, window: &mut Window, cx: &mut App) ->
                                         identity_label: format!("{} · {id}", tr("sync.device")),
                                         local: false,
                                         manager: false,
+                                        observation: PeerObservation::default(),
                                         exchange: tr("sync.no_exchange").to_string(),
                                         action: Some(
                                             Button::new(("exchange-public", index)).ghost(),
