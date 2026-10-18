@@ -1,0 +1,57 @@
+[workspace]
+resolver = "3"
+
+[package]
+name = "taypeer-parser-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[features]
+fuzzing = ["dep:libfuzzer-sys"]
+
+[dependencies]
+libfuzzer-sys = { version = "=0.4.13", optional = true }
+serde_json = "=1.0.151"
+taypeer-document = { path = "../crates/taypeer-document" }
+taypeer-storage = { path = "../crates/taypeer-storage" }
+taypeer-trust = { path = "../crates/taypeer-trust" }
+
+[[bin]]
+name = "corpus-smoke"
+path = "src/main.rs"
+
+[[bin]]
+name = "document"
+path = "fuzz_targets/document.rs"
+required-features = ["fuzzing"]
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "storage"
+path = "fuzz_targets/storage.rs"
+required-features = ["fuzzing"]
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "trust"
+path = "fuzz_targets/trust.rs"
+required-features = ["fuzzing"]
+test = false
+doc = false
+bench = false
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[lints.clippy]
+dbg_macro = "deny"
+todo = "deny"

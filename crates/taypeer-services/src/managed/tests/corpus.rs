@@ -1,4 +1,4 @@
-//! Frozen PUBLIC development files. Ordinary tests never invoke the writer to build inputs.
+//! Frozen PUBLIC schema-one files. Ordinary tests never invoke the writer to build inputs.
 use super::*;
 use std::path::Path;
 use taypeer_core::{ClientCapabilities, OperationId};
@@ -6,7 +6,7 @@ use taypeer_core::{ClientCapabilities, OperationId};
 const CORPUS_PASSWORD: &[u8] = b"PUBLIC_SESSION_DRAFT_PASSWORD";
 const CASES: [&str; 3] = ["empty", "populated", "conflicts"];
 fn corpus() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/dev7")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/stable1")
 }
 fn draft_path(path: &Path) -> PathBuf {
     path.with_file_name(format!(
@@ -120,7 +120,7 @@ fn lifecycle(
 /// Run only explicitly into a new output directory; frozen inputs are never overwritten.
 #[test]
 #[ignore = "explicit PUBLIC corpus generator; requires TAYPEER_CORPUS_OUTPUT"]
-fn generate_development_corpus() {
+fn generate_current_corpus() {
     let output = PathBuf::from(
         std::env::var_os("TAYPEER_CORPUS_OUTPUT").expect("explicit output directory"),
     );
@@ -268,7 +268,7 @@ fn generate_development_corpus() {
 }
 
 #[test]
-fn frozen_development_files_preserve_domain_state_and_original_sources() {
+fn frozen_schema_one_files_preserve_domain_state_and_original_sources() {
     for case in CASES {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join(format!("{case}.taypeer"));

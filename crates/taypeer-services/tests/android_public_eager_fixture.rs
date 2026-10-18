@@ -1,4 +1,4 @@
-//! A hash-bound PUBLIC Android corpus, never an arbitrary user archive or writable profile.
+//! A hash-bound PUBLIC schema-one corpus shared with Android, never a user archive.
 use std::{
     collections::BTreeSet,
     fs::File,
@@ -19,10 +19,10 @@ use taypeer_trust::{ControlChain, Digest};
 
 const CAPTURE: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../tests/fixtures/android-eager-icons/seventy-image-entries.taypeer"
+    "/../../tests/fixtures/android-eager-icons-stable1/seventy-image-entries.taypeer"
 );
-const BYTES: u64 = 4_567_715;
-const SHA256: &str = "a965939a4ad83a973e93655d5b9ab435fd50c37c1acf08bfa6a4073985a3ea6d";
+const BYTES: u64 = 4_552_612;
+const SHA256: &str = "f896ed163f0da683feac9fe9758081988f0675bcf08ab9a78d078337618b530c";
 const PASSWORD: &[u8] = b"PUBLIC image list master";
 const SVG: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" width="32" height="16"><rect width="32" height="16" fill="#14dc28"/></svg>"##;
 

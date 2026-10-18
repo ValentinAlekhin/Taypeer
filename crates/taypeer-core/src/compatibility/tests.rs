@@ -114,7 +114,7 @@ fn development_six_optional_groups_require_an_update() {
     );
     assert_eq!(serde_json::to_string(&descriptor).unwrap(), frozen);
     let current = SchemaDescriptor::current();
-    assert_eq!(current.schema_version(), 7);
+    assert_eq!(current.schema_version(), 1);
     assert!(
         current
             .required_read_features()
@@ -125,4 +125,16 @@ fn development_six_optional_groups_require_an_update() {
             .required_read_features()
             .contains(&FeatureId::new("taypeer.optional_group").unwrap())
     );
+}
+
+#[test]
+fn development_seven_is_not_a_released_schema_one_file() {
+    let frozen: serde_json::Value =
+        serde_json::from_str(include_str!("../../../../tests/fixtures/dev7/empty.json")).unwrap();
+    let descriptor: SchemaDescriptor = serde_json::from_value(frozen["schema"].clone()).unwrap();
+    assert_eq!(
+        ClientCapabilities::default().assess(&descriptor).read,
+        CompatibilityAccess::UnsupportedSchema { schema_version: 7 }
+    );
+    assert_eq!(CURRENT_SCHEMA, 1);
 }

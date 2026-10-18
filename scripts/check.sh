@@ -17,6 +17,9 @@ pnpm arch:check
 cargo fmt --all -- --check
 cargo check-all
 cargo lint
+cargo fmt --manifest-path fuzz/Cargo.toml -- --check
+cargo clippy --manifest-path fuzz/Cargo.toml --locked --bins -- -D warnings
+cargo run --manifest-path fuzz/Cargo.toml --locked --quiet --bin corpus-smoke
 cargo test --workspace --exclude taypeer --all-features --locked
 cargo test -p taypeer --lib --all-features --locked
 cargo test -p taypeer --features component-rendering --test components --locked

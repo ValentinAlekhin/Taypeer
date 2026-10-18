@@ -130,6 +130,18 @@ fn the_previous_development_document_is_rejected_without_a_migration() {
     assert_eq!(std::fs::read(path).unwrap(), source);
 }
 
+#[test]
+fn development_seven_is_rejected_without_relabelling_the_original() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/dev7/extensions.automerge");
+    let source = std::fs::read(&path).unwrap();
+    assert_eq!(
+        Document::load(&source).unwrap_err(),
+        Error::UnsupportedSchema
+    );
+    assert_eq!(std::fs::read(path).unwrap(), source);
+}
+
 fn state(document: &Document, entry: &EntryId, field: EntryField) -> FieldState {
     document
         .entry(entry)

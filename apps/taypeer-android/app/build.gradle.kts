@@ -14,7 +14,7 @@ val qaCoverageEnabled = providers.gradleProperty("qaCoverage").map(String::toBoo
 val qaJacocoVersion = "0.8.13"
 val eagerCorpusAssets = layout.buildDirectory.dir("generated/public-eager-assets")
 val captureEagerCorpus = tasks.register<Sync>("capturePublicEagerCorpus") {
-    from(file("../../../tests/fixtures/android-eager-icons/seventy-image-entries.taypeer"))
+    from(file("../../../tests/fixtures/android-eager-icons-stable1/seventy-image-entries.taypeer"))
     into(eagerCorpusAssets)
 }
 // AGP lint reads generated AndroidTest assets outside the asset merge task.
@@ -87,7 +87,7 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
-    sourceSets["androidTest"].assets.srcDir("../../../tests/fixtures/dev7")
+    sourceSets["androidTest"].assets.srcDir("../../../tests/fixtures/stable1")
     sourceSets["androidTest"].assets.srcDir(captureEagerCorpus)
     sourceSets["main"].jniLibs.srcDir(biometricPipeLibraries)
     for (variant in listOf("debug", "release")) {

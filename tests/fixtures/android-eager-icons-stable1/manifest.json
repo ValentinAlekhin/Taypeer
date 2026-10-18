@@ -1,0 +1,15 @@
+{
+  "author_seed": "PUBLIC [71;32]",
+  "bytes": 4552612,
+  "classification": "PUBLIC synthetic schema-one fixture",
+  "entries": 70,
+  "generator": "managed::tests::eager_corpus::generate_public_eager_corpus",
+  "group": "PUBLIC image list group",
+  "image_bytes": 114,
+  "native_android_acceptance": false,
+  "password": "PUBLIC image list master",
+  "schema": 1,
+  "sha256": "f896ed163f0da683feac9fe9758081988f0675bcf08ab9a78d078337618b530c",
+  "source": "crates/taypeer-services/src/managed/tests/eager_corpus.rs",
+  "transport_seed": "PUBLIC [111;32]"
+}

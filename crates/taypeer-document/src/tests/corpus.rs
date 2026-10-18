@@ -3,7 +3,7 @@ use super::*;
 
 fn extension_fixture() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../tests/fixtures/dev7/extensions.automerge")
+        .join("../../tests/fixtures/stable1/extensions.automerge")
 }
 
 #[test]

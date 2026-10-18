@@ -13,6 +13,7 @@ mod binary_export;
 mod compatibility;
 mod corpus;
 mod drafts;
+mod eager_corpus;
 mod keyed_open;
 mod management;
 mod policy;

@@ -389,7 +389,7 @@ impl Document {
         self.confirm_lifecycle(&prepared, operation, now)
     }
 
-    pub(super) fn validate_v7_structure(&self) -> Result<(), Error> {
+    pub(super) fn validate_v1_structure(&self) -> Result<(), Error> {
         groups::tree(&self.doc)?;
         let mut owners = BTreeMap::new();
         let mut attachment_owners = BTreeMap::new();
