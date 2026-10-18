@@ -8,6 +8,7 @@ use crate::{
 use std::{
     path::Path,
     process::{Command as Process, Stdio},
+    sync::Mutex,
     time::{Duration, Instant},
 };
 
@@ -35,7 +36,7 @@ fn launch_with(
         .spawn()
         .unwrap();
     let input = child.stdin.take().unwrap();
-    let output = BufReader::new(child.stdout.take().unwrap());
+    let output = child.stdout.take().unwrap();
     let (jobs, receive) = mpsc::sync_channel(1);
     let control = Arc::new(ProcessControl::new(
         Box::new(crate::platform::DesktopProcess(Some(child))),
@@ -45,13 +46,69 @@ fn launch_with(
     control.set_generation(sessions.register(&control).unwrap());
     let actor = PipeActor {
         input: Box::new(input),
-        output: BufReader::new(Box::new(output)),
+        output: Box::new(output),
         callbacks,
         spool: Some(tempfile::tempdir().unwrap()),
     };
     let running = Arc::clone(&control);
     std::thread::spawn(move || actor.run(receive, running));
     Arc::new(Client { control, jobs })
+}
+
+#[test]
+fn private_response_does_not_read_ahead_into_another_plaintext_frame() {
+    struct ObservedReader {
+        bytes: std::io::Cursor<Vec<u8>>,
+        reads: Arc<Mutex<Vec<usize>>>,
+    }
+    impl Read for ObservedReader {
+        fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
+            self.reads.lock().unwrap().push(bytes.len());
+            self.bytes.read(bytes)
+        }
+    }
+    let mut bytes = Vec::new();
+    write_frame(
+        &mut bytes,
+        &WorkerMessage::Response(Response {
+            result: Ok(Value::String("PUBLIC first value".into())),
+        }),
+    )
+    .unwrap();
+    let first_payload = bytes.len() - 4;
+    write_frame(
+        &mut bytes,
+        &WorkerMessage::Response(Response {
+            result: Ok(Value::String("PUBLIC next value".into())),
+        }),
+    )
+    .unwrap();
+    let reads = Arc::new(Mutex::new(Vec::new()));
+    let mut actor = PipeActor {
+        input: Box::new(std::io::sink()),
+        output: Box::new(ObservedReader {
+            bytes: std::io::Cursor::new(bytes),
+            reads: Arc::clone(&reads),
+        }),
+        callbacks: Box::new(NoIo),
+        spool: None,
+    };
+    let sessions = SessionController::new(SessionPolicy::default());
+    let (jobs, _) = mpsc::sync_channel(1);
+    let control = ProcessControl::new(
+        Box::new(crate::platform::DesktopProcess(None)),
+        jobs,
+        sessions.activity(),
+    );
+    assert_eq!(
+        actor.response(&control, false).unwrap(),
+        Value::String("PUBLIC first value".into())
+    );
+    assert_eq!(*reads.lock().unwrap(), vec![4, first_payload]);
+    assert_eq!(
+        actor.response(&control, false).unwrap(),
+        Value::String("PUBLIC next value".into())
+    );
 }
 
 #[test]

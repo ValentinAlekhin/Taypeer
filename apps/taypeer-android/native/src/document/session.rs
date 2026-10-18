@@ -6,6 +6,10 @@ use std::{
 };
 use taypeer_core::{DraftId, EntryId, FieldUpdate, GroupId, OperationId, RevisionId};
 use taypeer_runtime::{Command, Worker};
+use zeroize::Zeroizing;
+
+#[cfg(test)]
+mod tests;
 
 /// Private framed stream owned by an isolated Service, never a public document API.
 #[uniffi::export(callback_interface)]
@@ -56,10 +60,11 @@ impl Read for Reader {
             return Ok(0);
         }
         let count = bytes.len().min(crate::descriptors::TRANSFER_CHUNK);
-        let received = self
-            .0
-            .read(count as u32)
-            .map_err(|_| std::io::ErrorKind::Other)?;
+        let received = Zeroizing::new(
+            self.0
+                .read(count as u32)
+                .map_err(|_| std::io::ErrorKind::Other)?,
+        );
         if received.len() > count {
             return Err(std::io::ErrorKind::InvalidData.into());
         }

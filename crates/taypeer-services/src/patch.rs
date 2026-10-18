@@ -7,7 +7,7 @@ use zeroize::Zeroize;
 pub use taypeer_core::FieldUpdate;
 
 /// Addressed changes to the active draft; omitted fields are never overwritten.
-#[derive(Default, Debug, Serialize, Deserialize)]
+#[derive(Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct EntryPatch {
     /// Required title; clearing is rejected.
@@ -26,6 +26,12 @@ pub struct EntryPatch {
     pub expires_at: FieldUpdate<i64>,
     /// Attribute collection, preserving existing identities.
     pub attributes: FieldUpdate<Vec<EditableAttribute>>,
+}
+
+impl std::fmt::Debug for EntryPatch {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("EntryPatch { fields: [REDACTED] }")
+    }
 }
 
 impl EntryPatch {
@@ -123,6 +129,29 @@ impl DatabaseService {
 mod tests {
     use super::*;
     use crate::{DEMO_PASSWORD, EditableEntry};
+
+    #[test]
+    fn debug_redacts_secret_and_ordinary_patch_input() {
+        let marker = "PUBLIC_UNIQUE_PATCH_INPUT";
+        let patch = EntryPatch {
+            title: FieldUpdate::Set(marker.into()),
+            username: FieldUpdate::Set(marker.into()),
+            password: FieldUpdate::Set(marker.into()),
+            url: FieldUpdate::Set(marker.into()),
+            notes: FieldUpdate::Set(marker.into()),
+            tags: FieldUpdate::Set(vec![marker.into()]),
+            attributes: FieldUpdate::Set(vec![EditableAttribute {
+                id: None,
+                name: marker.into(),
+                value: marker.into(),
+                protected: true,
+            }]),
+            ..Default::default()
+        };
+        for debug in [format!("{patch:?}"), format!("{:#?}", Some(&patch))] {
+            assert!(!debug.contains(marker), "patch input escaped through Debug");
+        }
+    }
 
     #[test]
     fn patch_preserves_omissions_and_distinguishes_empty_from_clear() {

@@ -1,5 +1,5 @@
 use crate::{Error, KdfMeasurement, KdfParameters, MAX_FILE_SIZE};
-use argon2::{Algorithm, Argon2, Params, Version};
+use argon2::{Algorithm, Argon2, Block, Params, Version};
 use chacha20poly1305::{
     XChaCha20Poly1305, XNonce,
     aead::{Aead, KeyInit, Payload},
@@ -77,9 +77,13 @@ fn derive_measured(
         .map_err(|_| Error::InvalidFile)?;
     let mut key = Zeroizing::new([0; 32]);
     let start = Instant::now();
+    // Argon2's allocating API does not erase its password-derived workspace.
+    let mut memory =
+        Zeroizing::new(vec![Block::default(); params.block_count()].into_boxed_slice());
     Argon2::new(Algorithm::Argon2id, Version::V0x13, params)
-        .hash_password_into(password, salt, key.as_mut())
+        .hash_password_into_with_memory(password, salt, key.as_mut(), memory.as_mut())
         .map_err(|_| Error::InvalidFile)?;
+    drop(memory);
     let elapsed_ms = u64::try_from(start.elapsed().as_millis()).map_err(|_| Error::TooLarge)?;
     Ok((
         ReadKey(key),
@@ -378,4 +382,27 @@ pub(super) fn staging() -> Result<(Vec<u8>, ReadKey), Error> {
     header[..8].copy_from_slice(b"TAYSTAGE");
     header[8..104].copy_from_slice(&random::<96>()?);
     Ok((header, ReadKey(Zeroizing::new(random()?))))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn password_derivation_matches_the_public_argon2id_reference_vector() {
+        // Public PHC reference vector: v0x13, m=65536, t=4, p=1, output=32 bytes.
+        // https://github.com/P-H-C/phc-winner-argon2/blob/20190702/src/test.c#L236-L239
+        let (key, measurement) = derive_measured(b"password", b"somesalt", 4).unwrap();
+        assert_eq!(
+            key.secret_bytes(),
+            &[
+                0x90, 0x25, 0xd4, 0x8e, 0x68, 0xef, 0x73, 0x95, 0xcc, 0xa9, 0x07, 0x9d, 0xa4, 0xc4,
+                0xec, 0x3a, 0xff, 0xb3, 0xc8, 0x91, 0x1f, 0xe4, 0xf8, 0x6d, 0x1a, 0x25, 0x20, 0x85,
+                0x6f, 0x63, 0x17, 0x2c,
+            ]
+        );
+        assert_eq!(measurement.parameters.memory_kib, 65_536);
+        assert_eq!(measurement.parameters.iterations, 4);
+        assert_eq!(measurement.parameters.parallelism, 1);
+    }
 }

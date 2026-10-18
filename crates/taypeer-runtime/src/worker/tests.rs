@@ -200,7 +200,11 @@ fn open_access(
     };
     let actor = PipeActor {
         input: Box::new(input),
-        output,
+        // The child waits for boot, so the marker reader holds no framed payload.
+        output: {
+            assert!(output.buffer().is_empty());
+            output.into_inner()
+        },
         callbacks: Box::new(NoIo),
         spool: Some(spool),
     };

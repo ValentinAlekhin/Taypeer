@@ -44,8 +44,9 @@ fractional_index = { version = "=2.0.2", default-features = false }
 sha2 = "=0.10.9"
 taypeer-runtime = { path = "crates/taypeer-runtime" }
 taypeer-storage = { path = "crates/taypeer-storage" }
-argon2 = "=0.5.3"
+argon2 = { version = "=0.5.3", features = ["zeroize"] }
 chacha20poly1305 = "=0.10.1"
+poly1305 = { version = "=0.8.0", features = ["zeroize"] }
 rand_core = { version = "=0.6.4", features = ["getrandom"] }
 zeroize = { version = "=1.9.0", features = ["serde"] }
 tempfile = "=3.27.0"

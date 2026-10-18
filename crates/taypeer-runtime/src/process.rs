@@ -10,7 +10,7 @@ use crate::{
 };
 use serde_json::Value;
 use std::{
-    io::{BufReader, Write},
+    io::{Read, Write},
     sync::{Arc, mpsc},
 };
 use zeroize::Zeroizing;
@@ -77,7 +77,7 @@ impl Client {
         control.set_generation(sessions.register(&control)?);
         let actor = PipeActor {
             input: connection.input,
-            output: BufReader::new(connection.output),
+            output: connection.output,
             callbacks,
             spool,
         };
@@ -130,7 +130,8 @@ impl Client {
 }
 pub(crate) struct PipeActor {
     pub input: Box<dyn Write + Send>,
-    pub output: BufReader<Box<dyn std::io::Read + Send>>,
+    // Framing reads directly into zeroizing buffers; read-ahead retains plaintext copies.
+    pub output: Box<dyn Read + Send>,
     pub callbacks: Box<dyn CallbackHandler>,
     pub spool: Option<tempfile::TempDir>,
 }
