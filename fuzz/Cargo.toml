@@ -55,3 +55,8 @@ missing_docs = "warn"
 [lints.clippy]
 dbg_macro = "deny"
 todo = "deny"
+
+# This isolated workspace does not inherit the root development profile.
+[profile.dev]
+debug = 0
+incremental = false

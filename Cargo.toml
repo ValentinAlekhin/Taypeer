@@ -82,3 +82,5 @@ codegen-units = 1
 
 [profile.dev]
 debug = 0
+# Repeated agent builds otherwise retain large per-feature compiler caches.
+incremental = false

@@ -13,6 +13,7 @@ if ! command -v pnpm >/dev/null 2>&1 || [ ! -x node_modules/.bin/likec4 ]; then
     exit 1
 fi
 pnpm arch:check
+python3 -m unittest discover -s scripts -p 'test_build_cache.py'
 
 cargo fmt --all -- --check
 cargo check-all
@@ -29,5 +30,6 @@ fi
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked
 cargo build --workspace --release --locked
 cargo run --locked --quiet -p taypeer --features ui-test-support -- --smoke-test
+python3 scripts/build-cache.py
 
 echo "Native platform checks remain separate from the common project check."
