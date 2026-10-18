@@ -26,7 +26,7 @@ impl InvitationSecret {
     }
     /// Non-secret lookup value used by the durable invitation journal.
     pub fn commitment(&self) -> Digest {
-        let mut bytes = b"taypeer/invitation-secret/1".to_vec();
+        let mut bytes = Zeroizing::new(b"taypeer/invitation-secret/1".to_vec());
         bytes.extend(self.0.as_ref());
         Digest::of(&bytes)
     }

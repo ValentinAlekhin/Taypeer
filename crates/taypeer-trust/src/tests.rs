@@ -23,6 +23,15 @@ fn genesis(author: &AuthorKey, identity: Identity) -> ControlChain {
 }
 
 #[test]
+fn public_invitation_commitment_retains_its_fixed_encoding() {
+    let secret = InvitationSecret::from_bytes(std::array::from_fn(|index| index as u8));
+    assert_eq!(
+        secret.commitment().to_string(),
+        "1db65c723a7916158ccaf92f601d3887de72b866a44303474fec64b8bee671da"
+    );
+}
+
+#[test]
 fn admission_revocation_and_readmission_do_not_erase_an_authority_gap() {
     let (a, _, aid) = profile(1);
     let (b, _, bid) = profile(3);
