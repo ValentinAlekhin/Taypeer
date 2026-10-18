@@ -2,7 +2,7 @@
 use super::*;
 use std::{
     io::{BufRead, BufReader, Write},
-    net::TcpListener,
+    net::{TcpListener, TcpStream},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -28,40 +28,22 @@ impl Server {
         let request_log = requests.clone();
         let stopped = stop.clone();
         let thread = std::thread::spawn(move || {
-            while !stopped.load(Ordering::Relaxed) {
-                match listener.accept() {
-                    Ok((mut socket, _)) => {
-                        socket
-                            .set_read_timeout(Some(Duration::from_secs(30)))
-                            .unwrap();
-                        let mut bytes = Vec::new();
-                        {
-                            let mut input = BufReader::new(&mut socket);
-                            while bytes.len() < 8192 && !bytes.ends_with(b"\r\n\r\n") {
-                                if input.read_until(b'\n', &mut bytes).unwrap_or(0) == 0 {
-                                    break;
-                                }
-                            }
+            std::thread::scope(|connections| {
+                while !stopped.load(Ordering::Relaxed) {
+                    match listener.accept() {
+                        Ok((socket, _)) => {
+                            // An idle/preconnected socket must not prevent the fixture
+                            // from accepting the next actual HTTP request.
+                            let requests = &request_log;
+                            connections.spawn(move || serve(socket, response, requests));
                         }
-                        // A cancelled/preconnected socket is not an HTTP request.
-                        // Keep the fixture within the loader's 30-second deadline
-                        // even when other tests perform concurrent password KDFs.
-                        if !bytes.ends_with(b"\r\n\r\n") {
-                            continue;
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            std::thread::sleep(Duration::from_millis(5))
                         }
-                        let request = String::from_utf8_lossy(&bytes).into_owned();
-                        let response = response(&request);
-                        // Receiving the response must imply that its complete
-                        // HTTP request is already observable by the assertions.
-                        request_log.lock().unwrap().push(request);
-                        let _ = socket.write_all(&response);
+                        Err(_) => break,
                     }
-                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                        std::thread::sleep(Duration::from_millis(5))
-                    }
-                    Err(_) => break,
                 }
-            }
+            })
         });
         Self {
             url,
@@ -69,6 +51,42 @@ impl Server {
             stop,
             thread: Some(thread),
         }
+    }
+}
+fn serve(mut socket: TcpStream, response: fn(&str) -> Vec<u8>, requests: &Mutex<Vec<String>>) {
+    socket
+        .set_read_timeout(Some(Duration::from_secs(30)))
+        .unwrap();
+    socket
+        .set_write_timeout(Some(Duration::from_secs(30)))
+        .unwrap();
+    let mut bytes = Vec::new();
+    {
+        let mut input = BufReader::new(&mut socket);
+        while bytes.len() < 8192 && !bytes.ends_with(b"\r\n\r\n") {
+            if input.read_until(b'\n', &mut bytes).unwrap_or(0) == 0 {
+                break;
+            }
+        }
+    }
+    // A cancelled/preconnected socket is not an HTTP request.
+    if !bytes.ends_with(b"\r\n\r\n") {
+        return;
+    }
+    let request = String::from_utf8_lossy(&bytes).into_owned();
+    let response = response(&request);
+    // Receiving the response implies its complete request is already observable.
+    requests.lock().unwrap().push(request);
+    match socket.write_all(&response) {
+        Ok(()) => {}
+        // A bounded client can stop after headers or enough body bytes. Other
+        // fixture failures must still reach the scoped join and fail the test.
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::ConnectionReset
+            ) => {}
+        Err(error) => panic!("PUBLIC HTTP fixture response write failed: {error}"),
     }
 }
 impl Drop for Server {
@@ -83,6 +101,15 @@ fn response(body: &str) -> Vec<u8> {
         body.len()
     )
     .into_bytes()
+}
+
+#[test]
+fn idle_fixture_connection_does_not_block_an_actual_request() {
+    let server = Server::start(|_| response(SVG));
+    let idle = TcpStream::connect(server.url.strip_prefix("http://").unwrap()).unwrap();
+    assert_eq!(from_url(&server.url).unwrap().as_slice(), SVG.as_bytes());
+    drop(idle);
+    assert_eq!(server.requests.lock().unwrap().len(), 1);
 }
 
 #[test]
