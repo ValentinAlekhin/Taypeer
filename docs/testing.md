@@ -6,6 +6,38 @@ reviewed visual baseline описаны в [Android QA runbook](android-testing.
 [roadmap](roadmap.md). Результаты старых APK, dev-схем и удалённых клиентов
 не переносятся на новый исходный checkpoint автоматически.
 
+## Внутренний разбор безопасности и power-cut стенд — 2026-10-18
+
+[Отчёт независимых агентных ревью](security-review.md) фиксирует область,
+исправления Argon2 workspace, Poly1305 feature, приватного IPC, Android callback,
+Debug и внутренних каталогов профиля. Temporaries HChaCha остаются без гарантии
+wipe в закреплённой зависимости. Это не внешний криптографический аудит.
+
+Полный `sh scripts/check.sh` прошёл с обычным параллелизмом: все workspace-наборы,
+24 компонентных случая × 2 языка × 2 темы × 3 размера, 23 AppView-сценария,
+Rustdoc, release и smoke. Лог — `artifacts/check-security-review-20261018.log`.
+После финального уточнения границы профиля и включения Poly1305 wipe повторены
+workspace Clippy, fuzz Clippy/smoke, runtime/storage с all-features:
+198 passed / 5 явных subprocess helpers ignored; MSVC cross-Clippy storage всех
+targets, Rustfmt и проверка архитектуры/28 Markdown-документов также прошли.
+
+Целевые KAT, отсутствие IPC read-ahead, Android chunk/error-контракт и redacted
+Debug прошли. Драйвер `power_cut` собран; на обычной файловой системе прошли
+create/replace/reopen, отказ устаревшему oracle, oracle внутри тестового каталога
+и повреждённому архиву. Это self-check helper, не потеря питания.
+`sh -n scripts/check-power-cut.sh` прошёл; на macOS runner возвращает ожидаемый
+код 2 до подготовки образов. Защита очистки кэшей учитывает этот QA runner;
+все 9 stdlib-тестов прошли.
+
+Фактический [Linux/ext4 ACK replay](power-cut.md) не выполнен. Созданная
+OrbStack Ubuntu 24.04 ARM64 использует ядро
+`7.2.9-orbstack-00391-g2b298d05fbd4`: `modprobe dm_log_writes` сообщил об отсутствии
+модуля, `/dev/loop-control` отсутствует, доступ к device-mapper запрещён.
+Это не PASS и не доказательство аппаратной надёжности. Нужна полноценная
+Linux VM с указанными возможностями; provisioning корня профиля, промежуточные
+cuts, credentials/drafts и целевые физические устройства остаются открытыми.
+Android APK/AVD-матрица и аппаратная память после этих исправлений не запускались.
+
 ## Переносимые credentials и схема 1 — 2026-10-18
 
 Новый профиль macOS/Linux/Android использует общий password-backed codec из
