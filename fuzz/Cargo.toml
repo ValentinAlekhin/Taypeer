@@ -1,6 +1,9 @@
 [workspace]
 resolver = "3"
 
+[patch.crates-io]
+chacha20 = { path = "../vendor/chacha20" }
+
 [package]
 name = "taypeer-parser-fuzz"
 version = "0.0.0"

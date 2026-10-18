@@ -1,7 +1,12 @@
 [workspace]
 members = ["apps/taypeer-android/native", "crates/taypeer-core", "crates/taypeer-document", "crates/taypeer-services", "crates/taypeer-storage", "crates/taypeer-runtime", "crates/taypeer-trust", "crates/taypeer-sync", "apps/taypeer", "apps/taypeer/crates/taypeer-database-ui", "apps/taypeer/crates/taypeer-sync-ui", "apps/taypeer/crates/taypeer-settings-ui", "apps/taypeer/crates/taypeer-runtime-client", "apps/taypeer/crates/taypeer-desktop-platform", "apps/taypeer/crates/taypeer-ui"]
 default-members = ["apps/taypeer"]
+exclude = ["vendor/chacha20"]
 resolver = "3"
+
+[patch.crates-io]
+# Keep the compatible RustCrypto API while erasing HChaCha temporaries.
+chacha20 = { path = "vendor/chacha20" }
 
 [workspace.package]
 version = "0.1.0"

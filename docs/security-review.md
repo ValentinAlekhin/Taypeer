@@ -18,6 +18,7 @@ IPC, отзыв сессий, Android-потоки и диагностика. Э
 | --- | --- | --- |
 | Medium: Argon2 workspace без wipe | `hash_password_into` освобождал 64 МиБ производного от пароля состояния. В [crypto.rs](../crates/taypeer-storage/src/crypto.rs) теперь явный `Zeroizing<Box<[Block]>>` и `argon2/zeroize`; очистка входит в измерение KDF | Фиксированный Argon2id known-answer через настоящий `derive_measured`; KEK и формат сохраняются |
 | Medium: MAC state без wipe | У уже используемого `poly1305 0.8.0` не был включён `zeroize`; Drop состояния gated этой feature. [Storage dependency](../crates/taypeer-storage/Cargo.toml) теперь явно включает её через workspace, без новых пакетов/версий | Оба lock/feature graph обновлены; формат не меняется, AEAD и корпус проверяются прежними регрессиями |
+| Medium: HChaCha temporaries без wipe | В `chacha20 0.9.1` feature `zeroize` не охватывала временный подключ и рабочее состояние HChaCha. [Локальный патч RustCrypto](../vendor/README.md) добавляет им владельцев `Zeroizing`, сохраняя алгоритм и API | Upstream HChaCha/ChaCha/XChaCha vectors с feature on/off, storage-регрессии и frozen stable1-корпус |
 | Medium: read-ahead приватного IPC | Обычный `BufReader` оставлял дополнительную копию plaintext JSON в heap host. [PipeActor](../crates/taypeer-runtime/src/process.rs) читает кадры сразу в zeroizing-буферы | Actor-регрессия с двумя кадрами проверяет точные чтения header/payload без захвата следующего кадра |
 | Medium: Android callback buffer | Rust `Vec` после чтения приватного потока освобождался без wipe. [Reader](../apps/taypeer-android/native/src/document/session.rs) сразу владеет им через `Zeroizing` | Границы 64 КиБ, частичная порция, EOF, ошибка и oversized-отказ без копирования |
 | Low: секреты в Debug | `EntryPatch` печатал введённые значения, включая пароль. [Debug](../crates/taypeer-services/src/patch.rs) теперь целиком redacted; фактический production logging такого объекта не найден | Обычный и вложенный pretty Debug не содержат PUBLIC-маркер ввода |
@@ -40,17 +41,23 @@ symlink выполняется до создания каталогов; она 
 принятие неподписанного control, пропуск финального AEAD-кадра и публикация
 частично расшифрованного файла в просмотренных путях не подтверждены.
 
-## Что ещё требуется
+## Локальный патч HChaCha
 
-Подтверждён незакрытый source-level остаток в `chacha20 0.9.1`:
-`XChaChaCore::new` хранит временный `subkey`, а `hchacha` — временный
-`[u32; 16] state` без явного затирания. Feature `zeroize` очищает основной
-ChaCha core/буферы, но не эти temporaries. Исходник закреплённой реализации —
-[RustCrypto HChaCha](https://github.com/RustCrypto/stream-ciphers/blob/chacha20-v0.9.1/chacha20/src/xchacha.rs).
-Внешняя обёртка нашего AEAD этого не исправляет. Нужен проверенный upstream patch
-или совместимое обновление зависимости и повтор регрессий; собственную
-криптографическую реализацию не добавляли. Это отсутствие гарантии wipe по коду,
-не доказательство наличия конкретной spill/register-копии или эксплуатации dump.
+После исходного разбора `chacha20 0.9.1` подключён из [vendor](../vendor/README.md)
+через `[patch.crates-io]` в основном и fuzz workspace; Nix включает его исходники.
+Опубликованный архив проверен по исходному registry checksum. Независимый агент
+сверил патч с архивом: изменены только владельцы временных буферов и feature edge
+`generic-array/zeroize`; арифметика, backend, API и эталонные векторы сохранены.
+
+С feature `zeroize` временный `subkey` в `XChaChaCore::new` и `[u32; 16] state`
+в `hchacha` теперь очищаются через RAII при обычном выходе и unwind.
+Feature-off сохраняет прежнее поведение; новых allocations или зависимости
+от `std` нет. Возвращаемый публичным `hchacha` ключ принадлежит вызывающему коду.
+Это закрывает два явных source-level остатка, но не доказывает отсутствие
+компиляторных копий, spill/register-копий или очистку после abort. Provenance,
+точный scope и условие удаления локального патча — в [vendor README](../vendor/README.md).
+
+## Что ещё требуется
 
 При проверке полного rollback учитывать откат всего локального профиля:
 сохранённая рядом контрольная отметка сама по себе не защищает от её

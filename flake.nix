@@ -19,7 +19,7 @@
               name = builtins.baseNameOf path;
               relative = pkgs.lib.removePrefix (toString ./. + "/") path;
               top = builtins.head (pkgs.lib.splitString "/" relative);
-              buildSource = builtins.elem top [ "Cargo.toml" "Cargo.lock" "rust-toolchain.toml" ".cargo" "apps" "crates" "resources" "wireframes" ];
+              buildSource = builtins.elem top [ "Cargo.toml" "Cargo.lock" "rust-toolchain.toml" ".cargo" "apps" "crates" "vendor" "resources" "wireframes" ];
             in (path == toString ./. || buildSource)
               && !(builtins.elem name [ ".git" ".cache" ".agents" ".codex" "target" "ref" "node_modules" "artifacts" "result" ]);
         };

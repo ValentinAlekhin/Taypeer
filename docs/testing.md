@@ -10,8 +10,9 @@ reviewed visual baseline описаны в [Android QA runbook](android-testing.
 
 [Отчёт независимых агентных ревью](security-review.md) фиксирует область,
 исправления Argon2 workspace, Poly1305 feature, приватного IPC, Android callback,
-Debug и внутренних каталогов профиля. Temporaries HChaCha остаются без гарантии
-wipe в закреплённой зависимости. Область и ограничения разбора перечислены в отчёте.
+Debug и внутренних каталогов профиля. После исходного разбора добавлен
+[локальный патч HChaCha](../vendor/README.md); его отдельные проверки перечислены
+ниже. Область и ограничения разбора перечислены в отчёте.
 
 Полный `sh scripts/check.sh` прошёл с обычным параллелизмом: все workspace-наборы,
 24 компонентных случая × 2 языка × 2 темы × 3 размера, 23 AppView-сценария,
@@ -37,6 +38,35 @@ OrbStack Ubuntu 24.04 ARM64 использует ядро
 Linux VM с указанными возможностями; provisioning корня профиля, промежуточные
 cuts, credentials/drafts и целевые физические устройства остаются открытыми.
 Android APK/AVD-матрица и аппаратная память после этих исправлений не запускались.
+
+## Патч временных буферов HChaCha — 2026-10-18
+
+Поверх опубликованного `chacha20 0.9.1` применён [локальный патч](../vendor/README.md)
+для RAII-очистки `XChaChaCore::new::subkey` и рабочего состояния `hchacha`.
+SHA-256 архива сверён с прежним registry lock; сравнение всех опубликованных
+файлов подтвердило изменения только `src/xchacha.rs` и двух manifests.
+Другой агент независимо проверил владение, feature gating и сохранение API/арифметики.
+
+Целевые проверки выполнялись последовательно, с обычным параллелизмом внутри Cargo,
+общим `target/`, без incremental/debug-info:
+
+- Upstream unit/integration tests: 10 passed без `zeroize` и 10 passed с ней.
+  Проверены HChaCha KAT, ChaCha/XChaCha vectors и seek; `std` не включалась.
+  Общие зависимости standalone-тестов закреплены на версиях production lock.
+- `cargo test --locked -p taypeer-storage --lib`: 44 passed.
+- `cargo test --locked -p taypeer-services --lib managed::tests::corpus`:
+  4 passed / 1 генератор ignored; frozen stable1 читается без регенерации.
+- Locked metadata основного и fuzz workspace подтверждает path-пакет,
+  `chacha20/zeroize`, `generic-array/zeroize` и отсутствие vendor crate
+  среди workspace members. Версии production-зависимостей не менялись.
+- Workspace Rustfmt и отдельная проверка изменённого upstream-файла со
+  style edition 2021 прошли. Локальные ссылки в изменённых Markdown существуют.
+
+По указанию пользователя `scripts/check.sh`, полные workspace/UI/Android-наборы
+не запускались; Nix-сборка не выполнялась. Изменён её source allowlist для
+включения патча. Эти проверки подтверждают совместимость; source-level очистка
+следует из владельцев `Zeroizing` и их Drop, а не из чтения освобождённой памяти.
+Платформенные копии, swap/dumps и память после abort не объявлены проверенными.
 
 ## Переносимые credentials и схема 1 — 2026-10-18
 
