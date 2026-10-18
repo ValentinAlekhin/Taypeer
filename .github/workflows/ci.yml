@@ -43,7 +43,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: taypeer-ui-diagnostics
+          name: taypeer-ui-diagnostics-${{ matrix.os }}
           path: artifacts/ui/
           if-no-files-found: ignore
           retention-days: 7
@@ -75,13 +75,22 @@ jobs:
     name: Linux Nix package
     runs-on: ubuntu-24.04
     timeout-minutes: 120
+    env:
+      NIX_REMOTE: daemon
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Install Nix
-        run: sudo apt-get update && sudo apt-get install -y nix-bin && sudo systemctl start nix-daemon
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nix-bin
+          sudo usermod -aG nix-users "$USER"
+          sudo systemctl start nix-daemon
       - name: Build production package
-        run: nix --extra-experimental-features 'nix-command flakes' build .#taypeer --cores 2
+        # The runner process predates usermod, so activate its new group explicitly.
+        run: |
+          sg nix-users -c 'nix --extra-experimental-features "nix-command flakes" build .#taypeer --cores 2'
       - name: Check packaged private worker and fixture exclusion
         run: sh scripts/check-linux-package.sh result
       - name: Verify encrypted sessions with packaged worker
-        run: nix --extra-experimental-features 'nix-command flakes' develop -c env TAYPEER_PUBLIC_PORTABLE_WORKER="$PWD/result/bin/taypeer" cargo test -p taypeer-runtime host::portable_tests --locked -- --test-threads=1
+        run: |
+          sg nix-users -c 'nix --extra-experimental-features "nix-command flakes" develop -c env TAYPEER_PUBLIC_PORTABLE_WORKER="$PWD/result/bin/taypeer" cargo test -p taypeer-runtime host::portable_tests --locked -- --test-threads=1'

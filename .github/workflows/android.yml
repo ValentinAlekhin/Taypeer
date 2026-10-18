@@ -30,7 +30,8 @@ jobs:
           rustup show
           rustup target add aarch64-linux-android
       - name: Install pinned Android build tools
-        run: sdkmanager "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018"
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018"
       - name: Install image comparison tools
         run: |
           python3 -m venv .tools/android-qa-venv
