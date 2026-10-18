@@ -11,7 +11,7 @@ reviewed visual baseline описаны в [Android QA runbook](android-testing.
 [Отчёт независимых агентных ревью](security-review.md) фиксирует область,
 исправления Argon2 workspace, Poly1305 feature, приватного IPC, Android callback,
 Debug и внутренних каталогов профиля. Temporaries HChaCha остаются без гарантии
-wipe в закреплённой зависимости. Это не внешний криптографический аудит.
+wipe в закреплённой зависимости. Область и ограничения разбора перечислены в отчёте.
 
 Полный `sh scripts/check.sh` прошёл с обычным параллелизмом: все workspace-наборы,
 24 компонентных случая × 2 языка × 2 темы × 3 размера, 23 AppView-сценария,
