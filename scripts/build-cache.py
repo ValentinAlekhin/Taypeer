@@ -34,7 +34,7 @@ REPORT_PATHS = (
     "artifacts",
 )
 BUILD_COMMAND = re.compile(
-    r"(?:^|[/\s])(?:cargo|rustc|rustdoc|qa\.py|check\.sh|build(?:-macos|-native)?\.sh|check-linux-package\.sh|"
+    r"(?:^|[/\s])(?:cargo|rustc|rustdoc|qa\.py|check\.sh|build(?:-macos|-native)?\.sh|check-(?:linux-package|power-cut)\.sh|"
     r"gradlew?)(?:\s|$)|org\.gradle\.(?:wrapper\.GradleWrapperMain|launcher\.GradleMain)"
 )
 

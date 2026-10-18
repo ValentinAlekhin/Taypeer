@@ -76,8 +76,9 @@ class BuildCacheTests(unittest.TestCase):
 19 /usr/bin/java gradle assembleDebug
 20 /Volumes/Build Tools/bin/rustc rustc --crate-name example
 21 /usr/bin/rustdoc
+22 /bin/sh sh scripts/check-power-cut.sh /tmp/helper /tmp/log-writes
 """
-        self.assertEqual(cache.active_builds(processes), ["10", "11", "12", "14", "16", "17", "18", "19", "20", "21"])
+        self.assertEqual(cache.active_builds(processes), ["10", "11", "12", "14", "16", "17", "18", "19", "20", "21", "22"])
 
     def test_size_does_not_follow_links_or_double_count_hard_links(self):
         path = self.directory("cache")
