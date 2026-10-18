@@ -102,8 +102,20 @@ def resolve_designs(fig, cases):
           const b = child.absoluteBoundingBox;
           const stroke = Math.max(0,...(child.strokes??[]).filter(s=>s.visible!==false).map(s=>s.align==='OUTSIDE'?s.weight:s.align==='CENTER'?s.weight/2:0));
           if (b && stroke) {
-            bounds.left=Math.min(bounds.left,b.x-stroke); bounds.top=Math.min(bounds.top,b.y-stroke);
-            bounds.right=Math.max(bounds.right,b.x+b.width+stroke); bounds.bottom=Math.max(bounds.bottom,b.y+b.height+stroke);
+            let left=b.x-stroke,top=b.y-stroke,right=b.x+b.width+stroke,bottom=b.y+b.height+stroke;
+            // A frame clips descendant paint, while its own stroke remains outside.
+            if (child !== n) for (let parent=child.parent; parent; parent=parent.parent) {
+              if (parent.clipsContent) {
+                const clip=parent.absoluteBoundingBox;
+                left=Math.max(left,clip.x); top=Math.max(top,clip.y);
+                right=Math.min(right,clip.x+clip.width); bottom=Math.min(bottom,clip.y+clip.height);
+              }
+              if (parent.id===n.id) break;
+            }
+            if (right>left && bottom>top) {
+              bounds.left=Math.min(bounds.left,left); bounds.top=Math.min(bounds.top,top);
+              bounds.right=Math.max(bounds.right,right); bounds.bottom=Math.max(bounds.bottom,bottom);
+            }
           }
         }
         const paint_outsets = {left:origin.x-bounds.left,top:origin.y-bounds.top,

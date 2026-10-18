@@ -60,7 +60,7 @@ box(p,'TitleBar',0,0,W,m?88:UI.title,'chrome');
 if(m){text(p,'9:41',16,8,100,11);text(p,'Wi-Fi · 100%',W-108,8,100,11,'muted');icon(p,'file-key-2',16,51);text(p,'Рабочая',44,49,W-144,14,'fg',500);ib(p,'chevron-down',W-94,36,true);ib(p,'settings',W-48,36,true);}
 else{['#EA6B66','#D6B86C','#80B981'].forEach((c,i)=>{const e=figma.createEllipse();p.appendChild(e);e.x=16+i*19;e.y=12;e.resize(11,11);fill(e,c);});icon(p,'file-key-2',W/2-74,9);text(p,isWelcome?'Taypeer':'Рабочая.taypeer',W/2-50,7,156,13,'fg',500);if(!isWelcome)ib(p,'chevron-down',W/2+110,1);ib(p,'settings',W-40,1);}
 rule(p,0,m?88:UI.title,W);
-if(!m){box(p,'StatusBar',0,H-28,W,28,'panel');rule(p,0,H-28,W);if(!isWelcome){icon(p,'database',12,H-22);text(p,'2,4 МиБ',36,H-22,140,11,'muted');text(p,'Синхронизировано',W-206,H-22,166,11,'muted').textAlignHorizontal='RIGHT';icon(p,'refresh-cw',W-28,H-22);}}
+if(!m){box(p,'StatusBar',0,H-28,W,28,'panel');rule(p,0,H-28,W);if(!isWelcome){icon(p,'database',12,H-22);text(p,'2,4 МБ',36,H-22,140,11,'muted');text(p,'Синхронизировано',W-206,H-22,166,11,'muted').textAlignHorizontal='RIGHT';icon(p,'refresh-cw',W-28,H-22);}}
 else{box(p,'Home indicator',W/2-48,H-10,96,3,'muted',2);}return p;}
 function sidebar(p,empty=false,active='Работа'){const n=box(p,'Sidebar / groups',0,UI.title+1,224,p.height-UI.title-29,'panel');ib(n,'folder-plus',180,6);ib(n,'ellipsis',140,6);rule(n,0,UI.toolbar,224).name='Toolbar boundary';if(empty){text(n,'Нет групп',16,67,180,13,'muted');button(n,'Добавить группу…',16,99,190);}else{[['Работа',0,'6'],['Сервисы',1,'2'],['Инфраструктура',1,'2'],['Личное',0,'3'],['Архив',0,'0']].forEach(([s,level,count],i)=>{const y=52+i*34;box(n,'Tree row / '+s,8,y,208,32,s===active?'selected':'',4);icon(n,level?'chevron-right':'chevron-down',16+level*16,y+8);icon(n,'folder',40+level*16,y+8);text(n,s,64+level*16,y+7,level?117:138,12,'fg',s===active?500:400);text(n,count,194,y+7,20,11,'muted');});}rule(n,0,n.height-136,224);[['trash-2','Корзина'],['monitor','Устройства'],['history','Черновики']].forEach(([key,s],i)=>{icon(n,key,16,n.height-117+i*36);text(n,s,44,n.height-119+i*36,164,13,'muted');});rule(p,224,UI.title+1,1,n.height);}
 const entries=[['Cloudflare','admin@studio.dev'],['Figma','valentin@studio.dev'],['GitHub','valentin'],['Linear','valentin'],['Notion','valentin@studio.dev'],['Vercel','valentin']];
@@ -72,7 +72,8 @@ function collectionPane(p,search=false,selected=true,empty=false,{font=16,side=2
  const searchWidth=w-16-12-64-scopeWidth;
  const f=inputFrame(n,'Search',8,6,searchWidth);icon(f,'search',10,8);text(f,search?'git':'Поиск',36,6,searchWidth-64,14,search?'fg':'muted');if(search)ib(f,'x',searchWidth-32,0).name='Icon button / Очистить поиск';
  const scope=button(n,search?'Все открытые':'Эта база',searchWidth+12,6,scopeWidth,'ghost');icon(scope,'chevron-down',scopeWidth-24,8);scope.name='Search scope / '+(search?'all-unlocked':'current');scope.children.find(n=>n.type==='TEXT').resize(scopeWidth-40,18);
- ib(n,'file-plus-2',w-76,6).name='Icon button / Создать запись';ib(n,'ellipsis',w-40,6).name='Icon button / Колонки';rule(n,0,UI.toolbar,w).name='Toolbar boundary';
+ const create=ib(n,'file-plus-2',w-76,6);create.name='Icon button / Создать запись'+(empty?' / недоступно':'');if(empty)create.opacity=0.35;
+ ib(n,'ellipsis',w-40,6).name='Icon button / Колонки';rule(n,0,UI.toolbar,w).name='Toolbar boundary';
  const viewport=box(n,'Entry table / scroll viewport',0,UI.toolbar,w,h-UI.toolbar-32,'panel');viewport.clipsContent=true;
  const columns=[['Название',200*fontScale],['Логин',180*fontScale],['База / группа',240*fontScale]];
  const contentWidth=Math.max(w,columns.reduce((sum,c)=>sum+c[1],0)+12*fontScale);
@@ -185,6 +186,14 @@ function attributesBody(p,top,edit=false){
  }else ib(n,'download',558,6).name='Icon button / Скачать вложение';
  rule(n,0,UI.row-1,w);
 }
+// Native Kit ColorPicker trigger: Medium color square, value label, external reset.
+function colorPickerTrigger(p,label,value,x,y){
+ const selected=value&&value!=='—',n=box(p,'ColorPicker / trigger / '+label,x,y,selected?164:60,32,'');
+ const swatch=box(n,'ColorPicker / current swatch',0,0,32,32,selected?value.slice(0,7):'bg',4,true);
+ if(selected){swatch.strokes=paint('muted');text(n,value,40,6,92,13);ib(n,'x',132,0).name='Icon button / Сбросить '+label;}
+ else text(n,'—',40,6,20,13);
+ return n;
+}
 function appearanceBody(p,top,edit=false){
  const w=614;
  [['Иконка','key-round'],['Цвет текста','—'],['Цвет фона','—']].forEach(([label,val],i)=>{
@@ -192,7 +201,7 @@ function appearanceBody(p,top,edit=false){
   text(n,label,24,12,144,13,'muted');
   if(edit){
    if(i===0){icon(n,'key-round',184,14);button(n,'Выбрать иконку',208,6,160);ib(n,'image',376,6).name='Icon button / Изображение из файла';ib(n,'link',416,6).name='Icon button / Изображение по URL';}
-   else{const f=inputFrame(n,'ColorPicker / '+label,184,6,160);text(f,val,12,6,112,13);icon(f,'chevron-down',132,8);ib(n,'x',352,6).name='Icon button / Сбросить '+label;}
+   else colorPickerTrigger(n,label,val,184,6);
   }else{
    if(i===0)icon(n,'key-round',184,14);else text(n,val,184,12,406,13);
   }
@@ -230,4 +239,134 @@ const overview=board('00 · Начать здесь','Taypeer / обзор',1120
 // Resting input geometry and paint are owned by inputFrame; no global overrides.
 buildDesktopV1();
 buildAndroidV1();
+consolidatePlatformPages();
 return {boards:boards.length,counts,icons:Object.keys(icons).length,nodes:figma.root.findAll(()=>true).length};
+
+function consolidatePlatformPages() {
+ const desktop=pages['01 · macOS'], android=pages['02 · Android'], components=pages['04 · Компоненты'];
+ const artboards=Object.values(pages).flatMap(p=>p.children.filter(n=>n.type==='FRAME'));
+ const byName=new Map(artboards.map(n=>[n.name,n]));
+ const groups=[
+  [desktop,'01 · Начало и базы данных',[
+   'macOS / welcome','Dialog / create','macOS / unlock','macOS / empty','States / session','Dialog / save-error']],
+  [desktop,'02 · Записи, поиск и группы',[
+   'macOS / main','macOS / no-selection','macOS / search','Menus / navigation','macOS / edit','macOS / new-entry',
+   'Dialog / group','Dialog / move-entry','Dialog / move-group','Dialog / unsaved','Menus / objects']],
+  [desktop,'03 · Поля и оформление',[
+   'Tabs / Дополнительно','Tabs / Вид','Tabs / Свойства','Dialog / attribute','Dialog / attachment-rename',
+   'Dialog / icon-picker','Dialog / color-picker','Dialog / image-url','Dialog / bulk-icons','States / entry']],
+  [desktop,'04 · Генератор паролей',[
+   'Dialog / generator','Dialog / passphrase','Dialog / generator-exclusions']],
+  [desktop,'05 · История, корзина и альтернативы',[
+   'Tabs / История','Tabs / saved-revision','macOS / history-compare','Dialog / restore-revision','Dialog / clear-history',
+   'macOS / trash','Dialog / purge-trash','Dialog / restore-destination','macOS / alternatives','States / alternatives']],
+  [desktop,'06 · Получение и доверенные устройства',[
+   'macOS / receive','Dialog / scan-qr','Dialog / invite','macOS / devices','Dialog / transfer-control',
+   'Dialog / accept-control','Dialog / recover-control','Dialog / revoke','States / exchange']],
+  [desktop,'07 · Настройки и защита',[
+   'macOS / settings','macOS / settings-database','macOS / settings-locked','Dialog / change-password',
+   'Dialog / protection','States / preferences','States / compatibility']],
+  [desktop,'08 · Черновики и отложенные правки',[
+   'macOS / drafts','macOS / pending','Dialog / extract-pending','Dialog / delete-pending']],
+  [desktop,'09 · Размеры и текст',[
+   'QA / minimum-1100-720','QA / font-16','QA / font-18']],
+  [desktop,'10 · Светлая тема',[
+   'QA / light-main','QA / light-edit','QA / light-settings','QA / light-unlock','QA / light-create']],
+  [desktop,'11 · Карта сценариев',['Flow / macOS-v1']],
+  [android,'01 · Начало и базы данных',[
+   'Android / welcome','Android form / create','Android / unlock','Android / empty','Android / duplicate-import','Android states / session']],
+  [android,'02 · Навигация и поиск',[
+   'Android / entries','Android / entries-alternatives','Android / empty-group','Android / drawer','Android / drawer-scrolled',
+   'Android / search-current','Android / search-all','Android / search-empty','Android / database-switcher','Android / sort','Android / search-scope']],
+  [android,'03 · Записи и группы',[
+   'Android / entry','Android / edit','Android / new-entry','Android form / group','Android form / destination',
+   'Android form / move','Android form / unsaved','Android / entry-menu','Android / group-menu']],
+  [android,'04 · Поля, атрибуты и вложения',[
+   'Android / advanced','Android / advanced-edit','Android / properties','Android form / attribute','Android form / attachment',
+   'Android form / full-value','Android / attachment-menu','Android / attribute-menu','Android / expiry','Android states / entry']],
+  [android,'05 · Оформление записи',[
+   'Android / appearance','Android / appearance-edit','Android form / image-url','Android form / bulk-icons',
+   'Android form / lucide-picker','Android form / color','Android / icon-picker']],
+  [android,'06 · Генератор паролей',[
+   'Android form / generator','Android form / passphrase','Android form / generator-exclusions']],
+  [android,'07 · История, корзина и альтернативы',[
+   'Android / history','Android / history-version','Android / history-compare','Android / trash','Android / alternatives',
+   'Android / restore-history','Android / purge','Android / clear-history']],
+  [android,'08 · Получение и доверенные устройства',[
+   'Android / receive','Android / receiving','Android form / invite','Android form / confirm-device','Android / devices',
+   'Android form / revoke','Android form / recover-control','Android form / transfer-control','Android form / accept-control',
+   'Android / device-menu','Android states / exchange']],
+  [android,'09 · Настройки и защита',[
+   'Android / settings','Android / settings-locked','Android / settings-database','Android form / protection','Android form / limits',
+   'Android form / change-password','Android form / database-info','Android form / relay','Android / theme','Android states / compatibility']],
+  [android,'10 · Черновики и отложенные правки',[
+   'Android / drafts','Android / pending','Android / pending-source','Android form / extract-pending','Android / delete-source']],
+  [android,'11 · Размеры и клавиатура',[
+   'Android QA / small-360-640','Android QA / large-430-932','Android QA / landscape-844-390','Android QA / small-drawer',
+   'Android QA / keyboard','Android QA / small-keyboard','Android QA / landscape-keyboard']],
+  [android,'12 · Доступность и длинные значения',[
+   'Android QA / text-200','Android QA / text-200-form','Android QA / text-200-keyboard','Android QA / text-200-drawer',
+   'Android QA / long-values','Android states / system']],
+  [android,'13 · Светлая тема',[
+   'Android QA / light-entries','Android QA / light-drawer','Android QA / light-edit','Android QA / light-unlock',
+   'Android QA / light-settings','Android QA / light-alternatives']],
+  [android,'14 · Карта сценариев',['Android flow / v1']],
+  [components,'01 · Desktop · компоненты',['System / components']],
+  [components,'02 · Android · компоненты',['Android states / components']],
+ ].map(([target,title,names])=>({target,title,nodes:names.map(name=>{
+  const node=byName.get(name);if(!node)throw new Error('Missing navigation artboard: '+name);return node;
+ })}));
+ const assigned=groups.flatMap(g=>g.nodes);
+ if(new Set(assigned).size!==assigned.length||assigned.length!==artboards.length-1||artboards.some(n=>n.name!=='Taypeer / обзор'&&!assigned.includes(n)))throw new Error('Navigation must cover every product artboard exactly once');
+ desktop.name='01 · Desktop';
+ components.name='03 · Компоненты';
+ const nextY=new Map();
+ for(const {target,title,nodes} of groups) {
+  let y=nextY.get(target)||0;
+  const rowWidth=target===android?1800:target===desktop?2720:Math.max(...nodes.map(n=>n.width));
+  const heading=text(target,title+' ('+nodes.length+')',0,y,rowWidth,24,'fg',500,36);
+  heading.name='Раздел / '+title;
+  y+=64;
+  let x=0,rowHeight=0;
+  for(const n of nodes) {
+   if(x&&x+n.width>rowWidth){y+=rowHeight+80;x=0;rowHeight=0;}
+   target.insertChild(target.children.length,n);n.x=x;n.y=y;
+   x+=n.width+80;rowHeight=Math.max(rowHeight,n.height);
+  }
+  nextY.set(target,y+rowHeight+160);
+ }
+ const retained=[pages['00 · Начать здесь'],desktop,android,components];
+ for(const page of Object.values(pages))if(!retained.includes(page))page.remove();
+ for(const key of Object.keys(counts))delete counts[key];
+ boards.length=0;
+ for(const page of retained) {
+  const frames=page.children.filter(n=>n.type==='FRAME');
+  counts[page.name]=frames.length;
+  boards.push(...frames.map(n=>({name:n.name,id:n.id,page:page.name})));
+ }
+
+ const overview=retained[0].children.find(n=>n.name==='Taypeer / обзор');
+ for(const node of [...overview.children])node.remove();
+ text(overview,'Taypeer',32,32,1256,32,'fg',500,46);
+ text(overview,'Макеты первого релиза · Desktop и Android',32,104,1256,22,'fg',500,34);
+ const rows=[
+  [desktop.name,`${counts[desktop.name]} артбордов · macOS и Linux`,
+   'Рабочие экраны, формы, вкладки записи, меню, состояния, темы, размеры и сценарии'],
+  [android.name,`${counts[android.name]} артбордов · телефоны`,
+   'Все экраны и формы Android, меню, состояния, темы, размеры, IME и сценарии'],
+  [components.name,'Общие и платформенные компоненты',
+   'GPUI Kit, поля и состояния контролов · Lucide 16 для Desktop и Lucide 20 для Android'],
+ ];
+ rows.forEach(([title,summary,detail],i)=>{
+  const y=182+i*168;
+  rule(overview,32,y,1256);
+  text(overview,title,32,y+20,1256,20,'fg',500,30);
+  text(overview,summary,32,y+62,1256,16,'fg',400,26);
+  text(overview,detail,32,y+100,1256,14,'muted',400,28);
+ });
+ rule(overview,32,710,1256);
+ text(overview,'Основной путь',32,740,1256,16,'fg',500,26);
+ text(overview,'Открыть базу → группа → запись → изменить → сохранить',32,780,1256,16,'muted',400,26);
+ text(overview,'Редактируемый FIG · русский язык · искусственные данные\nТребования и поведение: spec.md · COVERAGE.md · README.md. Статические макеты не подтверждают приёмку runtime.',32,852,1256,13,'muted',400,64);
+ figma.currentPage=desktop;
+}

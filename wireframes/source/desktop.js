@@ -134,56 +134,151 @@ function buildDesktopV1() {
     notice(p, 'received while locked', 'Изменения получены. Разблокируйте БД,\nчтобы применить их.', 408, 470, 536);
     status(p, 'Получено · требуется вход'); return p;
   });
-  replace('macOS / settings', () => {
-    const p = utility('settings', 'Настройки', {full:true});
-    text(p, 'Устройство', 24, 100, 128, 13, 'fg', 500); text(p, 'База данных', 176, 100, 144, 13, 'muted');
-    rule(p, 0, 127, 1320); box(p, 'Selected tab / Устройство', 0, 126, 152, 2, 'muted');
-    field(p, 'Имя устройства', 'MacBook Pro', 24, 152, 800);
-    field(p, 'Язык', 'Русский', 24, 200, 800, {select:true});
-    field(p, 'Тема', 'Системная', 24, 248, 800, {select:true});
-    field(p, 'Размер текста', '16', 24, 296, 800, {select:true});
-    field(p, 'Автоблокировка', 'Через 5 минут', 24, 344, 800, {select:true});
-    field(p, 'Очистка буфера', 'Через 30 секунд', 24, 392, 800, {select:true});
-    heading(p, 'Touch ID · Рабочая.taypeer', 24, 460, 800);
-    toggle(p, 'Разблокировать эту БД на этом Mac', 24, 504, 800, true);
-    heading(p, 'Соединение', 24, 564, 800);
-    field(p, 'Relay', 'Общие relay', 24, 608, 800, {select:true});
-    caption(p, 'Relay пересылает трафик, пока оба устройства доступны.\nЛокальная работа не требует сети.', 184, 658, 640);
+  // Match the pinned Kit Settings/SettingGroup layout; custom fields keep the
+  // product's explicit commit rules instead of adopting per-keystroke setters.
+  function settingRow(parent, item, y) {
+    const h=item.height||(item.description?48:32);
+    const row=box(parent,'Setting item / '+item.label,16,y,parent.width-32,h,'');
+    const isDropdown=!item.type||item.type==='dropdown';
+    const width=Math.min(row.width*0.62,item.width||(item.type==='switch'?32:item.type==='input'?320:Math.max(96,item.value.length*8+(isDropdown?56:48))));
+    const x=row.width-width;
+    text(row,item.label,0,item.description?1:6,x-24,14,'fg',400,20);
+    if(item.description)caption(row,item.description,0,24,x-24,'muted',24);
+    if(item.type==='switch') {
+      const sw=box(row,'SettingField / switch / '+item.label,x,(h-18)/2,32,18,'primary',9);
+      box(sw,'Thumb',17,3,12,12,'onPrimary',6);
+    } else if(item.type==='readonly') {
+      text(row,item.value,x,6,width,14,'fg',400,h-12);
+    } else if(item.type==='input') {
+      const input=inputFrame(row,item.label,x,(h-32)/2,width);
+      text(input,item.value,10,6,width-20,14);
+    } else {
+      const control=button(row,item.value,x,(h-32)/2,width);
+      control.name='SettingField / '+(item.type||'dropdown')+' / '+item.label;
+      const label=control.children.find(n=>n.type==='TEXT');label.fontSize=14;
+      if(isDropdown) {
+        label.resize(width-44,20);icon(control,'chevron-down',width-26,8);
+      }
+    }
+    return h;
+  }
+  function settingGroup(parent,title,y,items) {
+    const cardHeight=32+items.reduce((sum,item)=>sum+(item.height||(item.description?48:32)),0)+16*(items.length-1);
+    const group=box(parent,'Setting group / '+title,16,y,parent.width-32,32+cardHeight,'');
+    text(group,title,0,0,group.width,14,'muted',400,20);
+    const card=box(group,'GroupBox / Outline',0,32,group.width,cardHeight,'',4,true);
+    let yy=16;for(const item of items)yy+=settingRow(card,item,yy)+16;
+    return group;
+  }
+  function settingsAccessItems() {
+    return [
+      {label:'Роль этого устройства',value:'Управляющее',type:'readonly'},
+      {label:'Управляющее устройство',value:'MacBook Pro',type:'readonly'},
+      {label:'Доверенные устройства',value:'Открыть устройства',type:'action',width:208},
+    ];
+  }
+  function settingsFileItems() {
+    return [
+      {label:'Рабочая копия',value:'~/Library/Application Support/Taypeer/Рабочая.taypeer',type:'readonly',width:600,height:56},
+      {label:'Размер файла',value:'2,4 МБ',type:'readonly'},
+      {label:'Режим доступа',value:'Чтение и запись',type:'readonly'},
+    ];
+  }
+  function settingsDataItems() {
+    return [
+      {label:'История БД',value:'Открыть историю БД',type:'action',width:216},
+      {label:'Корзина',value:'Открыть корзину',type:'action',width:184},
+      {label:'Локальные черновики',value:'Открыть черновики',type:'action',width:208},
+      {label:'Отложенные правки',value:'Открыть отложенные правки',type:'action',width:272},
+    ];
+  }
+  function settingsScreen(name,{database=false,locked=false}={}) {
+    const p=shell('macOS / '+name);
+    if(locked) {
+      p.children.filter(n=>n.name==='StatusBar'||n.y>=790).forEach(n=>n.remove());
+    }
+    const region=box(p,database?'Settings database content':locked?'Settings public content':'Settings content',0,35,p.width,locked?784:757,'bg');
+    const sidebar=box(region,'Sidebar / settings',0,0,250,region.height,'panel');
+    rule(sidebar,249,0,1,sidebar.height);
+    const search=box(sidebar,'Settings search',12,12,226,32,'bg',4,true);
+    icon(search,'search',10,8);text(search,'Поиск настроек',34,6,180,14,'muted');
+    const groups=database?['Сведения о БД','Защита','Лимиты вложений','Устройства и доступ','Рабочий файл','Данные']:locked?['Внешний вид']:['Устройство','Внешний вид','Защита','Соединение'];
+    let yy=56;
+    for(const [title,key,active] of [['Устройство','monitor',!database],...locked?[]:[['База данных','database',database]]]) {
+      const item=box(sidebar,'Settings navigation / '+title,8,yy,234,32,active?'selected':'',4);
+      icon(item,key,10,8);text(item,title,36,6,168,14);
+      if(active)icon(item,'chevron-down',210,8);else icon(item,'chevron-right',210,8);
+      yy+=36;
+      if(active)for(const title of groups){text(sidebar,title,44,yy+6,190,14,'muted');yy+=32;}
+    }
+    const title=database?'База данных':'Устройство';
+    const page=box(region,'Setting page / '+title,250,0,region.width-250,region.height,'bg');
+    heading(page,title,16,16,page.width-32);
+    caption(page,database?'Рабочая.taypeer · управляющее устройство: MacBook Pro':locked?'Параметры БД доступны после разблокировки.':'Настройки этого устройства',16,48,page.width-32,'muted',20);
+    rule(page,0,81,page.width);
+    const viewport=box(page,'Settings / scroll viewport',0,82,page.width,page.height-82,'');viewport.clipsContent=true;
+    const content=box(viewport,'Settings / scroll content',0,0,viewport.width,viewport.height,'');
+    let y=16;
+    function group(title,items){const g=settingGroup(content,title,y,items);y+=g.height+32;return g;}
+    if(database) {
+      const info=box(content,'Setting group / Сведения о БД',16,y,content.width-32,252,'');
+      text(info,'Сведения о БД',0,0,info.width,14,'muted');
+      const card=box(info,'GroupBox / Outline',0,32,info.width,220,'',4,true);
+      field(card,'Название','Рабочая',16,16,card.width-32);
+      multiline(card,'Описание','Личные проекты и рабочие сервисы',16,64,card.width-32,64);
+      button(card,'Отмена',card.width-256,164,104);button(card,'Сохранить',card.width-140,164,124);
+      y+=info.height+32;
+      group('Защита',[
+        {label:'Мастер-пароль',value:'Изменить мастер-пароль',type:'action',width:232},
+        {label:'Параметры защиты',value:'Открыть параметры защиты',type:'action',width:256},
+      ]);
+      const limits=box(content,'Setting group / Лимиты вложений',16,y,content.width-32,248,'');
+      text(limits,'Лимиты вложений',0,0,limits.width,14,'muted');
+      const cardLimits=box(limits,'GroupBox / Outline',0,32,limits.width,216,'',4,true);
+      field(cardLimits,'Одно вложение','10 МиБ',16,16,cardLimits.width-32);
+      field(cardLimits,'Все вложения','100 МиБ',16,64,cardLimits.width-32);
+      caption(cardLimits,'Максимум: 100 МиБ на файл и 1 ГиБ на БД.',176,110,cardLimits.width-192,'muted',24);
+      button(cardLimits,'Применить лимиты',cardLimits.width-220,160,204,'primary');
+      y+=limits.height+32;
+      group('Устройства и доступ',settingsAccessItems());
+      group('Рабочий файл',settingsFileItems());
+      group('Данные',settingsDataItems());
+      caption(content,'Формат обновляется автоматически управляющим устройством.',16,y,content.width-32,'muted',24);y+=40;
+    } else if(locked) {
+      group('Внешний вид',[
+        {label:'Язык',value:'Русский'},
+        {label:'Тема',value:'Системная'},
+      ]);
+    } else {
+      group('Устройство',[{label:'Имя устройства',value:'MacBook Pro',type:'input'}]);
+      group('Внешний вид',[
+        {label:'Язык',value:'Русский'},
+        {label:'Тема',value:'Системная'},
+        {label:'Размер текста',value:'16'},
+      ]);
+      group('Защита',[
+        {label:'Автоблокировка',value:'Через 5 минут'},
+        {label:'Очистка буфера',value:'Через 30 секунд'},
+        {label:'Touch ID',value:'',type:'switch',description:'Рабочая.taypeer · только этот Mac'},
+      ]);
+      group('Соединение',[{label:'Relay',value:'Общие relay',description:'Пересылка трафика между доступными устройствами',width:176}]);
+    }
+    content.resize(content.width,Math.max(viewport.height,y));
+    if(content.height>viewport.height) {
+      box(page,'Scrollbar / track',page.width-7,86,4,viewport.height-8,'border',2);
+      box(page,'Scrollbar / thumb',page.width-7,86,4,(viewport.height-8)*viewport.height/content.height,'muted',2);
+    }
     return p;
-  });
-  const dbSettings = utility('settings-database', 'Настройки', {full:true});
-  text(dbSettings, 'Устройство', 24, 100, 128, 13, 'muted'); text(dbSettings, 'База данных', 176, 100, 144, 13, 'fg', 500);
-  rule(dbSettings, 0, 127, 1320); box(dbSettings, 'Selected tab / База данных', 152, 126, 176, 2, 'muted');
-  heading(dbSettings, 'Рабочая.taypeer', 24, 152, 800);
-  caption(dbSettings, 'MacBook Pro · это управляющее устройство', 24, 184, 800);
-  field(dbSettings, 'Название', 'Рабочая', 24, 230, 800);
-  multiline(dbSettings, 'Описание', 'Личные проекты и рабочие сервисы', 24, 278, 800, 64);
-  button(dbSettings,'Отмена',576,358,104);button(dbSettings,'Сохранить',696,358,128,'default');
-  rule(dbSettings, 24, 410, 1272);
-  heading(dbSettings, 'Защита и общие лимиты', 24, 434, 850);
-  button(dbSettings, 'Изменить мастер-пароль…', 24, 478, 256);
-  button(dbSettings, 'Параметры защиты…', 296, 478, 224);
-  field(dbSettings, 'Одно вложение', '10 МиБ', 24, 536, 800);
-  field(dbSettings, 'Все вложения', '100 МиБ', 24, 584, 800);
-  caption(dbSettings, 'Максимум: 100 МиБ на файл и 1 ГиБ на БД.', 184, 626, 640, 'muted', 24);
-  button(dbSettings, 'Применить лимиты…', 600, 670, 224, 'primary');
-  caption(dbSettings, 'Формат обновляется автоматически управляющим устройством.', 24, 728, 1000);
-  const publicSettings = shell('macOS / settings-locked');
-  // No database contents are available behind pre-unlock settings.
-  const headerTexts = words(publicSettings).filter(n => n.characters === 'Рабочая.taypeer');
-  headerTexts.forEach(n => {n.characters = 'Taypeer';});
-  publicSettings.children.filter(n => n.name === 'StatusBar').forEach(n => n.remove());
-  publicSettings.children.filter(n => n.y >= 790).forEach(n => n.remove());
-  heading(publicSettings, 'Настройки устройства', 352, 168, 640);
-  field(publicSettings, 'Язык', 'Русский', 352, 230, 616, {select:true});
-  field(publicSettings, 'Тема', 'Системная', 352, 278, 616, {select:true});
-  caption(publicSettings, 'Параметры БД доступны после разблокировки.', 512, 342, 456);
-  button(publicSettings, 'Готово', 808, 408, 160);
+  }
+  replace('macOS / settings',()=>settingsScreen('settings'));
+  settingsScreen('settings-database',{database:true});
+  settingsScreen('settings-locked',{locked:true});
 
   buildLocalScenarios();
   buildTrustScenarios();
   buildTransferScenarios();
   buildComponentSheets();
+  buildKitSamples();
   // Utility bodies retain their spacing below the shorter native titlebar.
   // StatusBar and its hairline stay pinned to the bottom of the window.
   for(const p of pages['01 · macOS'].children)if(p.children?.some(n=>n.name==='Toolbar boundary')) {
@@ -206,8 +301,6 @@ function buildDesktopV1() {
   contentRegion('Dialog / generator','Generator content',0,0,560,440);
   contentRegion('Dialog / passphrase','Passphrase content',0,0,744,438);
   contentRegion('macOS / receive','Receive content',352,152,640,400);
-  contentRegion('macOS / settings','Settings content',0,35,1320,757);
-  contentRegion('macOS / settings-database','Settings database content',0,35,1320,757);
   buildReviewVariants();
   buildFlowMap();
   // Desktop commands do not append an ellipsis; readable layer names stay stable.
@@ -230,6 +323,94 @@ function buildDesktopV1() {
     footer(p, action, {kind:danger ? 'danger' : 'primary', width:208});
     return p;
   }
+  function buildKitSamples() {
+    const kit=art('System / components');kit.resize(1320,3070);
+    heading(kit,'GPUI Kit · составные компоненты',24,1576,1272);
+    caption(kit,'Образцы для будущей реализации · Kit 0.6.0 · семантическая тема Taypeer',24,1612,1272);
+    const form=sample(kit,'Form / Field · самостоятельная форма',24,1664,614,232);
+    field(form,'Название','Рабочая',16,20,582).name='Input / standalone / Form title / rest';
+    multiline(form,'Описание','Личные проекты и сервисы',16,68,582,64);
+    button(form,'Отмена',354,180,104);button(form,'Сохранить',470,180,128);
+    figma.createComponentFromNode(form);
+    const description=sample(kit,'DescriptionList / DescriptionItem · свойства',662,1664,614,232);
+    const grid=box(description,'DescriptionList / bordered',16,16,582,192,'',4,true);grid.clipsContent=true;
+    for(const [i,label,value] of [[0,'Формат','.taypeer'],[1,'Размер','2,4 МБ'],[2,'Роль','Управляющее устройство'],[3,'Устройства','3 доверенных устройства']]) {
+      box(grid,'DescriptionItem / label',0,i*48,144,48,'panel');
+      text(grid,label,16,14+i*48,112,14,'muted');
+      text(grid,value,160,14+i*48,406,14);
+      if(i<3)rule(grid,0,47+i*48,582);
+    }
+    rule(grid,143,0,1,192);
+    figma.createComponentFromNode(description);
+    const group=sample(kit,'GroupBox / Outline · заголовок над карточкой',24,1992,614,192);
+    settingGroup(group,'Внешний вид',16,[{label:'Тема',value:'Системная'},{label:'Размер текста',value:'16'}]);
+    figma.createComponentFromNode(group);
+    const item=sample(kit,'SettingItem / SettingField · локальный параметр',662,1992,614,192);
+    settingGroup(item,'Защита',16,[{label:'Очистка буфера',value:'Через 30 секунд'},{label:'Touch ID',value:'',type:'switch'}]);
+    figma.createComponentFromNode(item);
+    heading(kit,'Уже используются в приложении',24,2260,1272);
+    caption(kit,'Tree · DataTable · Resizable · TabBar · Button · Input · Select · Slider · Checkbox\nDialog · Menu · ColorPicker · Notification',24,2300,1272,'muted',52);
+    caption(kit,'Продуктовые композиции и правила сохранения остаются у Taypeer. Карта замен и ограничения: README.md.',24,2390,1272,'muted',40);
+    for(const [mode,x] of [['Palette',24],['HSLA',662]]) {
+      const picker=sample(kit,'ColorPicker / '+mode+' · выбранный цвет',x,2496,614,478);
+      text(picker,'Цвет текста',16,18,144,13,'muted');
+      colorPickerTrigger(picker,'Цвет текста','#E6E6E6',176,12);
+      colorPickerPopover(picker,176,48,mode);
+      figma.createComponentFromNode(picker);
+    }
+  }
+  function colorPickerPopover(parent,x,y,mode='Palette') {
+    // gpui-kit 21f6ce6 crates/component/src/color_picker.rs + theme/default-colors.json.
+    // Selected value initializes preview, so the native optional HEX footer is visible.
+    const palette=mode==='Palette',n=box(parent,'ColorPicker / popover / '+mode,x,y,288,palette?378:273,'raised',4,true);
+    const tabs=box(n,'ColorPicker / mode tabs',14,14,260,32,'chrome',4);
+    box(tabs,'ColorPicker / selected mode',2+(palette?0:129),2,127,28,'bg',3);
+    text(tabs,'Palette',10,6,109,14,palette?'fg':'muted');
+    text(tabs,'HSLA',139,6,109,14,palette?'muted':'fg');
+    if(palette) {
+      const featured=['#f87171','#fca5a5','#60a5fa','#93c5fd','#4ade80','#86efac','#facc15','#fde047','#22d3ee','#67e8f9','#c084fc','#d8b4fe'];
+      const colors=box(n,'ColorPicker / featured colors',14,58,260,20,'');
+      featured.forEach((color,i)=>box(colors,'ColorPicker / featured / '+color,i*22,0,18,20,color,0,true));
+      rule(n,14,90,260);
+      const families=[
+        ['stone','#0c0a09 #1c1917 #292524 #44403c #57534e #78716c #a8a29e #d6d3d1 #e7e5e4 #f5f5f4 #fafaf9'],
+        ['red','#450a0a #7f1d1d #991b1b #b91c1c #dc2626 #ef4444 #f87171 #fca5a5 #fecaca #fee2e2 #fef2f2'],
+        ['orange','#431407 #7c2d12 #9a3412 #c2410c #ea580c #f97316 #fb923c #fdba74 #fed7aa #ffedd5 #fff7ed'],
+        ['yellow','#422006 #713f12 #854d0e #a16207 #ca8a04 #eab308 #facc15 #fde047 #fef08a #fef9c3 #fefce8'],
+        ['green','#052e16 #14532d #166534 #15803d #16a34a #22c55e #4ade80 #86efac #bbf7d0 #dcfce7 #f0fdf4'],
+        ['cyan','#083344 #164e63 #155e75 #0e7490 #0891b2 #06b6d4 #22d3ee #67e8f9 #a5f3fc #cffafe #ecfeff'],
+        ['blue','#172554 #1e3a8a #1e40af #1d4ed8 #2563eb #3b82f6 #60a5fa #93c5fd #bfdbfe #dbeafe #eff6ff'],
+        ['purple','#3b0764 #581c87 #6b21a8 #7e22ce #9333ea #a855f7 #c084fc #d8b4fe #e9d5ff #f3e8ff #faf5ff'],
+        ['pink','#500724 #831843 #9d174d #be185d #db2777 #ec4899 #f472b6 #f9a8d4 #fbcfe8 #fce7f3 #fdf2f8'],
+      ];
+      const grid=box(n,'ColorPicker / palette grid',14,103,260,212,'');
+      families.forEach(([family,values],row)=>values.split(' ').forEach((color,col)=>box(grid,'ColorPicker / '+family+' / '+color,col*24,row*24,20,20,color,0,true)));
+    } else {
+      function hsl(h,s,l) {
+        const a=s*Math.min(l,1-l),f=k=>l-a*Math.max(-1,Math.min((k+h*12)%12-3,9-(k+h*12)%12,1));
+        return '#'+[0,8,4].map(k=>Math.round(f(k)*255).toString(16).padStart(2,'0')).join('');
+      }
+      for(const [row,label,value,fraction] of [[0,'Hue','0',0],[1,'Saturation','0',0],[2,'Lightness','90',0.902],[3,'Alpha','100',1]]) {
+        const yy=58+row*40;
+        text(n,label,14,yy+6,64,12,'muted');
+        const track=box(n,'ColorPicker / '+label+' slider',86,yy+11,128,10,'',0);
+        for(let i=0;i<96;i++) {
+          const t=i/95,color=row===0?hsl(t,1,0.5):row===1?hsl(0,t,0.902):row===2?hsl(0,1,t):'#E6E6E6';
+          const stripe=box(track,'ColorPicker / gradient step',i*128/96,0,128/96+0.01,10,color);
+          if(row===3)stripe.opacity=t;
+        }
+        box(n,'ColorPicker / '+label+' thumb',86+fraction*116,yy+10,12,12,'fg',6,true);
+        text(n,value,222,yy+6,52,12,'muted').textAlignHorizontal='RIGHT';
+      }
+    }
+    const footerY=palette?340:235;
+    rule(n,14,footerY-13,260);
+    const footer=box(n,'ColorPicker / preview and hex',14,footerY,260,24,'');
+    box(footer,'ColorPicker / preview swatch',0,2,20,20,'#E6E6E6',4,true);
+    const hex=box(footer,'ColorPicker / HEX input',28,0,232,24,'chrome',4,true);
+    text(hex,'#E6E6E6',10,2,212,13);
+    return n;
+  }
   function buildLocalScenarios() {
     const fresh = duplicate('macOS / edit', 'macOS / new-entry', '01 · macOS');
     const freshEditor=fresh.children.find(n=>n.name==='Editor');
@@ -237,11 +418,11 @@ function buildDesktopV1() {
     fresh.findAll(n => n.name.startsWith('Input / row /')).forEach(n => {
       n.children.filter(c => c.type === 'TEXT').forEach(c => {c.characters = n.name.includes('Срок действия') ? 'Бессрочно' : '';});
     });
-    const group = modal('group', 'Создать группу', 430);
+    const group = modal('group', 'Создать группу', 340);
     field(group, 'Название', 'Сервисы', 24, 80, 632);
     multiline(group, 'Описание', 'Сервисы для работы', 24, 124, 632, 72);
-    text(group, 'Иконка', 24, 202, 144, 13, 'muted');
-    button(group, 'Выбрать иконку', 184, 196, 216, 'default', false, 'folder');
+    text(group, 'Иконка', 24, 218, 144, 13, 'muted');
+    button(group, 'Выбрать иконку', 184, 212, 216, 'default', false, 'folder');
     group.findAll(n=>n.name==='Icon button / Закрыть диалог').forEach(n=>n.remove());
     footer(group,'Сохранить',{kind:'default',width:136});
     const unsaved=modal('unsaved','Сохранить изменения?',280);
@@ -281,7 +462,7 @@ function buildDesktopV1() {
 
     const comparison = utility('history-compare', 'История · GitHub');
     button(comparison, 'К записи', 1156, 51, 132);
-    caption(comparison, '6 сентября, 18:32', 249, 120, 1039);
+    caption(comparison, '2026-09-06 18:32:00.000 UTC', 249, 120, 1039);
     table(comparison, 'revision comparison', 249, 168, 1039, [['Поле',184],['Выбранная версия',424],['Текущая версия',431]], [
       ['Название','GitHub','GitHub'],['Логин','valentin','valentin.dev'],
       ['URL','https://github.com','https://github.com'],['Теги','работа','работа, разработка']
@@ -297,7 +478,7 @@ function buildDesktopV1() {
     caption(comparison, 'recovery-codes.txt · 20 КиБ', 873, 550, 391);
     button(comparison, 'Просмотреть версию…', 249, 620, 256);
     button(comparison, 'Восстановить версию…', 1008, 700, 280, 'primary');
-    confirm('restore-revision', 'Восстановить версию GitHub?', '6 сентября, 18:32', 'Восстановить', {detail:'Выбранные данные станут новой текущей версией.\nПрежние сохранённые версии останутся в истории.'});
+    confirm('restore-revision', 'Восстановить версию GitHub?', '2026-09-06 18:32:00.000 UTC', 'Восстановить', {detail:'Выбранные данные станут новой текущей версией.\nПрежние сохранённые версии останутся в истории.'});
     confirm('clear-history', 'Очистить историю GitHub?', 'Будут очищены 3 сохранённые версии.', 'Очистить историю', {danger:true, detail:'Текущая запись сохранится. Альтернативные значения\nвыбранных версий перестанут быть доступны.\nКопии на других устройствах могут сохраниться.', h:370});
     // Rebuild the chosen-width inspector instead of resizing a 520 px clone.
     // The transient host has no product artboard or persistence identity.
@@ -331,11 +512,11 @@ function buildDesktopV1() {
     });
     caption(pick, 'Выбран: Lucide · key-round', 24, 368, 632);
     footer(pick, 'Выбрать');
-    const color = modal('color-picker', 'Цвет текста записи', 380);
-    ['#E6E6E6','#EE9292','#D0B57D','#8BB694','#9FBFE8','#BFA6DA','#DDA6C0','#747474'].forEach((c,i) => box(color, 'Color option / '+c, 24+i*78, 88, 62, 48, c, 4));
-    field(color, 'Цвет RGBA', '#E6E6E6FF', 24, 172, 632);
-    button(color, 'По умолчанию', 184, 226, 208);
-    footer(color, 'Выбрать');
+    const color = board('03 · Диалоги','Dialog / color-picker',680,520);
+    heading(color,'Вид',24,24,632);
+    text(color,'Цвет текста',24,84,144,13,'muted');
+    colorPickerTrigger(color,'Цвет текста','#E6E6E6',184,78);
+    colorPickerPopover(color,184,114);
     const imageUrl=modal('image-url','Загрузить значок по URL',366);
     field(imageUrl,'URL изображения','https://example.test/icon.png',24,82,632);
     caption(imageUrl,'Изображение до 1 МиБ сохранится в БД.\nЗапрос отправляется только по нажатию «Загрузить».',24,144,632,'muted',60);
@@ -388,7 +569,7 @@ function buildDesktopV1() {
       button(p, 'Копировать код', 288, 244, 216, 'default', false, 'copy');
       caption(p, 'Одноразовое · осталось 04:32', 288, 292, 408);
       rule(p, 24, 352, 696);
-      heading(p, 'Pixel 9 запрашивает доступ', 24, 384, 696);
+      heading(p, 'Устройство 000000000001 запрашивает доступ', 24, 384, 696);
       caption(p, 'Подтвердите подключение своего устройства.\nДля чтения БД на нём потребуется мастер-пароль.', 24, 430, 696, 'muted', 56);
       footer(p, 'Разрешить', {cancel:'Отклонить'}); return p;
     });
@@ -397,7 +578,7 @@ function buildDesktopV1() {
     caption(receive, 'Приглашение', 352, 200, 640);
     multiline(receive, 'Код', DEMO_INVITATION.code, 352, 240, 640, 108);
     field(receive,'Мастер-пароль','',352,368,640,{secret:true});
-    caption(receive, 'Вставьте приглашение управляющего устройства и введите мастер-пароль БД. Выберите новый файл; полученные данные проверяются до допуска устройства.', 512, 420, 480, 'muted', 60);
+    caption(receive, 'Вставьте приглашение управляющего устройства и введите мастер-пароль БД. Рабочая копия создаётся во внутреннем хранилище без выбора файла.', 512, 420, 480, 'muted', 60);
     button(receive, 'Назад', 352, 520, 128);
     button(receive, 'Подключиться', 792, 520, 200, 'primary');
     const scanner = modal('scan-qr', 'Сканировать приглашение', 464, 600);
@@ -409,15 +590,15 @@ function buildDesktopV1() {
 
     function passwordOperation(name, title, action, revoke = false) {
       const p = modal(name, title, 500, 744);
-      caption(p, revoke ? 'Pixel 9 будет исключён из доверенных устройств.' : 'Рабочая.taypeer · новое состояние защиты', 24, 78, 696, 'fg');
+      caption(p, revoke ? 'Устройство 000000000001 будет исключено из доверенных.' : 'Рабочая.taypeer · новое состояние защиты', 24, 78, 696, 'fg');
       field(p, 'Новый пароль', '••••••••••••••••', 24, 140, 696, {secret:true});
       caption(p, 'Качество: высокое', 184, 180, 512, 'success', 24);
       field(p, 'Повтор пароля', '••••••••••••••••', 24, 220, 696, {secret:true});
       caption(p, 'Другим устройствам понадобятся новый пароль\nи настройка Touch ID или биометрии заново\nпосле получения изменений.', 24, 280, 696, 'muted', 72);
-      if (revoke) caption(p, 'Ранее полученные данные останутся на Pixel 9.', 24, 368, 696, 'warning', 28);
+      if (revoke) caption(p, 'Ранее полученные данные останутся у устройства 000000000001.', 24, 368, 696, 'warning', 28);
       footer(p, action, {kind:revoke ? 'danger' : 'primary', width:216}); return p;
     }
-    replace('Dialog / revoke', () => passwordOperation('revoke','Отозвать доступ Pixel 9?','Отозвать доступ',true));
+    replace('Dialog / revoke', () => passwordOperation('revoke','Отозвать доступ 000000000001?','Отозвать доступ',true));
     passwordOperation('change-password','Изменить мастер-пароль','Изменить пароль');
     const protection = modal('protection', 'Параметры защиты БД', 390, 744);
     caption(protection, 'Целевое время\nподготовки ключа', 24, 84, 144, 'muted', 44);
@@ -426,11 +607,11 @@ function buildDesktopV1() {
     caption(protection, 'Последнее фактическое время: 1,2 с', 184, 236, 536);
     footer(protection, 'Применить', {width:184});
     const handoff = modal('transfer-control', 'Передать управление БД', 430, 744);
-    field(handoff, 'Устройство', 'Pixel 9 · в сети', 24, 84, 696, {select:true});
-    notice(handoff, 'handoff prerequisites', 'Оба устройства должны быть подключены и разблокированы.\nПередачу нужно подтвердить на Pixel 9.', 24, 148, 696, {h:76});
-    caption(handoff, 'После передачи этот Mac останется доверенным устройством.\nПароль, допуски и общие параметры будет менять Pixel 9.', 24, 252, 696, 'muted', 56);
+    field(handoff, 'Устройство', '000000000001 · доступность неизвестна', 24, 84, 696, {select:true});
+    notice(handoff, 'handoff prerequisites', 'Оба устройства должны быть подключены и разблокированы.\nПередачу нужно подтвердить на устройстве 000000000001.', 24, 148, 696, {h:76});
+    caption(handoff, 'После передачи этот Mac останется доверенным устройством.\nПароль, допуски и общие параметры перейдут устройству 000000000001.', 24, 252, 696, 'muted', 56);
     footer(handoff, 'Передать управление', {width:240});
-    confirm('accept-control', 'Принять управление БД?', 'Рабочая.taypeer · запрос от MacBook Pro', 'Принять управление', {detail:'Этот Mac станет единственным управляющим устройством.\nПодтверждение завершит начатую передачу.', h:340});
+    confirm('accept-control', 'Принять управление БД?', 'Рабочая.taypeer · запрос от устройства 000000000002', 'Принять управление', {detail:'Этот Mac станет единственным управляющим устройством.\nПодтверждение завершит начатую передачу.', h:340});
     const recover = modal('recover-control', 'Восстановить управление', 584, 744);
     caption(recover, 'Рабочая.taypeer · исходный файл сохранится', 24, 78, 696, 'fg');
     caption(recover, 'Новая копия будет во внутреннем хранилище.', 24, 130, 696);
@@ -444,21 +625,21 @@ function buildDesktopV1() {
     table(alternatives, 'history alternatives', 249, 122, 328, [['Поле / история',328]], [['Пароль · 2 варианта'],['Удаление · корзина'],['Группа · 2 варианта']]);
     rule(alternatives, 601, 90, 1, 702);
     heading(alternatives, 'Пароль · выбранное значение', 626, 124, 636);
-    caption(alternatives, 'Pixel 9 · сегодня, 09:35 · выбран автоматически', 626, 180, 636);
+    caption(alternatives, 'Автор 8d31… · 2026-09-07 09:35:00.000 UTC · выбран автоматически', 626, 180, 636);
     secret(alternatives, '••••••••••••', 654, 224, 610);
-    caption(alternatives, 'MacBook Pro · сегодня, 09:32 · альтернатива', 626, 288, 636);
+    caption(alternatives, 'Автор c29a… · 2026-09-07 09:32:00.000 UTC · альтернатива', 626, 288, 636);
     secret(alternatives, '••••••••••••••••', 654, 332, 610);
     caption(alternatives, 'Оба исходных значения доступны до явной очистки истории.', 626, 420, 638);
     button(alternatives, 'Редактировать запись', 626, 492, 248);
     status(alternatives, 'Объединено · сохранено');
     const pending = utility('pending', 'Отложенные правки · 4');
     table(pending, 'pending edits', 249, 116, 1039, [['Источник',250],['Объект',270],['Причина',519]], [
-      ['Pixel 9 · 10:24','GitHub','Автор больше не доверенный'],
-      ['Mac mini · вчера','Старый проект','Объект окончательно очищен'],
-      ['Mac mini · 12 сентября','3 записи','Ожидает управляющее устройство'],
-      ['Pixel 9 · 10:20','Recovery codes','Ожидается содержимое вложений']
+      ['Автор c29a… · 10:24','GitHub','Устройство 000000000001 отозвано'],
+      ['Автор 8d31… · вчера','Старый проект','Объект окончательно очищен'],
+      ['Автор 8d31… · 12 сентября','3 записи','Ожидает управляющее устройство'],
+      ['Автор c29a… · 10:20','Recovery codes','Ожидается содержимое вложений']
     ]);
-    heading(pending, 'GitHub · данные от Pixel 9', 249, 388, 1039);
+    heading(pending, 'GitHub · исходные правки автора c29a…', 249, 388, 1039);
     caption(pending, 'Источник сохранён отдельно. Его просмотр не меняет текущую БД.', 249, 428, 1039);
     text(pending,'Логин',249,484,144,13,'muted');text(pending,'valentin.dev',409,484,640,13);
     rule(pending,249,520,800);
@@ -468,8 +649,8 @@ function buildDesktopV1() {
     button(pending, 'Удалить источник…', 489, 666, 240, 'danger');
     caption(pending, 'Остальные допустимые изменения применяются независимо.', 249, 726, 1000);
     status(pending, 'Получено · 4 отложенных источника', 'warning');
-    confirm('extract-pending', 'Извлечь выбранную запись?', 'GitHub → Работа / Сервисы', 'Извлечь запись', {detail:'Будет создана новая запись от этого устройства\nс сохранением происхождения. Сетевой допуск Pixel 9\nне восстанавливается.', h:370});
-    confirm('delete-pending', 'Удалить отложенный источник?', 'Pixel 9 · GitHub · сегодня, 10:24', 'Удалить источник', {danger:true, detail:'Непринятые данные этого источника станут недоступны.\nУже принятые изменения и другие источники сохранятся.', h:340});
+    confirm('extract-pending', 'Извлечь выбранную запись?', 'GitHub → Работа / Сервисы', 'Извлечь запись', {detail:'Будет создана новая запись от этого устройства\nс сохранением происхождения автора c29a…\nДопуск устройства 000000000001 не восстанавливается.', h:370});
+    confirm('delete-pending', 'Удалить отложенный источник?', 'Автор c29a… · GitHub · сегодня, 10:24', 'Удалить источник', {danger:true, detail:'Непринятые данные этого источника станут недоступны.\nУже принятые изменения и другие источники сохранятся.', h:340});
   }
   function buildTransferScenarios() {
     const gen = art('Dialog / generator');
@@ -518,7 +699,7 @@ function buildDesktopV1() {
     menu(nav,'Селектор открытых БД',24,112,392,[['Рабочая.taypeer','', 'selected'],'Личная.taypeer · заблокирована','Открыть БД…','Создать БД…','Получить БД…','Заблокировать БД','Закрыть БД']);
     menu(nav,'Меню текущей БД',448,112,392,['Поделиться…','Устройства','Черновики','Отложенные правки · 4','Корзина','Перенести рабочий файл…','Восстановить управление…']);
     menu(nav,'Область поиска',872,112,424,[['Эта база','', 'selected'],'Все разблокированные базы']);
-    menu(nav,'Видимость колонок',872,300,424,['✓ Название','✓ Логин','URL','Заметки','Изменение','✓ База / группа']);
+    menu(nav,'Видимость колонок',872,300,424,['✓ Название','✓ Логин','URL','Заметки','Изменение','✓ База / группа','Сбросить раскладку']);
     const searchResult = sample(nav,'Переход из общего поиска',24,480,392,158);
     caption(searchResult,'GitLab · Личная / Сервисы',16,18,360,'fg');
     button(searchResult,'К результатам поиска',16,76,280,'default',false,'arrow-left');
@@ -597,44 +778,45 @@ function buildDesktopV1() {
     button(disconnected,'Продолжить',368,108,240,'primary');
     notice(exchange,'rejected invitation','Управляющее устройство отклонило подключение.',24,604,616,{action:'Ввести другой код',h:76});
     notice(exchange,'used invitation','Приглашение уже использовано.',672,644,624,{action:'Ввести другой код',h:76});
-    notice(exchange,'sync wait','Ожидание Mac mini. Локальная работа доступна.',24,730,616,{action:'Повторить'});
-    notice(exchange,'sync connecting','Соединение с Pixel 9 через relay…',672,770,624,{h:68});
+    notice(exchange,'sync wait','Ожидание устройства 000000000002.\nЛокальная работа доступна.',24,730,616,{action:'Повторить'});
+    notice(exchange,'sync connecting','Соединение с устройством 000000000001 через relay…',672,770,624,{h:68});
     notice(exchange,'stored not applied','Изменения получены. Для применения войдите в БД.',24,838,616,{action:'Разблокировать',h:76});
     notice(exchange,'applied','Изменения применены · сегодня, 10:32',672,878,624,{tone:'success'});
     notice(exchange,'receive disk failure','Недостаточно места. Получение не завершено.',24,958,616,{tone:'danger',action:'Повторить',h:76});
     notice(exchange,'direct unavailable','Прямое соединение недоступно. Relay отключены.',672,998,624,{action:'Настройки…',h:76});
     notice(exchange,'camera denied','Камера недоступна. Можно ввести код приглашения.',24,1078,616,{action:'Ввести код',h:76});
-    notice(exchange,'handoff waiting','Передача управления начата. Ожидается Pixel 9.',672,1118,624,{action:'Продолжить',h:76});
+    notice(exchange,'handoff waiting','Передача управления начата.\nОжидается устройство 000000000001.',672,1118,624,{action:'Продолжить',h:76});
 
     const cases=sheet('States / alternatives','История альтернатив и отложенные данные','Объединение автоматическое; исходные значения доступны в истории.',1260);
     notice(cases,'workspace conflicts','Объединено. Альтернативные значения доступны в истории.',24,112,1272,{action:'История…'});
     const deleted=sample(cases,'Удаление и параллельная правка',24,234,616,246);
     heading(deleted,'Wi-Fi · объект находится в корзине',16,20,584);
-    caption(deleted,'Pixel 9 удалил запись. Mac mini изменил пароль.',16,66,584);
+    caption(deleted,'Автор c29a… удалил запись. Автор 8d31… изменил пароль.',16,66,584);
     secret(deleted,'••••••••••••',16,110,584);
     caption(deleted,'Удаление выбрано автоматически.',16,188,280);
     button(deleted,'Восстановить…',336,188,264,'primary');
     const location=sample(cases,'Конкурирующее размещение',672,234,624,246);
     heading(location,'Сервисы · выбранное размещение',16,20,592);
-    caption(location,'Работа / Инфраструктура · MacBook Pro · выбран',16,64,592);
-    caption(location,'Личное · Pixel 9 · альтернатива',16,110,592);
+    caption(location,'Работа / Инфраструктура · автор 8d31… · выбран',16,64,592);
+    caption(location,'Личное · автор c29a… · альтернатива',16,110,592);
     caption(location,'Цикл автоматически разрывается в корне.',16,156,592);
     button(location,'История группы…',344,204,264);
     const duplicateAttr=sample(cases,'Совпадающие ключи / защита атрибута',24,550,616,256);
     heading(duplicateAttr,'Два атрибута «Recovery code»',16,18,584);
-    secret(duplicateAttr,'Защищён · ••••••••••••',16,66,584);
-    secret(duplicateAttr,'Защищён · ••••••••••••',16,110,584);
-    field(duplicateAttr,'Новое имя','Recovery code 2',16,164,584);
-    button(duplicateAttr,'Применить',392,212,208,'primary');
+    caption(duplicateAttr,'ID a1 · защищён',16,48,584,'muted',20);
+    secret(duplicateAttr,'••••••••••••',16,76,584);
+    caption(duplicateAttr,'ID b2 · защищён',16,120,584,'muted',20);
+    secret(duplicateAttr,'••••••••••••',16,148,584);
+    caption(duplicateAttr,'Одинаковые имена допустимы. Оба атрибута сохранены.',16,206,584,'muted',32);
     const revoked=sample(cases,'Зависимость от отозванного автора',672,550,624,256);
-    caption(revoked,'Для переноса нужны ещё не принятые данные Pixel 9.\nОстальные допустимые правки уже применены.',16,22,592,'muted',58);
+    caption(revoked,'Для переноса нужны ещё не принятые данные\nотозванного устройства 000000000001.\nОстальные допустимые правки уже применены.',16,22,592,'muted',58);
     button(revoked,'Просмотреть источник…',16,112,312);
     caption(revoked,'Источник остаётся до успешного переноса\nили отдельного удаления.',16,170,592,'muted',56);
     notice(cases,'late purged','Пришли правки окончательно очищенного объекта.\nОни сохранены отдельно и не возвращают объект автоматически.',24,888,616,{action:'Просмотреть…',h:100});
     notice(cases,'schema waiting','Правки сохранены и ожидают управляющее устройство.',672,888,624,{action:'Устройства',h:100});
     notice(cases,'control divergence','Обнаружено расхождение управления. Обмен остановлен.\nЛокальное чтение доступно.',24,1052,1272,{tone:'danger',action:'Восстановить…',h:84});
 
-    const prefs=sheet('States / preferences','Настройки и ограничения роли','Параметры устройства применяются сразу; защищённые операции БД требуют отдельного подтверждения.',1260);
+    const prefs=sheet('States / preferences','Настройки и ограничения роли','Параметры устройства применяются сразу; защищённые операции БД требуют отдельного подтверждения.',2390);
     menu(prefs,'Тема',24,112,392,[['Системная','','selected'],'Светлая','Тёмная']);
     menu(prefs,'Relay',448,112,392,[['Общие relay','','selected'],'Собственные relay','Отключены']);
     menu(prefs,'Очистка буфера',872,112,424,[['Через 30 секунд','','selected'],'Другой интервал…','Не очищать']);
@@ -650,7 +832,7 @@ function buildDesktopV1() {
     field(invalid,'Очистка буфера','0',16,24,584,{error:true});
     caption(invalid,'Введите положительное число секунд\nили выберите «Не очищать».',176,76,408,'danger',52);
     const member=sample(prefs,'Обычное доверенное устройство',672,602,624,182);
-    caption(member,'Управляющее устройство: MacBook Pro',16,20,592,'fg');
+    caption(member,'Управляющее устройство: 000000000002',16,20,592,'fg');
     button(member,'Поделиться…',16,70,208,'disabled');
     button(member,'Отозвать доступ…',240,70,240,'disabled');
     caption(member,'Приглашения, пароль, защита и общие лимиты\nменяются на управляющем устройстве.',16,120,592,'muted',48);
@@ -660,10 +842,25 @@ function buildDesktopV1() {
     caption(limits,'Изменения распространятся на доверенные устройства.\nМаксимум: 100 МиБ на файл и 1 ГиБ на БД.',16,122,584,'muted',54);
     button(limits,'Отмена',248,204,144); button(limits,'Применить',408,204,192,'primary');
     const format=sample(prefs,'Миграция / управляющий недоступен',672,864,624,254);
-    notice(format,'migration role','Для обновления формата требуется\nуправляющее устройство MacBook Pro.',16,20,592,{h:84});
-    button(format,'Обновить формат…',16,126,272,'disabled');
+    notice(format,'migration waiting','Обновление формата ожидает управляющее устройство\n000000000002 и выполнится автоматически после его входа.',16,20,592,{tone:'muted',h:84});
     button(format,'Устройства',352,126,256);
     caption(format,'Поддерживаемое локальное чтение доступно.',16,196,592);
+    const filtered=sample(prefs,'Settings · поиск по заголовку параметра',24,1208,616,300);
+    const query=box(filtered,'Settings search / query',16,16,584,32,'bg',4,true);
+    icon(query,'search',10,8);text(query,'Тема',34,6,510,14);ib(query,'x',552,0);
+    heading(filtered,'Устройство',16,72,584);
+    settingGroup(filtered,'Внешний вид',104,[{label:'Тема',value:'Системная'}]);
+    const noSettings=sample(prefs,'Settings · нет результатов',672,1208,624,300);
+    const noQuery=box(noSettings,'Settings search / no matches',16,16,592,32,'bg',4,true);
+    icon(noQuery,'search',10,8);text(noQuery,'Несуществующий параметр',34,6,518,14);ib(noQuery,'x',560,0);
+    caption(prefs,'Поиск оставляет только подходящие параметры.\nОн не меняет значения и не подтверждает форму БД.',24,1560,616,'muted',56);
+    caption(prefs,'При отсутствии результатов Kit оставляет область пустой.\nОчистка запроса возвращает список параметров.',672,1560,624,'muted',56);
+    const accessSettings=sample(prefs,'База данных / Устройства и доступ',24,1690,616,248);
+    settingGroup(accessSettings,'Устройства и доступ',16,settingsAccessItems());
+    const fileSettings=sample(prefs,'База данных / Рабочий файл',672,1690,624,248);
+    settingGroup(fileSettings,'Рабочий файл',16,settingsFileItems());
+    const dataSettings=sample(prefs,'База данных / Переходы к данным',24,2040,1272,288);
+    settingGroup(dataSettings,'Данные',16,settingsDataItems());
 
     const entry=sheet('States / entry','Поля записи, вложения и оформление','Варианты в пределах общего черновика; исторические секреты раскрываются только по действию.',1540);
     const expiry=sample(entry,'Срок действия / включён',24,112,616,250);
@@ -672,8 +869,8 @@ function buildDesktopV1() {
     button(expiry,'Через месяц',176,124,176); button(expiry,'Через год',368,124,168);
     caption(expiry,'Выбрано: 15 декабря 2026',176,188,424);
     const attributeError=sample(entry,'Ошибка ключа атрибута',672,112,624,250);
-    field(attributeError,'Ключ','Recovery code',16,24,592,{error:true});
-    caption(attributeError,'Одинаковые имена допустимы · ID a1 / b2.',176,76,416,'muted',44);
+    field(attributeError,'Ключ','',16,24,592,{error:true});
+    caption(attributeError,'Введите имя атрибута.',176,76,416,'danger',44);
     field(attributeError,'Значение','••••••••••••',16,136,592,{secret:true});
     check(attributeError,'Защищённое значение',176,190,416,true);
     const blob=sample(entry,'Добавление сверх лимита',24,446,616,210);
@@ -709,7 +906,7 @@ function buildDesktopV1() {
     caption(noAdmission,'БД открыта для чтения. Этот Mac ещё не подключён\nк доверенному набору устройств.',16,22,592,'muted',56);
     button(noAdmission,'Подключить…',16,112,240); button(noAdmission,'Восстановить управление…',272,112,336);
     notice(compatibility,'unsupported read','Для открытия этой БД обновите Taypeer.\nИсходный файл не изменён.',24,410,616,{action:'Назад',h:88});
-    notice(compatibility,'unsupported sync','Для обмена с Mac mini требуется совместимая версия Taypeer.',672,410,624,{action:'Устройства',h:88});
+    notice(compatibility,'unsupported sync','Для обмена с устройством 000000000002\nнужна совместимая версия Taypeer.',672,410,624,{action:'Устройства',h:88});
     caption(compatibility,'Несколько локальных черновиков сохраняются независимо.',24,566,616);
     caption(compatibility,'Внешний .taypeer копируется во внутреннее хранилище.',672,566,624);
     const history=sample(compatibility,'История группы и базы данных',24,734,616,202);

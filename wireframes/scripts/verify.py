@@ -7,7 +7,7 @@ import shutil
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-INDEX = "return figma.root.children.flatMap(p=>p.children.map(n=>({id:n.id,name:n.name,page:p.name,w:n.width,h:n.height})));"
+INDEX = "return figma.root.children.flatMap(p=>p.children.filter(n=>n.type==='FRAME').map(n=>({id:n.id,name:n.name,page:p.name,w:n.width,h:n.height})));"
 
 
 def read_index(fig, cli):

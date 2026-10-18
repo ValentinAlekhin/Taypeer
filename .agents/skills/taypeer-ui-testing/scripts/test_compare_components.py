@@ -1,9 +1,13 @@
 """Pixel and layout diagnostics, independent of Metal and OpenPencil."""
 import importlib.util
 import argparse
+import json
 from pathlib import Path
+import shutil
+import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from PIL import Image
 
@@ -76,6 +80,48 @@ class PixelComparisonTests(unittest.TestCase):
                 {"scale": 2, "padding": 2}, 0,
             )
             self.assertEqual(metrics["changed_percent"], 0)
+
+
+class ReferenceResolutionTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("node"), "Node is needed to evaluate the OpenPencil resolver")
+    def test_panel_strokes_respect_ancestor_clips_without_clipping_self(self):
+        case = {"id": "panel", "kind": "panel", "background": [0, 0, 0],
+                "design": {"page": "Test", "node": "Reference"}}
+        stroke = [{"align": "CENTER", "weight": 2}]
+        for clipped, own_stroke, expected in [
+            (True, False, dict(left=0, top=0, right=0, bottom=0)),
+            (False, False, dict(left=1, top=0, right=1, bottom=1)),
+            (True, True, dict(left=1, top=1, right=1, bottom=1)),
+        ]:
+            with self.subTest(clipped=clipped, own_stroke=own_stroke):
+                panel = {"id": "panel", "name": "Reference", "clipsContent": own_stroke,
+                         "strokes": stroke if own_stroke else [],
+                         "absoluteBoundingBox": dict(x=10, y=20, width=100, height=80),
+                         "children": [{"id": "viewport", "clipsContent": clipped,
+                             "absoluteBoundingBox": dict(x=10, y=20, width=100, height=60),
+                             "children": [{"id": "scroll", "absoluteBoundingBox": dict(x=10, y=20, width=100, height=140),
+                                 "children": [{"id": "focus", "strokes": stroke,
+                                     "absoluteBoundingBox": dict(x=10, y=80, width=100, height=20)}]}]}]}
+                scene = {"children": [{"name": "Test", "children": [panel]}]}
+
+                def command(args, *, stdin=None):
+                    bootstrap = """
+                    function hydrate(n,parent) {
+                      n.parent=parent;n.children??=[];n.fills??=[];n.strokes??=[];
+                      n.width=n.absoluteBoundingBox?.width;n.height=n.absoluteBoundingBox?.height;
+                      n.children.forEach(c=>hydrate(c,n));
+                      n.findAll=predicate=>n.children.flatMap(c=>[
+                        ...(predicate(c)?[c]:[]),...c.findAll(predicate)]);
+                      return n;
+                    }
+                    """
+                    code = bootstrap + "const figma={root:hydrate(" + json.dumps(scene) + ",null)};" + \
+                           "console.log(JSON.stringify(new Function(\"figma\"," + json.dumps(stdin) + ")(figma)));"
+                    return subprocess.run(["node", "-e", code], check=True, capture_output=True, text=True).stdout
+
+                with patch.object(comparison, "command", side_effect=command):
+                    reference = comparison.resolve_designs(Path("fixture.fig"), [case])[0]
+                self.assertEqual(reference["paint_outsets"], expected)
 
 
 class LayoutComparisonTests(unittest.TestCase):

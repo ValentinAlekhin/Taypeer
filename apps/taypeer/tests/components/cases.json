@@ -8,8 +8,11 @@
       "width": 232,
       "height": 32,
       "design": {
-        "page": "04 · Компоненты",
-        "node": "Input / row / Строка записи / rest"
+        "page": "03 · Компоненты",
+        "node": "Input / row / Строка записи / rest",
+        "ancestors": [
+          "System / components"
+        ]
       },
       "kind": "row-field",
       "label": "name"
@@ -21,8 +24,11 @@
       "width": 232,
       "height": 32,
       "design": {
-        "page": "04 · Компоненты",
-        "node": "Input / row / Строка записи / rest"
+        "page": "03 · Компоненты",
+        "node": "Input / row / Строка записи / rest",
+        "ancestors": [
+          "System / components"
+        ]
       },
       "kind": "row-field",
       "label": "name"
@@ -34,8 +40,11 @@
       "width": 232,
       "height": 32,
       "design": {
-        "page": "04 · Компоненты",
-        "node": "Input / standalone / Название / rest"
+        "page": "03 · Компоненты",
+        "node": "Input / standalone / Название / rest",
+        "ancestors": [
+          "System / components"
+        ]
       },
       "kind": "field",
       "label": "name"
@@ -47,8 +56,11 @@
       "width": 232,
       "height": 32,
       "design": {
-        "page": "04 · Компоненты",
-        "node": "Input / standalone / Фокус / focus"
+        "page": "03 · Компоненты",
+        "node": "Input / standalone / Фокус / focus",
+        "ancestors": [
+          "System / components"
+        ]
       },
       "kind": "field",
       "label": "name"
@@ -62,7 +74,7 @@
       "width": 520,
       "height": 44,
       "design": {
-        "page": "01 · macOS",
+        "page": "01 · Desktop",
         "ancestors": [
           "macOS / edit",
           "Editor"
@@ -84,7 +96,7 @@
       "width": 520,
       "height": 44,
       "design": {
-        "page": "01 · macOS",
+        "page": "01 · Desktop",
         "ancestors": [
           "macOS / edit",
           "Editor"
@@ -111,7 +123,7 @@
         13
       ],
       "design": {
-        "page": "01 · macOS",
+        "page": "01 · Desktop",
         "ancestors": [
           "macOS / edit"
         ],
@@ -145,7 +157,7 @@
         13
       ],
       "design": {
-        "page": "01 · macOS",
+        "page": "01 · Desktop",
         "ancestors": [
           "macOS / main"
         ],
@@ -175,7 +187,7 @@
         13
       ],
       "design": {
-        "page": "01 · macOS",
+        "page": "01 · Desktop",
         "ancestors": [
           "macOS / main"
         ],
@@ -195,7 +207,7 @@
         13
       ],
       "design": {
-        "page": "05 · Вкладки записи",
+        "page": "01 · Desktop",
         "ancestors": [],
         "node": "Tabs / История"
       }
@@ -213,7 +225,7 @@
         13
       ],
       "design": {
-        "page": "03 · Диалоги",
+        "page": "01 · Desktop",
         "ancestors": [
           "Dialog / generator"
         ],
@@ -233,7 +245,7 @@
         13
       ],
       "design": {
-        "page": "03 · Диалоги",
+        "page": "01 · Desktop",
         "ancestors": [
           "Dialog / create"
         ],
@@ -253,7 +265,7 @@
         13
       ],
       "design": {
-        "page": "03 · Диалоги",
+        "page": "01 · Desktop",
         "ancestors": [
           "Dialog / group"
         ],
@@ -273,7 +285,7 @@
         13
       ],
       "design": {
-        "page": "03 · Диалоги",
+        "page": "01 · Desktop",
         "ancestors": [
           "Dialog / invite"
         ],
@@ -293,7 +305,7 @@
         13
       ],
       "design": {
-        "page": "01 · macOS",
+        "page": "01 · Desktop",
         "ancestors": [
           "macOS / receive"
         ],
@@ -313,7 +325,7 @@
         13
       ],
       "design": {
-        "page": "05 · Вкладки записи",
+        "page": "01 · Desktop",
         "ancestors": [],
         "node": "Tabs / Дополнительно"
       }
@@ -331,7 +343,7 @@
         13
       ],
       "design": {
-        "page": "05 · Вкладки записи",
+        "page": "01 · Desktop",
         "ancestors": [],
         "node": "Tabs / Вид"
       }
@@ -349,7 +361,7 @@
         13
       ],
       "design": {
-        "page": "05 · Вкладки записи",
+        "page": "01 · Desktop",
         "ancestors": [],
         "node": "Tabs / Свойства"
       }
@@ -367,7 +379,7 @@
         13
       ],
       "design": {
-        "page": "04 · Компоненты",
+        "page": "03 · Компоненты",
         "ancestors": [
           "System / components"
         ],
@@ -387,7 +399,7 @@
         13
       ],
       "design": {
-        "page": "04 · Компоненты",
+        "page": "03 · Компоненты",
         "ancestors": [
           "System / components"
         ],
@@ -407,7 +419,7 @@
         13
       ],
       "design": {
-        "page": "01 · macOS",
+        "page": "01 · Desktop",
         "ancestors": [
           "macOS / settings"
         ],
@@ -427,7 +439,7 @@
         13
       ],
       "design": {
-        "page": "05 · Вкладки записи",
+        "page": "01 · Desktop",
         "ancestors": [],
         "node": "Tabs / saved-revision"
       }
@@ -445,7 +457,7 @@
         13
       ],
       "design": {
-        "page": "01 · macOS",
+        "page": "01 · Desktop",
         "ancestors": [
           "macOS / devices"
         ],
@@ -465,7 +477,7 @@
         13
       ],
       "design": {
-        "page": "03 · Диалоги",
+        "page": "01 · Desktop",
         "ancestors": [
           "Dialog / passphrase"
         ],

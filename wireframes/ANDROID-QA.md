@@ -14,8 +14,11 @@ rtk proxy python3 wireframes/scripts/design.py build
 rtk proxy python3 wireframes/scripts/design.py verify
 rtk proxy python3 wireframes/scripts/design.py export
 rtk proxy python3 -m unittest discover -s wireframes/scripts -p 'test_*.py'
-rtk proxy sh scripts/check.sh
 ```
+
+Для изменений только макетов используются эти целевые проверки и просмотр PNG.
+Полный `scripts/check.sh`, сборки Rust и платформенная матрица относятся к задачам
+реализации; при обновлении FIG они не запускаются.
 
 `build/qa.json` проверяет сериализованный FIG: границы артбордов/текста,
 48 × 48 dp для всех мобильных действий, пересечения видимых областей действий,

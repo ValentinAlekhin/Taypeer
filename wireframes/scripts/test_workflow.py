@@ -1,6 +1,8 @@
 """Guard against losing saved/live edits and losing old previews on export failure."""
 import json
 from pathlib import Path
+import shutil
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -120,6 +122,35 @@ class PublishSafety(unittest.TestCase):
 
 
 class ExportSafety(unittest.TestCase):
+    @unittest.skipUnless(shutil.which('node'), 'Node is needed to evaluate the OpenPencil index query')
+    def test_page_headings_are_not_indexed_or_exported(self):
+        from PIL import Image
+        scene = {'root': {'children': [{'name': '01 · Desktop', 'children': [
+            {'id': 'heading', 'type': 'TEXT', 'name': 'Рабочие экраны', 'width': 120, 'height': 24},
+            {'id': 'screen', 'type': 'FRAME', 'name': 'macOS / main', 'width': 80, 'height': 60},
+        ]}]}}
+        exported = []
+
+        def cli(*args, **kwargs):
+            if args[0] == 'eval':
+                code = 'const figma=' + json.dumps(scene) + ';' + \
+                       'console.log(JSON.stringify(new Function("figma",' + json.dumps(args[3]) + ')(figma)));'
+                return subprocess.run(['node', '-e', code], check=True, capture_output=True, text=True).stdout
+            exported.append(args[3])
+            Image.new('RGB', (80, 60)).save(Path(args[-1]))
+            return ''
+
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory)
+            fig = out/'input.fig'
+            fig.write_bytes(b'fixture')
+            result = verify.export(fig, out, cli)
+            self.assertEqual(result['exported'], 1)
+            self.assertEqual(exported, ['screen'])
+            self.assertEqual(json.loads((out/'screen-index.json').read_text()), [
+                {'id': 'screen', 'name': 'macOS / main', 'page': '01 · Desktop', 'w': 80, 'h': 60}])
+            self.assertFalse((out/'previews'/'рабочие-экраны.png').exists())
+
     def test_android_sheets_do_not_mix_with_phone_contact_sheets(self):
         from PIL import Image
         with tempfile.TemporaryDirectory() as directory:

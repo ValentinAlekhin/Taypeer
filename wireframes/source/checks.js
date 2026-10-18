@@ -2,14 +2,48 @@
 // Only a scroll track may exceed its explicitly clipped viewport. Its children
 // still undergo the regular bounds check; arbitrary clipping is not an escape.
 function scrollTrack(n) {
- return n.parent?.clipsContent && ((n.name==='Android / scroll content' && ['Android / scroll viewport','Android / drawer viewport'].includes(n.parent.name) && n.x===0 && n.width===n.parent.width && n.y<=0 && n.y+n.height>=n.parent.height) || (n.name==='Android / tab content' && n.parent.name==='Android / tabs viewport' && n.y===0 && n.height===n.parent.height) || (n.name==='Entry table / scroll content' && n.parent.name==='Entry table / scroll viewport' && n.x===0 && n.y===0 && n.width>=n.parent.width && n.height===n.parent.height));
+ return n.parent?.clipsContent && ((n.name==='Android / scroll content' && ['Android / scroll viewport','Android / drawer viewport'].includes(n.parent.name) && n.x===0 && n.width===n.parent.width && n.y<=0 && n.y+n.height>=n.parent.height) || (n.name==='Android / tab content' && n.parent.name==='Android / tabs viewport' && n.y===0 && n.height===n.parent.height) || (n.name==='Entry table / scroll content' && n.parent.name==='Entry table / scroll viewport' && n.x===0 && n.y===0 && n.width>=n.parent.width && n.height===n.parent.height) || (n.name==='Settings / scroll content' && n.parent.name==='Settings / scroll viewport' && n.x===0 && n.y===0 && n.width===n.parent.width && n.height>=n.parent.height));
 }
 const overflow=figma.root.findAll(n=>n.parent && !scrollTrack(n) && !['PAGE','CANVAS','DOCUMENT'].includes(n.parent.type) && !['VECTOR','INSTANCE'].includes(n.type) && !['INSTANCE','COMPONENT'].includes(n.parent.type) && (n.x < -1 || n.y < -1 || n.x+n.width>n.parent.width+1 || n.y+n.height>n.parent.height+1)).map(n=>({name:n.name,parent:n.parent.name,x:n.x,y:n.y,w:n.width,h:n.height,pw:n.parent.width,ph:n.parent.height}));
 const tiny=figma.root.findAll(n=>n.type==='TEXT'&&n.characters.length>4&&n.width<28).map(n=>({name:n.name,width:n.width}));
 const errors=[], measurements={};
 if(figma.root.findAll(n=>/pass2p/i.test(n.name)||(n.type==='TEXT'&&/pass2p/i.test(n.characters))).length)errors.push('branding: obsolete product name');
 if(!figma.root.findAll(n=>n.type==='TEXT'&&n.characters==='Taypeer').length)errors.push('branding: product name missing');
-const boards=figma.root.children.flatMap(p=>p.children);
+const documentPages=figma.root.children.filter(p=>p.name!=='Internal Only Canvas'||p.children.length);
+const expectedPages=['00 · Начать здесь','01 · Desktop','02 · Android','03 · Компоненты'];
+if(JSON.stringify(documentPages.map(p=>p.name))!==JSON.stringify(expectedPages))errors.push('document: expected four ordered platform pages');
+for(const page of documentPages)if(page.children.some(n=>!['FRAME','TEXT'].includes(n.type)))errors.push(page.name+': artboards must remain flat frames');
+const boards=documentPages.flatMap(p=>p.children.filter(n=>n.type==='FRAME'));
+if(boards.length!==172)errors.push('document: expected 172 artboards');
+if(new Set(boards.map(n=>n.name)).size!==boards.length)errors.push('document: duplicate artboard names');
+for(const b of boards) {
+ const expected=b.name==='Taypeer / обзор'?expectedPages[0]:
+  ['System / components','Android states / components'].includes(b.name)?expectedPages[3]:
+  b.name.startsWith('Android')?expectedPages[2]:
+  /^(macOS|Dialog|Tabs|Menus|States|QA|Flow) \/ /.test(b.name)?expectedPages[1]:null;
+ if(!expected||b.parent.name!==expected)errors.push('document: misplaced artboard '+b.name);
+}
+const componentIds=new Set(figma.root.findAll(n=>n.type==='COMPONENT').map(n=>n.id));
+for(const n of figma.root.findAll(n=>n.type==='INSTANCE'))if(!n.mainComponent||!componentIds.has(n.mainComponent.id))errors.push('components: broken instance '+n.name);
+for(const n of figma.root.findAll(n=>n.type==='COMPONENT')) {
+ let owner=n.parent;while(owner&&!['PAGE','CANVAS'].includes(owner.type))owner=owner.parent;
+ if(owner?.name!==expectedPages[3])errors.push('components: master outside library '+n.name);
+}
+measurements['Document / artboards per page']=Object.fromEntries(documentPages.map(p=>[p.name,p.children.filter(n=>n.type==='FRAME').length]));
+const navigationCounts={'01 · Desktop':11,'02 · Android':14,'03 · Компоненты':2};
+for(const p of documentPages.filter(p=>navigationCounts[p.name])) {
+ const children=p.children;
+ const headings=children.filter(n=>n.type==='TEXT'&&n.name.startsWith('Раздел / '));
+ if(headings.length!==navigationCounts[p.name]||children[0]?.id!==headings[0]?.id)errors.push(p.name+': navigation headings missing');
+ headings.forEach((h,i)=>{
+  const next=headings[i+1],start=children.findIndex(n=>n.id===h.id)+1,end=next?children.findIndex(n=>n.id===next.id):children.length;
+  const members=children.slice(start,end).filter(n=>n.type==='FRAME');
+  const title=h.name.slice('Раздел / '.length);
+  if(!title.startsWith(String(i+1).padStart(2,'0')+' · ')||h.characters!==title+' ('+members.length+')'||!h.visible||!members.length)errors.push(p.name+': invalid navigation heading '+h.name);
+  if(members.some(n=>n.y<h.y+h.height+24||(next&&n.y+n.height>next.y-80)))errors.push(p.name+': navigation group overlaps heading '+h.name);
+ });
+ measurements[p.name+' / navigation groups']=headings.map(h=>h.characters);
+}
 const board=name=>boards.find(n=>n.name===name);
 function pos(n,root){let x=0,y=0;while(n&&n.id!==root.id){x+=n.x;y+=n.y;n=n.parent;}return {x,y};}
 for(const name of ['macOS / main','macOS / edit']){
@@ -45,7 +79,12 @@ for(const n of figma.root.findAll(n=>n.name.startsWith('Input / '))){
  if(n.name.endsWith(' / rest')&&n.strokes.length)errors.push(n.name+': resting border');
 }
 if(board('macOS / settings').findAll(n=>n.type==='TEXT'&&n.characters==='Сохранить').length)errors.push('settings: obsolete save action');
-for(const name of ['macOS / settings','macOS / settings-database'])if(board(name).findAll(n=>n.name==='Sidebar / groups').length)errors.push(name+': settings must use the full working area');
+for(const name of ['macOS / settings','macOS / settings-database','macOS / settings-locked']) {
+ const b=board(name), pageName=name.endsWith('settings-database')?'База данных':'Устройство';
+ if(b.findAll(n=>n.name==='Sidebar / groups'||n.name==='Table / entries').length)errors.push(name+': settings must use the full working area');
+ for(const required of ['Sidebar / settings','Settings search','Settings / scroll viewport','Settings / scroll content','Setting page / '+pageName])if(b.findAll(n=>n.name===required).length!==1)errors.push(name+': missing native settings structure '+required);
+ if(!b.findAll(n=>n.name.startsWith('Setting group / ')).length)errors.push(name+': setting groups missing');
+}
 if(board('macOS / main').findAll(n=>n.name.startsWith('Icon button / Копировать ')&&n.visible).length)errors.push('entry view: copy actions must remain hidden at rest');
 // Safety-relevant visual contracts for the v1 desktop scenarios.
 const required = ['macOS / trash','macOS / pending','macOS / history-compare','macOS / receive',
@@ -63,6 +102,14 @@ for(const name of ['Dialog / revoke','Dialog / change-password']) {
 const alternatives=board('macOS / alternatives');
 if(alternatives.findAll(n=>n.name==='Icon button / Копировать вариант').length!==2)errors.push('history alternatives: independent copy missing');
 if(alternatives.findAll(n=>n.name.startsWith('Radio / ')).length)errors.push('history alternatives: mandatory selection remains');
+const duplicateAttributes=board('States / alternatives').findAll(n=>n.name==='Component / Совпадающие ключи / защита атрибута')[0];
+if(!duplicateAttributes||!hasText(duplicateAttributes,'ID a1')||!hasText(duplicateAttributes,'ID b2')||duplicateAttributes.findAll(n=>n.name==='Icon button / Копировать вариант').length!==2||hasText(duplicateAttributes,'Применить'))errors.push('attributes: duplicate names must remain separate without forced resolution');
+if(figma.root.findAll(n=>n.type==='TEXT'&&['Разрешить конфликт','Выбрать победителя','Обновить формат'].includes(n.characters)).length)errors.push('automation: obsolete manual conflict or migration action');
+if(board('macOS / empty').findAll(n=>n.name==='Icon button / Создать запись').length||!board('macOS / empty').findAll(n=>n.name==='Icon button / Создать запись / недоступно'&&n.opacity<0.5).length)errors.push('groups: creation must be unavailable without an active group');
+const picker=board('Dialog / color-picker');
+for(const name of ['ColorPicker / popover / Palette','ColorPicker / mode tabs','ColorPicker / palette grid','ColorPicker / HEX input'])if(!picker?.findAll(n=>n.name===name).length)errors.push('color picker: native part missing '+name);
+if(picker?.findAll(n=>n.type==='TEXT'&&['Выбрать','Сохранить','Отмена'].includes(n.characters)).length)errors.push('color picker: selection belongs to the entry draft, not a separate modal save');
+if(!board('System / components').findAll(n=>n.name==='ColorPicker / Alpha slider').length)errors.push('color picker: HSLA alpha specimen missing');
 const forbiddenBoards=['Dialog / restore-backup','Dialog / import-review','Dialog / export-kdbx','Dialog / transfer-report','Dialog / migrate','Dialog / delete-objects','macOS / backups','macOS / transfer','macOS / conflict','Android / draft','Android / delete','Android / files','Android / conflict','Android / conflicts','Android form / import','Android form / export','Android form / migrate'];
 for(const name of forbiddenBoards)if(board(name))errors.push('automation: obsolete route '+name);
 if(figma.root.findAll(n=>n.type==='TEXT'&&/KDBX|Без группы|Изменения сохраняются автоматически|Резервные копии/.test(n.characters)).length)errors.push('automation: obsolete product command');
@@ -78,7 +125,7 @@ for(const name of ['macOS / unlock','macOS / receive','macOS / settings-locked']
 }
 if(!hasText(board('macOS / settings'),'Системная'))errors.push('settings: system theme default missing');
 for(const name of ['macOS / welcome','macOS / settings-locked','macOS / receive']) {
- if(hasText(board(name),'Синхронизировано')||hasText(board(name),'2,4 МиБ'))errors.push(name+': no active database footer expected');
+ if(hasText(board(name),'Синхронизировано')||board(name).findAll(n=>n.type==='TEXT'&&/^2,4 М(?:и)?Б$/.test(n.characters)).length)errors.push(name+': no active database footer expected');
 }
 const minimum=board('QA / minimum-1100-720');
 if(minimum.width!==1100||minimum.height!==720)errors.push('minimum window: wrong dimensions');
@@ -130,6 +177,13 @@ for(const [name,w,h] of [['small-360-640',360,640],['large-430-932',430,932],['l
 const mobileQr=board('Android form / invite')?.findAll(n=>n.name==='QR / synthetic invitation')[0];
 if(!mobileQr||!mobileQr.findAll(n=>n.type==='VECTOR').length)errors.push('android invitation: editable QR missing');
 if(!hasText(board('Android states / exchange'),'Изменения получены')||!hasText(board('Android states / exchange'),'Изменения применены'))errors.push('android: receipt/application distinction missing');
+if(!hasText(board('Android form / create'),'Описание'))errors.push('android create: optional description missing');
+if(board('Android / pending-source').findAll(n=>n.name.startsWith('Touch / ')&&n.name.includes('Удалить источник')).length)errors.push('android pending: authenticated late edits cannot be deleted as an unaccepted packet');
+if(!hasText(board('Android / database-switcher'),'Сохранить копию'))errors.push('android files: explicit copy route missing');
+for(const name of ['text-200-form','text-200-keyboard']) {
+ const actions=board('Android QA / '+name).findAll(n=>n.name==='Android / form actions')[0];
+ if(!actions||actions.findAll(n=>n.type==='TEXT'&&n.height<Math.ceil(n.fontSize*1.4)).length)errors.push('android large text: confirmation label clips '+name);
+}
 for(const p of figma.root.children) {
  const frames=p.children.filter(n=>n.type==='FRAME');
  for(let i=0;i<frames.length;i++)for(let j=i+1;j<frames.length;j++){
