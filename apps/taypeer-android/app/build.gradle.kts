@@ -206,7 +206,13 @@ for (variant in listOf("debug", "release")) {
     tasks.matching { it.name == "pre${capitalized}Build" }.configureEach { dependsOn(nativeBuild) }
 }
 
-dependencyLocking { lockAllConfigurations() }
+dependencyLocking {
+    lockAllConfigurations()
+    // Coverage adds its agent to debug runtime classpaths; keep both graphs locked.
+    lockFile.set(layout.projectDirectory.file(
+        if (qaCoverageEnabled.get()) "gradle-coverage.lockfile" else "gradle.lockfile"
+    ))
+}
 
 dependencies {
     add(qaJacocoReportTools.name, "org.jacoco:org.jacoco.ant:$qaJacocoVersion") {
