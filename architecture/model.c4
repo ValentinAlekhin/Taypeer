@@ -57,7 +57,7 @@ model {
     host = component 'Профиль и рабочие копии' {
       #partial
       technology 'Rust; runtime'
-      description 'RuntimeHost владеет профилем, локальными настройками и рабочими путями. Recovery proof и неизменяемый ciphertext export не раскрывают документ. Имя устройства не меняет сетевую идентичность; ACK следует надёжной публикации.'
+      description 'Общий password-backed профиль без системного хранилища credentials. Независимые контексты БД активируются после первой аутентификации; host получает только транспортную capability. Recovery разделяет корни доверия, ACK следует надёжной публикации.'
       metadata { source 'crates/taypeer-runtime/src/host.rs'; contract 'docs/storage.md' }
     }
     coordinator = component 'Координатор рабочей копии' {
@@ -106,7 +106,7 @@ model {
       #partial
       style { border solid }
       technology 'Rust + Iroh'
-      description 'Приём и пересылка ciphertext, включая заблокированную БД, с явным источником временных файлов от host; без ключей чтения.'
+      description 'Приём и пересылка ciphertext без ключей чтения. Локальные наблюдения действующих соединений и фаз обмена отделены от надёжного получения и применения; поздние попытки ограничены поколением endpoint.'
       metadata { source 'crates/taypeer-sync/src/lib.rs'; contract 'docs/p2p.md'; evidence 'docs/p2p-acceptance.md' }
     }
     trust = component 'Допуск и управление' {
@@ -119,7 +119,7 @@ model {
     compatibility = component 'Совместимость формата' {
       #partial
       technology 'Rust; taypeer-core'
-      description 'Подписанный дескриптор схемы и независимые возможности чтения, записи и получения. Проверка без UI, сети и секретов; не выполняет миграции.'
+      description 'Кандидат stable1: первый reader/writer схемы 1, без миграции dev-файлов. Подписанный дескриптор и независимые возможности чтения, записи и получения. Стабильный выпуск требует отдельной приёмки; миграции отложены до изменения схемы.'
       metadata { source 'crates/taypeer-core/src/compatibility.rs'; contract 'docs/compatibility.md' }
     }
     evolution = component 'Эволюция и восстановление' {
@@ -149,7 +149,7 @@ model {
       #partial
       style { border solid }
       technology 'Rust + Swift / AppKit'
-      description 'Credentials runtime, файловые диалоги GPUI и безоконный AppKit helper: lifecycle, защищённое копирование целого значения или выделения, подтверждение записи и очистка по владению. Биометрия пока недоступна.'
+      description 'Файловые диалоги GPUI и безоконный AppKit helper: lifecycle, защищённое копирование и очистка по владению. Обычные credentials не используют Keychain; биометрия пока недоступна.'
       metadata { source 'apps/taypeer/crates/taypeer-desktop-platform/src/macos.rs'; contract 'docs/architecture.md' }
     }
     linuxPlatform = component 'Адаптеры Linux' {
@@ -160,18 +160,18 @@ model {
     }
     localCredentials = store 'Credentials каждой БД' {
       #partial
-      description 'Авторский ключ и независимый LocalStateKey зашифрованы ключом эпохи БД; только локальный профиль.'
-      metadata { contract 'docs/storage.md'; source 'crates/taypeer-runtime/src/profile/linux.rs'; evidence 'crates/taypeer-runtime/src/host/linux_tests.rs' }
+      description 'Общий Rust-формат для macOS, Linux, Android и Windows. Авторский ключ и независимый LocalStateKey зашифрованы ключом эпохи БД; scope включает БД и корень доверенного набора.'
+      metadata { contract 'docs/storage.md'; source 'crates/taypeer-storage/src/local_state.rs'; evidence 'crates/taypeer-runtime/src/host/portable_tests.rs' }
     }
     localState = store 'Независимое локальное состояние БД' {
       #partial
       description 'LocalStateStore поверх FileStore: транспортный ключ, регистрация и контрольные отметки. Без ключей чтения и авторства.'
-      metadata { contract 'docs/storage.md'; source 'crates/taypeer-runtime/src/profile/linux.rs'; evidence 'crates/taypeer-runtime/src/host/linux_tests.rs' }
+      metadata { contract 'docs/storage.md'; source 'crates/taypeer-storage/src/local_state.rs'; evidence 'crates/taypeer-runtime/src/host/portable_tests.rs' }
     }
     androidPlatform = component 'Адаптеры Android' {
       #partial
       technology 'Kotlin + AndroidX'
-      description 'SAF, Keystore, Binder, lifecycle и фоновые задания. Явная внешняя копия подтверждается завершением выбранного output; recovery gateway подтверждает закрытие source writer. Камера заполняет приглашение; буфер очищается по владению.'
+      description 'SAF, Binder, lifecycle и фоновые задания. Credentials передаются worker только зашифрованными bounded capability; Keystore используется необязательной биометрией. Явный export и recovery подтверждают надёжную публикацию.'
       metadata { source 'apps/taypeer-android/app/src/main/java/dev/taypeer/platform/DocumentService.kt'; evidence 'apps/taypeer-android/README.md'; contract 'docs/architecture.md' }
     }
     androidBiometry = component 'Приватный OS crypto adapter' {
@@ -229,7 +229,7 @@ model {
   taypeer.secretWorker -> taypeer.sessions 'Последовательные команды текущей сессии'
   taypeer.secretWorker -> taypeer.document 'Открытый документ и адресные изменения'
   taypeer.secretWorker -> taypeer.crypto 'Ключи чтения и защита кандидатов'
-  taypeer.secretWorker -> taypeer.macPlatform 'Авторский credential после проверки пароля'
+  taypeer.androidPlatform -> taypeer.localCredentials 'Ограниченный ciphertext snapshot и durable candidate без авторского ключа'
   taypeer.desktop -> taypeer.sessions 'Переносимый headless smoke'
   taypeer.desktop -> taypeer.coordinator 'Жизненный цикл рабочих файлов через runtime'
   taypeer.android -> taypeer.ffi 'Команды и события'

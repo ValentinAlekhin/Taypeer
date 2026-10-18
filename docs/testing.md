@@ -6,6 +6,90 @@ reviewed visual baseline описаны в [Android QA runbook](android-testing.
 [roadmap](roadmap.md). Результаты старых APK, dev-схем и удалённых клиентов
 не переносятся на новый исходный checkpoint автоматически.
 
+## Переносимые credentials и схема 1 — 2026-10-18
+
+Новый профиль macOS/Linux/Android использует общий password-backed codec из
+`taypeer-storage`; обычные credentials не требуют Keychain/Keystore. Публичная
+конфигурация dormant host не открывает сеть или секреты БД. Первая парольная
+или настроенная биометрическая разблокировка активирует только свою БД;
+блокировка сохраняет её ciphertext-обмен. Старые профили/dev-файлы не импортируются.
+
+Полный `sh scripts/check.sh` прошёл с обычным параллелизмом Cargo: архитектура
+и ссылки, fmt/check/Clippy, parser smoke, workspace-тесты, 24 компонентных случая
+на двух языках, темах и трёх размерах шрифта, все 23 AppView-сценария, Rustdoc
+с запретом предупреждений, release-сборка и smoke. Runtime: 150 passed / 5 явных
+subprocess helpers ignored; services: 80 / 2 генератора ignored; storage: 43;
+sync: 18. Лог — `artifacts/check-parallel-20261018.log`. Прерванный запуск
+с одним потоком внутри sandbox не считается PASS. После последней правки
+очистки пароля Android повторно прошли Clippy всех targets/features и 76
+Rust-тестов bridge.
+
+Актуальный обычный Android APK прошёл host check: 56 тестов QA runner,
+Gradle JVM/lint tasks (17 JVM-тестов, без отказов; неизменные задачи взяты из кэша),
+bindings, APK и ELF/ZIP 16-КиБ. Доказательства —
+`artifacts/android/portable-final-host-20261018/`. Целевая ARM64-матрица
+API31/4-КиБ, API36/4-КиБ и API36/16-КиБ завершилась 27 passed / 0 failed /
+0 skipped: по 9 сценариев на образ. Проверены повтор Host с закрытыми
+ciphertext capabilities, read-only импорт, ошибки/границы credential Binder,
+повтор recovery worker с новым паролем, KDF epoch и прерванное приглашение
+после Host restart без bearer code, а также три сценария формы приглашения.
+Это целевая матрица, не полный Android suite; холодный Host recovery и смену
+самого мастер-пароля подтверждают отдельные Rust descriptor/portable tests.
+JUnit, environment и progress — в
+`artifacts/android/portable-final-targeted-20261018/`. Во всех трёх средах
+одинаковые SHA-256: приложение
+`d96f69754e20ef84fd313aa6bc9fefeb3589edbac71c30cb3fd3937c0b68a3d4`,
+test APK `6fa4b371a9923754b16f273b02c0abf01e5236ba27b71aa3a46c9659d65cba57`.
+С теми же APK на API36/16-КиБ отдельно прошли ещё 3 сценария: независимые
+сохранение/блокировка двух БД, повтор подтверждения локальной отметки после
+отказа portable state и уход в фон после protected recovery proof без позднего
+adoption или восстановления доступа. Результат — 3 passed / 0 failed /
+0 skipped в `artifacts/android/portable-final-lifecycle-20261018/`.
+
+Отдельные Rust-регрессии прошли для независимой активации двух БД, reader-копии
+без допуска, повреждения и подстановки credentials, создания с прерванной
+финализацией, ротации пароля/KDF и точного повтора после ошибки Finalize.
+Шесть настоящих descriptor/subprocess-сценариев проверили Android-порт без
+host author callbacks, scope другой БД, staged invitation после перезапуска,
+непродвижение неподтверждённого prepared record и dormant startup после входа.
+Recovery проверен с независимым новым root/автором/транспортом, неизменным source,
+холодным host restart с одним новым паролем и повторным adoption после открытия
+и закрытия target. Отдельный набор private-pipe биометрического runtime прошёл;
+это не выполнение OS PIN/finger enrollment или аппаратная приёмка.
+
+Windows MSVC cross-Clippy всех targets storage/core/trust прошёл. CI job для
+нативного Windows запуска добавлена; её удалённый результат не получен.
+Позиционные чтения/записи сохраняют внешний cursor, публикация использует
+write-through move и flush. Точная отметка discard и повтор отсутствующего
+sidecar проверяются отдельно от неизвестного/повреждённого файла. Это не
+доказательство power-cut или приватности Windows ACL.
+
+Фиксированный PUBLIC [stable1-корпус](../tests/fixtures/stable1/README.md) создан
+отдельно от исторических dev5/dev6/dev7. Новый
+[eager70](../tests/fixtures/android-eager-icons-stable1/README.md) создан настоящими
+Rust Save/clone API и проходит hash-bound read-only проверку всех 70 строк,
+изображений и истории без изменения ciphertext; он не переобъявляет старый
+Android capture приёмкой нового APK.
+
+Parser smoke прошёл 19 PUBLIC seeds / 152 детерминированных случая. Отдельные
+ASan/libFuzzer document/storage/trust прошли по 1000 итераций; storage повторён
+с enrolled/reader credential seeds. Это короткая проверка harness, не длительная
+кампания и не независимый криптографический разбор.
+LikeC4 и ссылки прошли: 73 элемента, 44 вида. Изменённые deployment/логические
+виды экспортированы и просмотрены; Android projection исправлен после обнаружения
+обрезанного большого PNG. Нативная память, полное rollback, power-cut, реальный
+Android и целевой Wayland/macOS остаются открытыми в [roadmap](roadmap.md).
+
+Проверены отказы [Android run 39123356951](https://github.com/ValentinAlekhin/Taypeer/actions/runs/39123356951)
+и [CI run 39123356894](https://github.com/ValentinAlekhin/Taypeer/actions/runs/39123356894).
+Android завершал установку SDK с кодом 127: workflow теперь вызывает установленный
+`sdkmanager` по явному пути. Nix-пакет Ubuntu ограничивает daemon группой
+`nix-users`; runner добавляется в неё, а обе команды активируют группу через `sg`.
+Это исправление подтверждённого требования пакета; полный текст удалённого
+отказа Nix недоступен (API logs возвращает 403). Имена UI-артефактов разделены
+по ОС. YAML, синтаксис всех 18 shell-шагов и фактические аргументы вложенных
+команд проверены. Удалённый повтор новых workflow ещё не выполнялся.
+
 ## Локальный аудит desktop — 2026-10-17
 
 Архитектура, локальные ссылки, Rustfmt и `cargo check-all` прошли.
@@ -813,10 +897,10 @@ Services проверяет повторное открытие, экспорт 
 Все образцы искусственные. Проверки не реализуют миграции, корпус стабильных
 версий, приёмку памяти, Android или desktop UI. Нативная платформенная приёмка остаётся отдельной.
 
-### Фиксированный dev7-корпус
+### Фиксированный stable1-корпус
 
-[Образцы и генератор](../tests/fixtures/dev7/README.md) содержат только PUBLIC
-данные текущей экспериментальной схемы. Тесты работают с временными копиями;
+[Образцы и генератор](../tests/fixtures/stable1/README.md) содержат только PUBLIC
+данные первого кандидата стабильной схемы. Тесты работают с временными копиями;
 SHA-256 закрепляет входы, генерация запускается отдельно в новую директорию.
 
 - `cargo test --locked -p taypeer-core -p taypeer-document` проверяет текущий
@@ -826,10 +910,16 @@ SHA-256 закрепляет входы, генерация запускаетс
 - `cargo test --locked -p taypeer-runtime --lib worker::tests::compatibility`
   проверяет read-only, отзыв поколения, выход worker и точные байты БД/черновика.
 
-Эти проверки входят в общий скрипт. Старые dev5/dev6 сохранены как исторические
+Эти проверки входят в общий скрипт. Старые dev5/dev6/dev7 сохранены как исторические
 байты и отдельные входы негативных/низкоуровневых проверок; текущий reader их
-не открывает, миграции не обещаются. Stable corpus, настоящий переход схемы,
-native credentials и память требуют отдельных доказательств.
+не открывает, миграции не обещаются. Гарантия выпущенного формата, настоящий
+будущий переход схемы и память требуют отдельных доказательств.
+
+Изолированный [parser harness](../fuzz/README.md) вызывает настоящие document,
+storage/trust parsers и codec локальных credentials. Детерминированные PUBLIC
+seeds и негативные вариации входят в `scripts/check.sh`; optional libFuzzer/ASan
+запускается отдельно. Короткий smoke не заменяет длительную кампанию или
+доказательство границ ресурсов production.
 
 ### Полная матрица
 

@@ -4,7 +4,7 @@
 credentials, Linux lifecycle/буфер и Nix-пакет реализованы. Это ограниченный
 экспериментальный срез; проверки безопасности и выпуска остаются открытыми.
 
-Текущий dev7-срез использует обязательную группу и сохранение формы по кнопке.
+Кандидат stable1 использует обязательную группу и сохранение формы по кнопке.
 Linux использует те же [сервисные снимки](runtime.md), коллекцию локальных черновиков,
 внутренний каталог и автоматическое объединение, что macOS/Android. Общий
 `PlatformState` владеет SessionController, типизированными событиями, активностью
@@ -13,8 +13,8 @@ Linux использует те же [сервисные снимки](runtime.m
 проверки владельца сервиса и повторное подтверждение активности. Отзыв доступа
 выполняется фоновым обработчиком до обработки события UI.
 
-Общий host/profile определяет для Linux `$XDG_DATA_HOME/taypeer/profiles/default` с fallback
-`$HOME/.local/share/taypeer/profiles/default`. Системная директория определяется через `directories::BaseDirs`,
+Общий host/profile определяет для Linux `$XDG_DATA_HOME/taypeer/profiles/portable-v1` с fallback
+`$HOME/.local/share/taypeer/profiles/portable-v1`. Системная директория определяется через `directories::BaseDirs`,
 суффикс приложения остаётся явным; существующие профили не перемещаются
 автоматически. Общий GPUI UI сохраняет закреплённый GPUI Kit, системную тему и
 системные файловые диалоги. Linux использует Ctrl-сочетания и собственный app ID;
@@ -53,7 +53,7 @@ nix run path:.# -- --profile /tmp/taypeer-public-profile
 nix develop path:.
 sh scripts/check.sh
 sh scripts/check-linux-package.sh result
-TAYPEER_PUBLIC_LINUX_WORKER="$PWD/result/bin/taypeer" cargo test -p taypeer-runtime host::linux_tests --locked -- --test-threads=1
+TAYPEER_PUBLIC_PORTABLE_WORKER="$PWD/result/bin/taypeer" cargo test -p taypeer-runtime host::portable_tests --locked -- --test-threads=1
 ```
 
 GUI запускает свой рабочий процесс через тот же исполняемый файл с приватным

@@ -35,7 +35,7 @@ Cancel удаляет только текущую локальную форму.
 с 4-КиБ страницами и API 36 с 16-КиБ страницами; успешный частичный сценарий
 не означает успешный полный набор. Актуальные результаты и ограничения — в
 [testing.md](../../docs/testing.md); результаты прежнего bridge v2
-не подтверждают текущий dev7-срез.
+не подтверждают текущий срез схемы 1 и переносимых credentials.
 
 ## Граница UniFFI
 
@@ -50,8 +50,9 @@ UniFFI: типизированные DTO, ошибки, callbacks и преоб�
 открытой БД. Общий supervisor получает независимый локальный Binder death observer
 и очередь принудительного завершения, отдельно от занятых командных pipe.
 Snapshot, commit и encrypted local forms передаются ограниченными descriptor
-leases. Авторская capability выдаётся после аутентификации точного immutable
-snapshot с проверкой текущих полномочий до и после чтения credentials.
+leases. Worker расшифровывает авторский credential после аутентификации точного
+immutable snapshot и проверки текущих полномочий. Host передаёт ограниченный
+ciphertext credential и не получает author/ReadKey через Binder.
 Desktop spool paths и `open_local` не используются в качестве обходного пути.
 Смерть host завершает isolated процесс через Binder death recipient.
 
@@ -63,11 +64,14 @@ runtime, универсального публичного API документ�
 Создание записи принимает обязательную группу, редактирование — ID записи;
 DTO записи также содержит обязательную группу. `save` возвращает только
 `Saved` или `Unchanged`; сохранение локальной формы имеет отдельную команду.
-Текущие instrumentation assets берутся из публичного dev7-корпуса.
+Текущие instrumentation assets берутся из публичного stable1-корпуса;
+eager70 использует отдельный [синтетический набор](../../tests/fixtures/android-eager-icons-stable1/README.md).
 
-`KeystoreCredentials` хранит только AES-GCM ciphertext в `noBackupFilesDir`,
-с service/account в associated data. Ключ остаётся в Android Keystore;
-неподтверждённая запись и потерянный ключ — ошибки, без plaintext fallback.
+Продуктовый `Host.portableWithOsBiometry` создаёт новый профиль `profiles/portable-v1`.
+Основные credentials зашифрованы ключом эпохи БД общим Rust codec; обычный вход
+не требует Android Keystore. Старые профили не читаются и не мигрируются.
+`KeystoreCredentials` сохранён для явных legacy/test API, а необязательные
+биометрия и HMAC буфера остаются отдельными OS-механизмами.
 Физическое затирание копий JVM/FFI этим не доказывается.
 
 Импорт читает SAF только на вход, проверяет внутренний staging-файл общим Rust
@@ -115,6 +119,10 @@ release использует Rust release profile без этого feature. Car
 общий lockfile. Генерируемые bindings, `.so`, SDK, кеши и APK игнорируются Git.
 JVM-сценарии проверяют QR decoder/frame analysis; платформенное поведение
 проверяют instrumentation-тесты.
+
+Обычная сборка использует `app/gradle.lockfile`, `-PqaCoverage=true` —
+`app/gradle-coverage.lockfile`: coverage добавляет JaCoCo agent в runtime graph.
+Оба графа закреплены; обычный APK не содержит неиспользуемый coverage agent.
 
 Артефакты:
 

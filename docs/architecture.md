@@ -33,6 +33,9 @@ pnpm arch:build
 | `componentTesting` | Отдельный рендер компонентов и сравнение с FIG | [ui-testing.c4](../architecture/ui-testing.c4) |
 | `implementation` | Реализованный Rust-срез, runtime и desktop UI | [views.c4](../architecture/views.c4) |
 | `devices` | Экземпляры общих компонентов на двух устройствах | [deployment.c4](../architecture/deployment.c4) |
+| `desktopTargets`, `linuxProcesses` | Desktop macOS/Linux и граница host/worker Linux | [deployment.c4](../architecture/deployment.c4) |
+| `androidProcesses` | Процессы Android: ключи worker, ciphertext host и приватная биометрия | [deployment.c4](../architecture/deployment.c4) |
+| `windowsStorage` | Библиотека хранения Windows без desktop UI и worker IPC | [deployment.c4](../architecture/deployment.c4) |
 | `save`, `lock`, `receive`, `unlockApply`, `demoEdit` | Продуктовые сценарии и отдельное подтверждение в памяти demo | [flows.c4](../architecture/flows.c4) |
 | `desktopSession`, `fileSave`, `lifecycle`, `androidSecretAccess` | Локальный файл, процесс БД, подтверждение корзины/очистки и локального доступа к секрету | [flows.c4](../architecture/flows.c4) |
 | `admission`, `trustChange`, `migrate`, `recover` | Допуск, ротация/отзыв, будущая автоматическая миграция и восстановление доверенного набора | [flows.c4](../architecture/flows.c4) |
@@ -202,7 +205,7 @@ deployment в `desktopTargets`. Статусы модели не подтвер�
 
 ### Ручное сохранение и локальные формы
 
-Текущий dev7-срез реализует ручное сохранение по
+Текущий кандидат stable1 реализует ручное сохранение по
 [контракту runtime](runtime.md). Проверки и их ограничения находятся в
 [testing](testing.md#приёмка-ручного-сохранения-dev7). Services владеет несколькими
 причинными черновиками записей/групп/БД, активным указателем, неизменяемыми
@@ -212,8 +215,8 @@ deployment в `desktopTargets`. Статусы модели не подтвер�
 
 Host/profile единолично выбирает профиль и внутренние пути: системная директория
 через `directories::BaseDirs`, явный суффикс приложения, явный профиль тестовой конфигурации.
-macOS default desktop сохраняет `~/Library/Application Support/Taypeer`, Linux —
-`$XDG_DATA_HOME/taypeer/profiles/default` с системным fallback. Host публикует
+macOS default desktop использует `~/Library/Application Support/Taypeer/profiles/portable-v1`, Linux —
+`$XDG_DATA_HOME/taypeer/profiles/portable-v1` с системным fallback. Host публикует
 каталог лишь после надёжной записи; открытие внешнего файла создаёт внутреннюю
 копию без изменения источника или сетевого допуска. Автопереноса старых
 профилей нет. Host предоставляет явный перенос рабочего файла;
@@ -234,14 +237,15 @@ Desktop/Compose владеют фокусом, навигацией с выбо�
 Ответ несёт идентичность захваченной ревизии и OperationId; клиент проверяет
 БД, поколение сессии и экземпляр редактора. Продолжение формы возвращает
 маскированную проекцию. Блокировка независимо от I/O немедленно закрывает доступ.
-Android worker получает ciphertext через непрозрачные Binder-дескрипторы,
-а не desktop spool-пути; Keystore и сеть принадлежат host.
+Android worker получает ciphertext через непрозрачные Binder-дескрипторы
+и ограниченные credential-записи, а не desktop spool-пути. Основной backend
+не использует Keystore; необязательная биометрия и сеть принадлежат host.
 Платформенный worker использует общий приватный командный поток, dispatch сервисов
 и независимый ProcessControl. CipherPersistence реализуется через ограниченные
 дескрипторные передачи: immutable snapshot, encrypted candidate и local draft.
 Каждая передача владеет lease и освобождается после подтверждённого потребления.
-Author capability запрашивается worker только после аутентификации snapshot
-(либо явного создания); Keystore API и ключ чтения в эту границу не входят.
+Worker расшифровывает авторский credential только после аутентификации snapshot
+(либо явного создания); host получает транспортную capability без author/ReadKey.
 UniFFI клиента экспортирует предметные команды и представления; сериализация
 приватного IPC и ciphertext-метаданных не является универсальным API документа.
 
@@ -256,7 +260,8 @@ worker читает порции до 64 КиБ и шифрует их общи�
 
 Общий PlatformState содержит только SessionController, события, доступность,
 активность и настройку буфера. Нативные события и владение копированием остаются
-у адаптеров ОС. Windows не входит в v1; узкие границы позиционного I/O,
+у адаптеров ОС. Windows-клиент не входит в v1; библиотека хранения поддерживает
+Windows отдельно. Узкие границы позиционного I/O,
 приватных каталогов, идентичности путей и публикации сохраняются без полного порта.
 
 ### Локальный файловый срез

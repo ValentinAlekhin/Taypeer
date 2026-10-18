@@ -1,7 +1,7 @@
 deployment {
   mac = device 'Mac владельца' {
     technology 'macOS 15+; Apple Silicon'
-    description 'Локальная dev-сборка подписывается постоянным пользовательским сертификатом для сохранения идентичности доступа к Keychain; не подпись выпуска.'
+    description 'Общий password-backed профиль. Каждая БД активирует обмен после первой разблокировки; обычная работа не обращается к Keychain.'
     ui = instanceOf taypeer.desktop
     sessions = instanceOf taypeer.sessions
     core = instanceOf taypeer.core
@@ -13,6 +13,8 @@ deployment {
     platform = instanceOf taypeer.macPlatform
     vault = instanceOf taypeer.vault
     local = instanceOf taypeer.local
+    credentials = instanceOf taypeer.localCredentials
+    state = instanceOf taypeer.localState
   }
   linux = device 'Linux владельца — v1' {
     technology 'NixOS x86_64; niri / Wayland; Nix package'
@@ -34,9 +36,12 @@ deployment {
     state = instanceOf taypeer.localState
     vault = instanceOf taypeer.vault
   }
-  windows = device 'Windows — после v1' {
-    technology 'Windows; planned'
-    ui = instanceOf taypeer.desktop
+  windows = device 'Windows — библиотека хранения' {
+    technology 'Windows x86_64; native storage tests; GUI planned'
+    description 'Общий зашифрованный backend и нативные проверки хранения; приложение и worker IPC отложены.'
+    storage = instanceOf taypeer.storage
+    credentials = instanceOf taypeer.localCredentials
+    state = instanceOf taypeer.localState
   }
   android = device 'Телефон владельца' {
     technology 'Android 12+; ARM64'
@@ -69,6 +74,8 @@ deployment {
     }
     vault = instanceOf taypeer.vault
     local = instanceOf taypeer.local
+    credentials = instanceOf taypeer.localCredentials
+    state = instanceOf taypeer.localState
   }
   mac.sync -> android.host.sync 'P2P между установками'
 }
@@ -97,9 +104,16 @@ views 'Развёртывание' {
 
 views 'Развёртывание' {
   deployment view desktopTargets {
-    title 'Общий desktop UI — текущая и будущие платформы'
-    description 'macOS реализован частично; Linux входит в v1 и требует нативной приёмки; Windows отложен.'
-    include mac, linux, windows, mac.ui, linux.host.ui, windows.ui
+    title 'Общий desktop UI — macOS и Linux'
+    description 'macOS реализован частично; Linux входит в v1 и требует нативной приёмки. Windows storage показан отдельно.'
+    include mac, mac.ui, linux, linux.host, linux.host.ui
+    exclude * -> *
+    autoLayout LeftRight
+  }
+  deployment view windowsStorage {
+    title 'Windows — библиотека хранения'
+    description 'Общий codec и файловый адаптер; без desktop UI и worker IPC. Нативная CI job настроена, целевая приёмка открыта.'
+    include windows, windows.storage, windows.credentials, windows.state
     autoLayout LeftRight
   }
 }
@@ -107,12 +121,22 @@ views 'Развёртывание' {
 views 'Развёртывание' {
   deployment view androidProcesses {
     title 'Android — host и изолированные поколения БД'
-    description 'Целевая граница процессов; Android runtime и файловые дескрипторы требуют отдельной приёмки.'
-    include android, android.host, android.host.*, android.worker, android.worker.*, android.vault, android.local
+    description 'Основные границы полномочий: worker владеет открытым документом и ключами, host — обменом и публикацией ciphertext. Внутренние библиотеки worker раскрыты в логической модели; нативная приёмка остаётся отдельной.'
+    include
+      android.host.guard,
+      android.host.coordinator,
+      android.host.storage,
+      android.host.sync,
+      android.host.biometry,
+      android.worker.worker,
+      android.credentials,
+      android.state,
+      android.vault,
+      android.local
     exclude
       android.worker.storage -> android.vault,
       android.worker.platform -> android.local
-    autoLayout LeftRight
+    autoLayout TopBottom
   }
 }
 
