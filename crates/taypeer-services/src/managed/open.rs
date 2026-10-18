@@ -131,7 +131,17 @@ impl DatabaseService {
     ) -> Result<Vec<(u64, ReadKey)>, ServiceError> {
         let selected = current_checkpoint(snapshot)?;
         let key = selected.unlock_key(password)?;
-        let (metadata, _) = codec::read_checkpoint(&selected, &key, snapshot.chain())?;
+        Self::authenticate_archive_keyring_with_key(snapshot, &key)
+    }
+
+    /// Authenticate historical keys with a worker-owned current read key. This is
+    /// used only to rewrap local credentials after a learned epoch transition.
+    pub fn authenticate_archive_keyring_with_key(
+        snapshot: &ArchiveSnapshot,
+        key: &ReadKey,
+    ) -> Result<Vec<(u64, ReadKey)>, ServiceError> {
+        let selected = current_checkpoint(snapshot)?;
+        let (metadata, _) = codec::read_checkpoint(&selected, key, snapshot.chain())?;
         metadata
             .keys
             .keys()
@@ -159,7 +169,20 @@ impl DatabaseService {
         password: &[u8],
         author: impl FnOnce(&ArchiveSnapshot) -> Result<Option<AuthorKey>, ServiceError>,
     ) -> Result<SessionToken, ServiceError> {
-        self.open_with_authentication(port, Authentication::Password(password), author)
+        self.open_managed_with_credentials(port, password, |snapshot, _key| author(snapshot))
+    }
+
+    /// Authenticate once with the master password, then expose the current key
+    /// only to the plaintext worker's local credential handshake. The callback
+    /// receives the exact AEAD-authenticated snapshot; it must recheck authority.
+    /// Password provenance and its measured derivation remain attached to the session.
+    pub fn open_managed_with_credentials(
+        &mut self,
+        port: Box<dyn CipherPersistence>,
+        password: &[u8],
+        credentials: impl FnOnce(&ArchiveSnapshot, &ReadKey) -> Result<Option<AuthorKey>, ServiceError>,
+    ) -> Result<SessionToken, ServiceError> {
+        self.open_with_authentication(port, Authentication::Password(password), credentials)
     }
 
     /// Open with a current read key owned by the plaintext worker. This does not acquire
@@ -172,14 +195,16 @@ impl DatabaseService {
         key: ReadKey,
         author: impl FnOnce(&ArchiveSnapshot) -> Result<Option<AuthorKey>, ServiceError>,
     ) -> Result<SessionToken, ServiceError> {
-        self.open_with_authentication(port, Authentication::Key(key), author)
+        self.open_with_authentication(port, Authentication::Key(key), |snapshot, _key| {
+            author(snapshot)
+        })
     }
 
     fn open_with_authentication(
         &mut self,
         port: Box<dyn CipherPersistence>,
         authentication: Authentication<'_>,
-        author: impl FnOnce(&ArchiveSnapshot) -> Result<Option<AuthorKey>, ServiceError>,
+        author: impl FnOnce(&ArchiveSnapshot, &ReadKey) -> Result<Option<AuthorKey>, ServiceError>,
     ) -> Result<SessionToken, ServiceError> {
         let snapshot = port.snapshot()?;
         let compatibility = self.capabilities.assess(&snapshot.chain().head().schema);
@@ -210,7 +235,7 @@ impl DatabaseService {
         } = authentication.key(&selected)?;
         let (mut metadata, mut document) =
             codec::read_checkpoint(&selected, &key, snapshot.chain())?;
-        let author = author(&snapshot)?;
+        let author = author(&snapshot, &key)?;
         let admitted = author
             .as_ref()
             .is_some_and(|a| snapshot.chain().head().members.contains_key(&a.device_id()));

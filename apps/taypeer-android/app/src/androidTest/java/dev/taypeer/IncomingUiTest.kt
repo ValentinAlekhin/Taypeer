@@ -5,7 +5,6 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import dev.taypeer.bridge.*
 import dev.taypeer.platform.DocumentManager
 import dev.taypeer.platform.ExchangeScheduler
-import dev.taypeer.platform.KeystoreCredentials
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
@@ -53,7 +52,7 @@ class IncomingUiTest {
     private fun replica(scenario: (DocumentSession, String) -> Unit) {
         val context = compose.activity.applicationContext
         val directory = File(context.noBackupFilesDir, "PUBLIC-incoming-ui-${UUID.randomUUID()}")
-        try { Host(directory.path, KeystoreCredentials(context)).use { host ->
+        try { Host.portable(directory.path).use { host ->
             host.setRelayPreference(RelayPreference.Disabled)
             DocumentManager(context, host).use { manager ->
                 try {
@@ -66,12 +65,12 @@ class IncomingUiTest {
                     val database = authority.databaseId()
                     host.startExchange()
                     val code = authority.createInvitation()
-                    compose.runOnIdle { compose.activity.documentState.join(code) }
+                    compose.runOnIdle { compose.activity.documentState.join(code, password) }
                     compose.waitUntil(30_000) { compose.activity.documentState.pending.any { it.database == database } }
                     var request = ""
                     compose.runOnIdle { request = compose.activity.documentState.pending.single { it.database == database }.request }
                     authority.approveInvitation(request)
-                    compose.runOnIdle { compose.activity.documentState.resumeJoin(request) }
+                    compose.runOnIdle { compose.activity.documentState.resumeJoin(request, password) }
                     compose.waitUntil(30_000) { compose.activity.documentState.catalog.any { it.database == database } }
                     compose.runOnIdle {
                         val state = compose.activity.documentState

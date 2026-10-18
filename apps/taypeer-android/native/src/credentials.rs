@@ -56,6 +56,20 @@ pub struct Host {
 }
 #[uniffi::export]
 impl Host {
+    /// Open the OS-independent encrypted profile. No credential-store callback or
+    /// database transport secret is acquired before that database is authenticated.
+    #[uniffi::constructor]
+    pub fn portable(directory: String) -> Result<Arc<Self>, AndroidError> {
+        Self::initialize_portable(directory, None)
+    }
+    /// Keep optional biometric key access separate from ordinary local credentials.
+    #[uniffi::constructor]
+    pub fn portable_with_os_biometry(
+        directory: String,
+        os_port: Box<dyn crate::OsBiometryPort>,
+    ) -> Result<Arc<Self>, AndroidError> {
+        Self::initialize_portable(directory, Some(Arc::from(os_port)))
+    }
     /// Create one host using the application's private profile directory.
     /// Off the main thread; a second concurrent owner fails with a sanitized error.
     #[uniffi::constructor]
@@ -90,6 +104,23 @@ impl Host {
     }
 }
 impl Host {
+    fn initialize_portable(
+        directory: String,
+        os_port: Option<Arc<dyn crate::OsBiometryPort>>,
+    ) -> Result<Arc<Self>, AndroidError> {
+        let directory = Path::new(&directory);
+        let sessions =
+            SessionController::new(SessionSettings::load(directory).map_err(host_error)?);
+        let preferences = crate::preferences::DevicePreferences::load(directory)?;
+        let runtime =
+            Arc::new(RuntimeHost::with_sessions(directory, sessions).map_err(host_error)?);
+        let biometry = os_port.map(|port| crate::biometry::Broker::new(Arc::clone(&runtime), port));
+        Ok(Arc::new(Self {
+            runtime,
+            preferences: Mutex::new(preferences),
+            biometry,
+        }))
+    }
     fn initialize(
         directory: String,
         credentials: Box<dyn CredentialPort>,

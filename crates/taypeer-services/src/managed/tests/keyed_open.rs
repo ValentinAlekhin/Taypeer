@@ -47,6 +47,69 @@ fn entry(service: &mut DatabaseService, session: &SessionToken) -> EntryId {
 }
 
 #[test]
+fn password_credential_handshake_preserves_current_key_provenance_and_measurement() {
+    let directory = tempfile::tempdir().unwrap();
+    let profile = Profile::new(86);
+    let path = directory.path().join("PUBLIC password credentials.taypeer");
+    let (mut service, session) = create(&profile, path.clone());
+    let snapshot = profile.coordinator.snapshot(&session.database).unwrap();
+    service.lock(&session).unwrap();
+    let called = Cell::new(0);
+    assert!(
+        service
+            .open_managed_with_credentials(
+                port(&profile, &session, &path),
+                b"PUBLIC wrong password",
+                |_, _| {
+                    called.set(called.get() + 1);
+                    Ok(Some(profile.author()))
+                },
+            )
+            .is_err()
+    );
+    assert_eq!(called.get(), 0);
+    let reopened = service
+        .open_managed_with_credentials(port(&profile, &session, &path), PASSWORD, |current, key| {
+            assert_eq!(current.fingerprint(), snapshot.fingerprint());
+            DatabaseService::authenticate_archive_read_key(current, key)?;
+            called.set(called.get() + 1);
+            Ok(Some(profile.author()))
+        })
+        .unwrap();
+    assert_eq!(called.get(), 1);
+    let (scope, key) = service.password_authenticated_key(&reopened).unwrap();
+    assert_eq!(scope.snapshot, snapshot.fingerprint());
+    assert!(
+        service
+            .database_policy_details(&reopened)
+            .unwrap()
+            .value
+            .protection
+            .password_derivation_ms
+            .is_some_and(|elapsed| elapsed > 0)
+    );
+    service.lock(&reopened).unwrap();
+    let keyed = service
+        .open_managed_with_key_and_author(port(&profile, &reopened, &path), key, |_| {
+            Ok(Some(profile.author()))
+        })
+        .unwrap();
+    assert!(matches!(
+        service.password_authenticated_key(&keyed),
+        Err(ServiceError::Unauthorized)
+    ));
+    assert_eq!(
+        service
+            .database_policy_details(&keyed)
+            .unwrap()
+            .value
+            .protection
+            .password_derivation_ms,
+        None
+    );
+}
+
+#[test]
 fn keyed_open_preserves_current_scope_history_blobs_and_encrypted_draft() {
     let directory = tempfile::tempdir().unwrap();
     let profile = Profile::new(85);

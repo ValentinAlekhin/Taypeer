@@ -7,7 +7,6 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.taypeer.bridge.*
 import dev.taypeer.platform.DocumentManager
-import dev.taypeer.platform.KeystoreCredentials
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -26,7 +25,7 @@ class ImageIconTest {
     private inline fun fixture(block: (DocumentManager) -> Unit) {
         val profile = File(context.noBackupFilesDir, "PUBLIC-image-icon-${UUID.randomUUID()}")
         try {
-            Host(profile.path, KeystoreCredentials(context)).use { host ->
+            Host.portable(profile.path).use { host ->
                 host.setRelayPreference(RelayPreference.Disabled)
                 DocumentManager(context, host).use { block(it) }
             }

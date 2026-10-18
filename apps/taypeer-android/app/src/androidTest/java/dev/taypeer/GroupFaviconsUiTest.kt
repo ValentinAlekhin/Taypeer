@@ -9,7 +9,6 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.taypeer.bridge.*
 import dev.taypeer.platform.DocumentManager
-import dev.taypeer.platform.KeystoreCredentials
 import kotlinx.coroutines.*
 import org.junit.Assert.*
 import org.junit.Rule
@@ -132,7 +131,7 @@ class GroupFaviconsUiTest {
     private inline fun fixture(block: (DocumentSession, DocumentManager) -> Unit) {
         val profile = File(context.noBackupFilesDir, "PUBLIC-group-favicons-ui-${UUID.randomUUID()}")
         try {
-            Host(profile.path, KeystoreCredentials(context)).use { host ->
+            Host.portable(profile.path).use { host ->
                 DocumentManager(context, host).use { manager ->
                     block(manager.create("PUBLIC group favicon UI database", null, newOperation(), password), manager)
                 }

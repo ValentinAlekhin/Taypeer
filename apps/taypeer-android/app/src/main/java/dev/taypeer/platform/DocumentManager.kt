@@ -33,6 +33,8 @@ class DocumentManager(
         val database: String, val source: OpenDocumentSource?)
     private val sessions = ConcurrentHashMap<ULong, Owned>()
     private val pending = ConcurrentHashMap<BoundDocumentProcess, Long>()
+    private data class Enrollment(val process: BoundDocumentProcess, val files: CiphertextDescriptors)
+    private val enrollments = ConcurrentHashMap<String, Enrollment>()
     private val epoch = AtomicLong()
     @Volatile var clearSensitiveUi: (() -> Unit)? = null
     @Volatile internal var beforeProcessStart: (() -> Unit)? = null
@@ -89,21 +91,38 @@ class DocumentManager(
             try { it.session.access() != SessionAccess.OPEN } catch (_: IllegalStateException) { true }
         }.forEach { close(it.session) }
     }
-    /** A fresh proof-only worker closes before the host starts network enrollment. */
-    fun join(code: String): EnrollmentProgress {
+    /** Enrollment credentials remain only in an isolated worker and encrypted staging. */
+    fun join(code: String, password: String = ""): EnrollmentProgress = enrollment(null) { process, files ->
+        host.joinInvitation(code, password, process, files)
+    }
+    fun resumeJoin(request: String, password: String = ""): EnrollmentProgress = enrollment(request) { process, files ->
+        host.resumeJoin(request, password, process, files)
+    }
+    private fun enrollment(request: String?, action: (BoundDocumentProcess, CiphertextDescriptors) -> EnrollmentProgress): EnrollmentProgress {
         offUi()
         val startedAt = epoch.get()
-        val files = CiphertextDescriptors(allocate)
-        val process = BoundDocumentProcess(context, files, allocate) { beforeProcessStart?.invoke() }
-        pending[process] = startedAt
+        val existing = request?.let(enrollments::get)
+        val owned = existing ?: CiphertextDescriptors(allocate).let { files -> Enrollment(BoundDocumentProcess(context, files, allocate) { beforeProcessStart?.invoke() }, files) }
+        pending[owned.process] = startedAt
         try {
             checkEpoch(startedAt)
-            val progress = host.joinInvitation(code, process, files)
+            val progress = action(owned.process, owned.files)
             checkEpoch(startedAt)
+            when (progress) {
+                is EnrollmentProgress.Pending -> enrollments.put(progress.request, owned)?.takeIf { it !== owned }?.let { it.process.close(); it.files.close() }
+                else -> {
+                    request?.let(enrollments::remove)?.takeIf { it !== owned }?.let { it.process.close(); it.files.close() }
+                    owned.process.close(); owned.files.close()
+                }
+            }
             return progress
-        } finally { pending.remove(process); process.close(); files.close() }
+        } catch (error: Exception) {
+            val retain = request != null && epoch.get() == startedAt && try { host.enrollmentActive(request) } catch (_: Exception) { false }
+            if (retain) enrollments[request!!] = owned
+            else { request?.let { enrollments.remove(it, owned) }; owned.process.close(); owned.files.close() }
+            throw error
+        } finally { pending.remove(owned.process) }
     }
-    fun resumeJoin(request: String): EnrollmentProgress { offUi(); return host.resumeJoin(request) }
     fun pendingJoins(): List<EnrollmentRow> { offUi(); return host.pendingJoins() }
     fun activity() { host.activity() }
 
@@ -111,6 +130,8 @@ class DocumentManager(
     fun background() {
         epoch.incrementAndGet()
         pending.keys.toList().forEach { it.close() }
+        enrollments.values.toList().forEach { it.process.close(); it.files.close() }
+        enrollments.clear()
         try { clearSensitiveUi?.invoke() } finally { host.background() }
     }
     fun lock(session: DocumentSession) { session.lock() }

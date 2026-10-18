@@ -11,7 +11,6 @@ import dev.taypeer.bridge.TextEdit
 import dev.taypeer.platform.DocumentManager
 import dev.taypeer.platform.CipherPersistenceEndpoint
 import dev.taypeer.platform.SelectedTransfersEndpoint
-import dev.taypeer.platform.KeystoreCredentials
 import dev.taypeer.platform.WorkingCopies
 import dev.taypeer.platform.anonymousCiphertext
 import org.junit.Assert.*
@@ -33,7 +32,7 @@ class DocumentTest {
     private inline fun fixture(block: (Host, DocumentManager) -> Unit) {
         val profile = File(context.noBackupFilesDir, "PUBLIC-document-${UUID.randomUUID()}")
         try {
-            Host(profile.path, KeystoreCredentials(context)).use { host ->
+            Host.portable(profile.path).use { host ->
                 DocumentManager(context, host).use { manager -> block(host, manager) }
             }
         } finally { assertTrue(profile.deleteRecursively()) }
@@ -47,7 +46,7 @@ class DocumentTest {
         var entry = ""
         try {
             repeat(3) { lifetime ->
-                Host(profile.path, KeystoreCredentials(context)).use { host ->
+                Host.portable(profile.path).use { host ->
                     DocumentManager(context, host).use { manager ->
                         val session = if (lifetime == 0) manager.create("PUBLIC retained capability", null, "PUBLIC retained create", password)
                                       else manager.open(path, password)
@@ -74,7 +73,9 @@ class DocumentTest {
                     snapshot.getParcelable<android.os.ParcelFileDescriptor>("file")?.close()
                 }
                 assertEquals(6, endpoint.createTemporary().status)
-                assertEquals(6, endpoint.author(null).status)
+                assertEquals(6, endpoint.credential(byteArrayOf(), false).getInt("status"))
+                assertEquals(6, endpoint.publishCredential(byteArrayOf(), byteArrayOf(), false))
+                assertEquals(6, endpoint.finalizeCredential(byteArrayOf(), false))
                 val incoming = anonymousCiphertext(context)
                 assertEquals(6, endpoint.saveDraft(incoming))
                 assertFalse(incoming.fileDescriptor.valid())
@@ -95,7 +96,7 @@ class DocumentTest {
         val entered = CountDownLatch(1)
         val release = CountDownLatch(1)
         val command = Executors.newSingleThreadExecutor()
-        val host = Host(profile.path, KeystoreCredentials(context))
+        val host = Host.portable(profile.path)
         val manager = DocumentManager(context, host) {
             if (blockNext.compareAndSet(true, false)) {
                 entered.countDown()
@@ -119,8 +120,10 @@ class DocumentTest {
             host.close()
             hostClosed = true
             assertFalse(accepted.isDone)
-            assertEquals(6, endpoint.author(null).status)
-            Host(profile.path, KeystoreCredentials(context)).use { freshHost ->
+            assertEquals(6, endpoint.credential(byteArrayOf(), false).getInt("status"))
+            assertEquals(6, endpoint.publishCredential(byteArrayOf(), byteArrayOf(), false))
+            assertEquals(6, endpoint.finalizeCredential(byteArrayOf(), false))
+            Host.portable(profile.path).use { freshHost ->
                 DocumentManager(context, freshHost).use { fresh ->
                     // The accepted callback still owns the coordinator until it returns.
                     assertThrows(AndroidException.StorageBusy::class.java) { fresh.open(path, password) }
@@ -249,7 +252,7 @@ class DocumentTest {
         val release = CountDownLatch(1)
         val command = Executors.newSingleThreadExecutor()
         try {
-            Host(profile.path, KeystoreCredentials(context)).use { host ->
+            Host.portable(profile.path).use { host ->
                 val manager = DocumentManager(context, host) {
                     if (fail.get()) throw AndroidException.StorageIo()
                     if (block.get()) { entered.countDown(); check(release.await(15, TimeUnit.SECONDS)) }
@@ -336,10 +339,10 @@ class DocumentTest {
             sourceHost.setRelayPreference(dev.taypeer.bridge.RelayPreference.Disabled)
             sourceHost.startExchange()
             val code = session.createInvitation()
-            Host(recipientProfile.path, KeystoreCredentials(context)).use { recipientHost ->
+            Host.portable(recipientProfile.path).use { recipientHost ->
                 recipientHost.setRelayPreference(dev.taypeer.bridge.RelayPreference.Disabled)
                 DocumentManager(context, recipientHost).use { recipient ->
-                    cancelBeforeBoot(recipient, command) { recipient.join(code) }
+                    cancelBeforeBoot(recipient, command) { recipient.join(code, password) }
                     assertTrue(recipient.catalog().isEmpty())
                     assertTrue(recipient.pendingJoins().isEmpty())
                 }

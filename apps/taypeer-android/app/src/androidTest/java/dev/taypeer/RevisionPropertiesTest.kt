@@ -13,7 +13,6 @@ import dev.taypeer.bridge.SaveState
 import dev.taypeer.bridge.SessionAccess
 import dev.taypeer.bridge.TextEdit
 import dev.taypeer.platform.DocumentManager
-import dev.taypeer.platform.KeystoreCredentials
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -29,7 +28,7 @@ class RevisionPropertiesTest {
     @Test fun savedPropertiesStayDistinctReadOnlyAndRequireTheLiveSession() {
         val directory = File(context.noBackupFilesDir, "PUBLIC-revision-properties-${UUID.randomUUID()}")
         try {
-            Host(directory.path, KeystoreCredentials(context)).use { host ->
+            Host.portable(directory.path).use { host ->
                 host.setRelayPreference(RelayPreference.Disabled)
                 DocumentManager(context, host).use { manager ->
                     val session = manager.create("PUBLIC historical properties database", null, newOperation(), master)

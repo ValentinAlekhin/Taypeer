@@ -6,6 +6,190 @@ use zeroize::Zeroizing;
 
 mod boot;
 
+#[test]
+fn portable_recovery_resumes_after_host_restart_using_only_the_new_password() {
+    use taypeer_storage::{LocalCredential, LocalCredentialScope, LocalStateKey};
+    let directory = tempfile::tempdir().unwrap();
+    let profile_path = directory.path().join("PUBLIC portable recovery profile");
+    let source_path = directory
+        .path()
+        .join("PUBLIC portable recovery source.taypeer");
+    let host = RuntimeHost::new(&profile_path).unwrap();
+    let mut service = DatabaseService::new();
+    let session = host
+        .open_local(
+            &mut service,
+            &source_path,
+            b"PUBLIC original password",
+            Some("PUBLIC source".into()),
+        )
+        .unwrap();
+    host.register_working_copy(&source_path).unwrap();
+    let source_context = host.context.for_database(&session.database).unwrap();
+    let cap = source_context.profile.recovery_capability().unwrap();
+    let source_capability = crate::profile::TransportCapability {
+        database: cap.database.clone(),
+        root: cap.root,
+        enrolled: cap.enrolled,
+        transport_seed: Zeroizing::new(*cap.transport_seed),
+        local_state_seed: cap
+            .local_state_seed
+            .as_ref()
+            .map(|seed| Zeroizing::new(**seed)),
+    };
+    let writer = host.platform_cipher_writer(&source_path).unwrap();
+    writer
+        .activate_credentials(source_capability, None)
+        .unwrap();
+    let captured = service.freeze_trust_recovery_source(&session).unwrap();
+    let snapshot = writer.snapshot().unwrap();
+    let operation = Digest::of(b"PUBLIC portable cold recovery");
+    let (source, original) = writer
+        .freeze_recovery(operation, snapshot.fingerprint())
+        .unwrap();
+    let author = AuthorKey::from_seed(&[121; 32]);
+    let transport = TransportKey::from_seed(&[122; 32]);
+    let identity = Identity::new(author.public(), transport.public()).unwrap();
+    let intent = RecoveryIntent {
+        source: source.clone(),
+        identity,
+    };
+    assert!(writer.recovery_candidate(&intent).unwrap().is_none());
+    let named = NamedRecoveryIntent {
+        operation,
+        database: source.database.clone(),
+        working_copy: source.working_copy,
+        root: source.root,
+        source: source.fingerprint,
+        identity,
+        name: "PUBLIC cold recovered name".into(),
+    };
+    let password = b"PUBLIC new recovery password";
+    let seed = captured
+        .bind_named(named.clone(), password)
+        .unwrap()
+        .prepare(&author)
+        .unwrap();
+    let root = seed.controls[0].hash().unwrap();
+    let epoch = seed.controls.last().unwrap().body.epoch;
+    let key = seed
+        .objects
+        .iter()
+        .find(|object| object.descriptor().digest == seed.checkpoint)
+        .unwrap()
+        .unlock_key(password)
+        .unwrap();
+    let local = LocalStateKey::generate().unwrap();
+    let scope = LocalCredentialScope {
+        database: source.database.clone(),
+        root,
+        epoch,
+    };
+    let record = LocalCredential::new(scope.clone(), &author, &transport, &local);
+    let capability = crate::profile::TransportCapability {
+        database: scope.database.clone(),
+        root,
+        enrolled: true,
+        transport_seed: transport.secret_seed(),
+        local_state_seed: Some(Zeroizing::new(*local.secret_bytes())),
+    };
+    let published = writer
+        .publish_recovery_with_credentials(&intent, seed, record.seal(&key).unwrap(), capability)
+        .unwrap();
+    let unchanged = std::fs::read(&source_path).unwrap();
+    drop(writer);
+    drop(captured);
+    drop(service);
+    drop(source_context);
+    drop(host);
+
+    let host = RuntimeHost::new(&profile_path).unwrap();
+    assert!(host.network_snapshot().unwrap().databases.is_empty());
+    let pending = host.pending_recoveries().unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].source, source);
+    assert_eq!(pending[0].phase, RecoveryPhase::SourceFrozen);
+    assert_eq!(host.recovery_phase(&source).unwrap(), None);
+    let writer = host.platform_cipher_writer(&source_path).unwrap();
+    let (hint, hinted_original) = writer.recovery_snapshot(operation).unwrap().unwrap();
+    assert_eq!(hint, source);
+    let (hinted_intent, candidate) = writer.recovery_boot_candidate(&hint).unwrap().unwrap();
+    assert_eq!(hinted_intent, intent);
+    let key = DatabaseService::authenticate_archive_credentials(&candidate, password).unwrap();
+    let record = LocalCredential::open(
+        &writer.credential(&scope, false).unwrap().unwrap(),
+        &key,
+        &scope,
+    )
+    .unwrap();
+    let capability = crate::profile::TransportCapability {
+        database: scope.database.clone(),
+        root: scope.root,
+        enrolled: record.author().is_some(),
+        transport_seed: record.transport().secret_seed(),
+        local_state_seed: Some(Zeroizing::new(*record.local_state_key().secret_bytes())),
+    };
+    writer
+        .activate_recovery_credentials(&source, capability)
+        .unwrap();
+    assert_eq!(
+        writer
+            .recovery_snapshot(operation)
+            .unwrap()
+            .unwrap()
+            .1
+            .fingerprint(),
+        original.fingerprint()
+    );
+    assert_eq!(
+        taypeer_services::validate_named_trust_recovery(
+            &hinted_original,
+            &candidate,
+            &named,
+            password
+        )
+        .unwrap(),
+        root
+    );
+    writer.confirm_recovery(&published).unwrap();
+    drop(writer);
+    let copy = host.adopt_closed_platform_recovery(&published).unwrap();
+    let mut recovered = DatabaseService::new();
+    let opened = host
+        .open_local(&mut recovered, &copy.path, password, None)
+        .unwrap();
+    assert!(recovered.database_info(&opened).unwrap().writable);
+    assert_eq!(host.adopt_platform_recovery(&published).unwrap(), copy);
+    assert_eq!(
+        host.adopt_closed_platform_recovery(&published).unwrap(),
+        copy
+    );
+    recovered.lock(&opened).unwrap();
+    drop(recovered);
+    host.close(&copy.database).unwrap();
+    assert_eq!(host.adopt_platform_recovery(&published).unwrap(), copy);
+    assert_eq!(std::fs::read(&source_path).unwrap(), unchanged);
+    drop(host);
+
+    let host = RuntimeHost::new(&profile_path).unwrap();
+    assert!(host.adopt_platform_recovery(&published).is_err());
+    let mut recovered = DatabaseService::new();
+    let opened = host
+        .open_local(&mut recovered, &copy.path, password, None)
+        .unwrap();
+    assert!(recovered.database_info(&opened).unwrap().writable);
+    assert_eq!(host.adopt_platform_recovery(&published).unwrap(), copy);
+    assert_eq!(
+        host.adopt_closed_platform_recovery(&published).unwrap(),
+        copy
+    );
+    let mut foreign = published.clone();
+    foreign.fingerprint = Digest::of(b"PUBLIC foreign recovery publication");
+    assert!(host.adopt_platform_recovery(&foreign).is_err());
+    assert_eq!(host.working_copies().unwrap(), vec![copy]);
+    assert_eq!(std::fs::read(&source_path).unwrap(), unchanged);
+}
+
 type CredentialValues = BTreeMap<(String, String), Vec<u8>>;
 #[derive(Clone, Copy)]
 enum Fault {

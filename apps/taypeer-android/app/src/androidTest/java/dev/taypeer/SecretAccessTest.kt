@@ -3,24 +3,22 @@ package dev.taypeer
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.taypeer.bridge.*
 import dev.taypeer.platform.DocumentManager
-import dev.taypeer.platform.KeystoreCredentials
 import org.junit.Assert.*
 import org.junit.Test
 import java.io.File
 import java.util.UUID
-import java.util.concurrent.atomic.AtomicBoolean
 
-/** Actual Android host/isolated worker/Keystore boundary, separate from rendering acceptance tests. */
+/** Actual Android host/isolated worker/portable state boundary. */
 class SecretAccessTest {
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
     private val password = "PUBLIC access master password"
     private data class Fixture(val manager: DocumentManager, val session: DocumentSession, val entry: String,
-        val revision: String, val protected: String, val plain: String, val path: String)
+        val revision: String, val protected: String, val plain: String, val path: String, val profile: File)
 
-    private fun fixture(credentials: CredentialPort = KeystoreCredentials(context), scenario: (Fixture) -> Unit) {
+    private fun fixture(scenario: (Fixture) -> Unit) {
         val profile = File(context.noBackupFilesDir, "PUBLIC-secret-access-${UUID.randomUUID()}")
         try {
-            Host(profile.path, credentials).use { host ->
+            Host.portable(profile.path).use { host ->
                 host.setRelayPreference(RelayPreference.Disabled)
                 DocumentManager(context, host).use { manager ->
                     val session = manager.create("PUBLIC access database", null, newOperation(), password)
@@ -41,7 +39,7 @@ class SecretAccessTest {
                     val latest = session.editor()
                     session.save(latest.form.draft, latest.form.revision, newOperation())
                     session.deleteForm(latest.form.draft)
-                    scenario(Fixture(manager, session, entry, revision, protected, plain, manager.catalog().single().path))
+                    scenario(Fixture(manager, session, entry, revision, protected, plain, manager.catalog().single().path, profile))
                 }
             }
         } finally { assertTrue(profile.deleteRecursively()) }
@@ -96,28 +94,29 @@ class SecretAccessTest {
         assertArrayEquals(before, File(fixture.path).readBytes())
     }
 
-    @Test fun realCredentialPublicationFailureRetainsTheExactGrantForConfirmOnlyRetry() {
-        val delegate = KeystoreCredentials(context)
-        val fail = AtomicBoolean(true)
-        val credentials = object : CredentialPort by delegate {
-            override fun set(service: String, account: String, bytes: ByteArray) {
-                delegate.set(service, account, bytes)
-                if (account.startsWith("state:entry-access:") && fail.compareAndSet(true, false)) throw AndroidException.CommitUncertain()
-            }
+    @Test fun changedPortableStateRetainsTheExactGrantForConfirmOnlyRetry() = fixture { fixture ->
+        val before = File(fixture.path).readBytes()
+        val history = fixture.session.history(FormKind.ENTRY, fixture.entry)
+        val issued = fixture.session.revealForAccess(fixture.entry, null, null)
+        val state = publicPortableStates(fixture.profile).keys.single()
+        val protected = state.readBytes()
+        issued.grant.use { grant ->
+            // Change only this PUBLIC fixture's encrypted local state. The real FileStore
+            // must reject the stale generation before confirming an access mark.
+            val changed = protected.copyOf().also { it[it.lastIndex] = (it.last().toInt() xor 1).toByte() }
+            state.writeBytes(changed)
+            try {
+                assertThrows(AndroidException.ProfileInvalid::class.java) { grant.confirm() }
+                assertNull(fixture.session.entryProperties(fixture.entry).accessedAt)
+            } finally { state.writeBytes(protected) }
+            val confirmed = grant.confirm()
+            assertEquals(confirmed, fixture.session.entryProperties(fixture.entry).accessedAt)
+            assertEquals(confirmed, grant.confirm())
         }
-        fixture(credentials) { fixture ->
-            val before = File(fixture.path).readBytes()
-            val history = fixture.session.history(FormKind.ENTRY, fixture.entry)
-            val issued = fixture.session.revealForAccess(fixture.entry, null, null)
-            issued.grant.use { grant ->
-                assertThrows(AndroidException.CommitUncertain::class.java) { grant.confirm() }
-                assertFalse(fail.get())
-                val confirmed = grant.confirm()
-                assertEquals(confirmed, fixture.session.entryProperties(fixture.entry).accessedAt)
-                assertEquals(confirmed, grant.confirm())
-            }
-            assertEquals(history, fixture.session.history(FormKind.ENTRY, fixture.entry))
-            assertArrayEquals(before, File(fixture.path).readBytes())
-        }
+        fixture.session.lock(); fixture.manager.close(fixture.session)
+        val reopened = fixture.manager.open(fixture.path, password)
+        assertNotNull(reopened.entryProperties(fixture.entry).accessedAt)
+        assertEquals(history, reopened.history(FormKind.ENTRY, fixture.entry))
+        assertArrayEquals(before, File(fixture.path).readBytes())
     }
 }

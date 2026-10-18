@@ -1,12 +1,9 @@
 package dev.taypeer
 
-import androidx.test.platform.app.InstrumentationRegistry
 import dev.taypeer.bridge.*
-import dev.taypeer.platform.KeystoreCredentials
 import org.junit.Assert.*
 import org.junit.Test
 import java.io.File
-import java.util.concurrent.atomic.AtomicBoolean
 
 /** Real Native public workflow over authenticated Iroh and private isolated document workers. */
 class ManagementNetworkTest {
@@ -84,31 +81,16 @@ class ManagementNetworkTest {
         }
     }
 
-    @Test fun lostAcceptRequestedPublicationSurvivesHostRestartAndCannotBecomeARejection() {
-        val armed = AtomicBoolean()
-        val fired = AtomicBoolean()
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
-        PublicManagementFixture { index ->
-            val delegate = KeystoreCredentials(context)
-            if (index == 0) delegate else object : CredentialPort by delegate {
-                override fun set(service: String, account: String, bytes: ByteArray) {
-                    // The real store erases its input on return; retain only this PUBLIC phase match.
-                    val acceptRequested = account.startsWith("state:management:") && armed.get() &&
-                        bytes.toString(Charsets.UTF_8).contains("\"kind\":\"accept_requested\"")
-                    delegate.set(service, account, bytes)
-                    // This synthetic metadata-only fault targets the actual private journal phase.
-                    if (acceptRequested && fired.compareAndSet(false, true))
-                        throw AndroidException.CommitUncertain()
-                }
-            }
-        }.use { fixture ->
+    @Test fun interruptedAcceptRequestedSurvivesHostRestartAndCannotBecomeARejection() {
+        PublicManagementFixture().use { fixture ->
             fixture.prepare()
             val proposal = fixture.propose()
             val history = fixture.sourceSession.history(FormKind.ENTRY, fixture.entry)
             val sourceBefore = File(fixture.sourceCopy.path).readBytes()
-            armed.set(true)
-            assertThrows(AndroidException.CommitUncertain::class.java) { fixture.peerSession!!.acceptManagement(proposal.intent) }
-            assertTrue(fired.get())
+            // The real protected decision is saved before a fresh source RPC. Closing only
+            // this local endpoint interrupts that RPC without replacing persistence.
+            fixture.peerHost.stopExchange()
+            assertThrows(AndroidException.Runtime::class.java) { fixture.peerSession!!.acceptManagement(proposal.intent) }
             fixture.restartPeer()
             val retained = fixture.peerHost.managementHandoffs(fixture.database).single()
             assertEquals(proposal.intent, retained.intent)

@@ -44,6 +44,9 @@ impl CipherPersistence for Adapter {
     }
 }
 impl PlatformDocument for Adapter {
+    fn portable_credentials(&self) -> bool {
+        false
+    }
     fn temporary(&self) -> TemporaryStorage {
         self.writer.context.ciphertext_staging()
     }
@@ -186,8 +189,12 @@ fn candidate_password_alone_resumes_exact_receipt_and_wrong_input_does_not_poiso
             crate::Command::Lock,
         ],
     );
+    assert!(
+        replies[0].is_ok(),
+        "PUBLIC recovery boot failed: {:?}",
+        replies[0].as_ref().err()
+    );
     assert_eq!(replies.len(), 4);
-    assert!(replies[0].is_ok());
     assert!(matches!(
         replies[1],
         Err(RuntimeError::Service(

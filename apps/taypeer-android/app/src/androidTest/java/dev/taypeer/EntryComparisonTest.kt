@@ -11,7 +11,6 @@ import dev.taypeer.bridge.RelayPreference
 import dev.taypeer.bridge.SaveState
 import dev.taypeer.bridge.TextEdit
 import dev.taypeer.platform.DocumentManager
-import dev.taypeer.platform.KeystoreCredentials
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -48,7 +47,7 @@ class EntryComparisonTest {
     private fun fixture(scenario: (Fixture) -> Unit) {
         val profile = File(context.noBackupFilesDir, "PUBLIC-entry-comparison-${UUID.randomUUID()}")
         try {
-            Host(profile.path, KeystoreCredentials(context)).use { host ->
+            Host.portable(profile.path).use { host ->
                 host.setRelayPreference(RelayPreference.Disabled)
                 DocumentManager(context, host).use { manager ->
                     val session = manager.create("PUBLIC entry comparison database", null, newOperation(), master)

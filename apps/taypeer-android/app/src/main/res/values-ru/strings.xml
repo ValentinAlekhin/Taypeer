@@ -27,6 +27,7 @@
     <string name="create">Создать</string>
     <string name="unlock">Разблокировать</string>
     <string name="master_password">Мастер-пароль</string>
+    <string name="resume_invitation_password_hint">После перезапуска сначала введите пароль, указанный при подключении. Если он отличается от пароля БД, при следующей попытке введите текущий мастер-пароль.</string>
     <string name="new_master_password">Новый мастер-пароль</string>
     <string name="name">Название</string>
     <string name="description">Описание</string>

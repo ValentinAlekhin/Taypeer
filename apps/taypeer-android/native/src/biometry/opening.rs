@@ -158,9 +158,9 @@ impl BiometricOpening {
             .ok_or_else(|| refusal(BiometryFailure::Stale))?;
         let result = (|| {
             self.call.run(self.broker.port.as_ref())?;
-            let worker = pending
-                .worker
-                .complete(self.fence.lease())
+            let worker = self
+                .host
+                .complete_platform_biometric_open(pending.worker, self.fence.lease())
                 .map_err(crate::document::runtime)?;
             self.fence.check()?;
             if !worker.is_open() {

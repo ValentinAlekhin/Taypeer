@@ -34,6 +34,21 @@ pub struct PendingBiometricOpen {
     sessions: SessionController,
 }
 impl RuntimeHost {
+    /// Complete the authenticated keyed boot and start any configured exchange.
+    /// A pending launch belongs to this exact host and cannot activate another profile.
+    pub fn complete_platform_biometric_open(
+        &self,
+        pending: PendingBiometricOpen,
+        lease: &BiometricInputLease,
+    ) -> Result<Worker, RuntimeError> {
+        if !Arc::ptr_eq(&self.context, &pending.context) {
+            return Err(RuntimeError::Protocol);
+        }
+        let worker = pending.complete(lease)?;
+        self.start_requested_network();
+        Ok(worker)
+    }
+
     /// Launch the ordinary descriptor process and check its exact keyed Opening challenge.
     /// Supervision starts before boot or prompt; no author/session is acquired by this step.
     /// A refused/stale/unconfigured boot revokes the child before returning an error.
@@ -95,7 +110,7 @@ impl PendingBiometricOpen {
     /// Consume this owner only after Native has installed the exact OS-completed input.
     /// Author access follows current checkpoint authentication inside the child, never here.
     /// A stale/cancelled/error reply cannot become a Worker or revive a closed generation.
-    pub fn complete(mut self, lease: &BiometricInputLease) -> Result<Worker, RuntimeError> {
+    fn complete(mut self, lease: &BiometricInputLease) -> Result<Worker, RuntimeError> {
         if lease != &self.challenge {
             return Err(RuntimeError::Protocol);
         }

@@ -2,7 +2,6 @@ package dev.taypeer
 
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.taypeer.bridge.Host
-import dev.taypeer.platform.KeystoreCredentials
 import dev.taypeer.platform.WorkingCopies
 import org.junit.Assert.*
 import org.junit.Test
@@ -17,7 +16,7 @@ class ImportTest {
     private inline fun fixture(block: (WorkingCopies) -> Unit) {
         val context = instrumentation.targetContext
         val profile = File(context.noBackupFilesDir, "PUBLIC-import-${UUID.randomUUID()}")
-        try { Host(profile.path, KeystoreCredentials(context)).use { host -> block(WorkingCopies(context, host)) } }
+        try { Host.portable(profile.path).use { host -> block(WorkingCopies(context, host)) } }
         finally { assertTrue(profile.deleteRecursively()) }
     }
     @Test fun importsVerifiedCiphertextAndKeepsTheSourceUnchanged() = fixture { copies ->

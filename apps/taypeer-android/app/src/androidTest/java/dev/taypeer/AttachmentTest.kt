@@ -12,7 +12,6 @@ import dev.taypeer.bridge.SelectedInput
 import dev.taypeer.bridge.SelectedOutput
 import dev.taypeer.bridge.TextEdit
 import dev.taypeer.platform.DocumentManager
-import dev.taypeer.platform.KeystoreCredentials
 import dev.taypeer.platform.SelectedDescriptors
 import org.junit.Assert.*
 import org.junit.Test
@@ -35,7 +34,7 @@ class AttachmentTest {
         val selected = File(context.cacheDir, "PUBLIC-selected-fixtures/PUBLIC-${UUID.randomUUID()}.bin")
         check(selected.parentFile!!.isDirectory || selected.parentFile!!.mkdirs())
         try {
-            Host(profile.path, KeystoreCredentials(context)).use { host ->
+            Host.portable(profile.path).use { host ->
                 val manager = DocumentManager(context, host)
                 try { block(manager, selected) }
                 finally {

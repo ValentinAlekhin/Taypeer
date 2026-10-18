@@ -6,7 +6,6 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.taypeer.bridge.*
 import dev.taypeer.platform.DocumentManager
-import dev.taypeer.platform.KeystoreCredentials
 import dev.taypeer.platform.SelectedDescriptorOutput
 import dev.taypeer.platform.SelectedDescriptors
 import kotlinx.coroutines.*
@@ -34,7 +33,7 @@ class CiphertextCopyTest {
     }
     private inline fun fixture(block: (Host, DocumentManager, DocumentSession, WorkingCopyView) -> Unit) {
         val profile = File(context.noBackupFilesDir, "PUBLIC-ciphertext-copy-${UUID.randomUUID()}")
-        try { Host(profile.path, KeystoreCredentials(context)).use { host ->
+        try { Host.portable(profile.path).use { host ->
             host.setRelayPreference(RelayPreference.Disabled)
             DocumentManager(context, host).use { manager ->
                 val session = manager.create("PUBLIC whole encrypted copy", null, newOperation(), password)
@@ -105,7 +104,7 @@ class CiphertextCopyTest {
                 assertEquals(catalog, host.workingCopies())
                 assertEquals(beforeIdentity, captured.identity())
                 assertEquals(copy.database, inspectImport(output.path))
-                Host(importedProfile.path, KeystoreCredentials(context)).use { importedHost ->
+                Host.portable(importedProfile.path).use { importedHost ->
                     importedHost.setRelayPreference(RelayPreference.Disabled)
                     DocumentManager(context, importedHost).use { importedManager ->
                         val reopened = importedManager.import(uri(output), password)

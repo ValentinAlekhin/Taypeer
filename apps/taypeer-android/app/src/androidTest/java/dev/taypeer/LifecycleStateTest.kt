@@ -4,7 +4,6 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.taypeer.bridge.*
 import dev.taypeer.platform.DocumentManager
-import dev.taypeer.platform.KeystoreCredentials
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -46,7 +45,7 @@ class LifecycleStateTest {
     private fun fixture(kind: FormKind, scenario: (Fixture) -> Unit) {
         val profile = File(context.noBackupFilesDir, "PUBLIC-lifecycle-state-${kind.name}-${UUID.randomUUID()}")
         try {
-            Host(profile.path, KeystoreCredentials(context)).use { host ->
+            Host.portable(profile.path).use { host ->
                 host.setRelayPreference(RelayPreference.Disabled)
                 DocumentManager(context, host).use { manager ->
                     val session = manager.create("PUBLIC lifecycle state database", null, newOperation(), master)

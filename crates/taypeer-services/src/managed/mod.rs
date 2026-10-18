@@ -482,6 +482,21 @@ impl DatabaseService {
         now: i64,
         temporary: taypeer_storage::TemporaryStorage,
     ) -> Result<ArchiveSeed, ServiceError> {
+        Self::prepare_managed_form_with_key_in(form, password, author, identity, now, temporary)
+            .map(|(seed, _key)| seed)
+    }
+
+    /// Prepare ciphertext and retain its generated current key inside the plaintext
+    /// worker, so local credentials can be sealed without repeating password derivation.
+    /// Neither this key nor an author seed may cross a host/UI transport boundary.
+    pub fn prepare_managed_form_with_key_in(
+        form: crate::CreateDatabase,
+        password: &[u8],
+        author: &AuthorKey,
+        identity: Identity,
+        now: i64,
+        temporary: taypeer_storage::TemporaryStorage,
+    ) -> Result<(ArchiveSeed, ReadKey), ServiceError> {
         let policy = form.policy;
         if identity.device != author.device_id() {
             return Err(ServiceError::Unauthorized);
@@ -539,12 +554,15 @@ impl DatabaseService {
             &clear,
             temporary.clone(),
         )?;
-        Ok(ArchiveSeed {
-            controls: chain.records().to_vec(),
-            checkpoint: checkpoint.descriptor().digest,
-            baseline: baseline.descriptor().digest,
-            objects: vec![checkpoint, baseline],
-        })
+        Ok((
+            ArchiveSeed {
+                controls: chain.records().to_vec(),
+                checkpoint: checkpoint.descriptor().digest,
+                baseline: baseline.descriptor().digest,
+                objects: vec![checkpoint, baseline],
+            },
+            key,
+        ))
     }
     /// Authenticated worker authority last accepted into this unlocked session.
     /// This reads the retained snapshot and performs no coordinator I/O.

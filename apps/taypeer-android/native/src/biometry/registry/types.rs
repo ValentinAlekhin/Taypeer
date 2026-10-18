@@ -290,7 +290,7 @@ pub(super) enum ProofStage {
 pub(super) enum PendingSetup {
     Enable {
         operation: Digest,
-        candidate: WrapperRecord,
+        candidate: Box<WrapperRecord>,
         stage: ProofStage,
     },
     Disable {
@@ -302,7 +302,7 @@ impl PendingSetup {
     pub(super) fn enable(operation: Digest, candidate: WrapperRecord) -> Self {
         Self::Enable {
             operation,
-            candidate,
+            candidate: Box::new(candidate),
             stage: ProofStage::ProofConfirmed,
         }
     }

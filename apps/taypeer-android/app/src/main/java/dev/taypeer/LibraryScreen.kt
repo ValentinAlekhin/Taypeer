@@ -61,6 +61,7 @@ fun LibraryScreen(state: DocumentState, attachments: AttachmentActions, copySecr
 private fun LibraryContent(state: DocumentState, attachments: AttachmentActions, copySecret: (String) -> Boolean, copy: (String) -> Unit) {
     var authentication by remember { mutableStateOf<Authentication?>(state.lockedCopy?.let(Authentication::Open)) }
     var join by remember { mutableStateOf(false) }
+    var resumeJoin by remember { mutableStateOf<String?>(null) }
     var forms by remember { mutableStateOf(false) }
     var settings by remember { mutableStateOf(false) }
     var relaySettings by remember { mutableStateOf(false) }
@@ -140,7 +141,13 @@ private fun LibraryContent(state: DocumentState, attachments: AttachmentActions,
         }) }
         return
     }
-    if (join) { ReceiveInvitationScreen(onJoin = { code -> state.join(code); join = false }, onClose = { join = false }); return }
+    if (join || resumeJoin != null) {
+        ReceiveInvitationScreen(request = resumeJoin, onJoin = { code, password ->
+            if (resumeJoin == null) state.join(code, password) else state.resumeJoin(code, password)
+            join = false; resumeJoin = null
+        }, onClose = { join = false; resumeJoin = null })
+        return
+    }
     if (state.recovery.showing) {
         RecoveryScreen(state.recovery, application.deviceSettings.settings?.deviceName) { target ->
             authentication = Authentication.Recovery(target.source, target.operation, candidate = false)
@@ -307,7 +314,7 @@ private fun LibraryContent(state: DocumentState, attachments: AttachmentActions,
                             WelcomeContent(state.catalog, { authentication = Authentication.Create }, attachments.importDatabase, { join = true }, { copy -> state.chooseDatabase(copy) { authentication = Authentication.Open(it) } })
                             state.pending.forEach { request -> Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Text(stringResource(R.string.waiting_approval), Modifier.weight(1f))
-                                TextButton({ state.resumeJoin(request.request) }) { Text(stringResource(R.string.continue_action)) }
+                                TextButton({ resumeJoin = request.request }) { Text(stringResource(R.string.continue_action)) }
                             } }
                         }
                         state.inspectedEntry != null -> Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) { EntryDetails(state, attachments, copy, copySecret, ::openHistory) }

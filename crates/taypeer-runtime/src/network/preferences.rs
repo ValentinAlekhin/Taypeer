@@ -97,7 +97,7 @@ impl RuntimeHost {
             .network_configuration
             .lock()
             .map_err(|_| RuntimeError::Transport)?;
-        self.start_network(self.relay_preference()?.setting()?)
+        self.enable_network(self.relay_preference()?.setting()?)
             .map(|_| ())
     }
     /// Stop the configured lifetime without overlapping a preference transition.
@@ -126,7 +126,7 @@ impl RuntimeHost {
             .clone();
         if running.is_some() {
             self.stop_network();
-            if let Err(error) = self.start_network(setting) {
+            if let Err(error) = self.enable_network(setting) {
                 self.restore_network(running.as_ref());
                 return Err(error);
             }
@@ -148,7 +148,7 @@ impl RuntimeHost {
         if let Some(previous) = previous {
             // The original error remains authoritative; failed recovery leaves the
             // lifetime stopped so the client cannot mistake it for a working route.
-            if self.start_network(previous.clone()).is_err() {
+            if self.enable_network(previous.clone()).is_err() {
                 self.stop_network();
             }
         }

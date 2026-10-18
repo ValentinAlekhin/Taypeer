@@ -4,7 +4,6 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.taypeer.bridge.*
 import dev.taypeer.platform.DocumentManager
-import dev.taypeer.platform.KeystoreCredentials
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -23,7 +22,7 @@ class GroupFaviconsTest {
     private inline fun fixture(block: (DocumentSession, DocumentManager) -> Unit) {
         val profile = File(context.noBackupFilesDir, "PUBLIC-group-favicons-${UUID.randomUUID()}")
         try {
-            Host(profile.path, KeystoreCredentials(context)).use { host ->
+            Host.portable(profile.path).use { host ->
                 DocumentManager(context, host).use { manager ->
                     block(manager.create("PUBLIC group favicon database", null, newOperation(), password), manager)
                 }

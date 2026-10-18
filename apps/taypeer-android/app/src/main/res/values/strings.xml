@@ -27,6 +27,7 @@
     <string name="create">Create</string>
     <string name="unlock">Unlock</string>
     <string name="master_password">Master password</string>
+    <string name="resume_invitation_password_hint">After restarting, first enter the password used when connecting. If it differs from the database password, enter the current master password on the next attempt.</string>
     <string name="new_master_password">New master password</string>
     <string name="name">Name</string>
     <string name="description">Description</string>

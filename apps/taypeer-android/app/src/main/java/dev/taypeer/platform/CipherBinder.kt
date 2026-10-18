@@ -207,8 +207,20 @@ internal class CipherPersistenceEndpoint(
             })
         }
     }
-    override fun author(authenticated: String?): CipherAuthorResult = try { withWriter { CipherAuthorResult(0, it.author(authenticated?.let(::identifier))) } } catch (error: Exception) { CipherAuthorResult(code(error), null) }
-    override fun transportPublic(): String = remote { withWriter { it.transportPublic() } }
+    override fun credential(scope: ByteArray, prepared: Boolean): Bundle = snapshotResult {
+        withWriter { active -> Bundle().apply { putInt("status", 0); putByteArray("cipher", active.credential(recoveryMetadata(scope), prepared)) } }
+    }
+    override fun publishCredential(scope: ByteArray, cipher: ByteArray, prepared: Boolean): Int = status {
+        if (cipher.size > 131072) throw AndroidException.InvalidFile()
+        withWriter { it.publishCredential(recoveryMetadata(scope), cipher, prepared) }
+    }
+    override fun finalizeCredential(scope: ByteArray, promotePrepared: Boolean): Int = status { withWriter { it.finalizeCredential(recoveryMetadata(scope), promotePrepared) } }
+    override fun activateCredentials(capability: ByteArray, authenticated: String?): Int = try {
+        status { withWriter { it.activateCredentials(recoveryMetadata(capability), authenticated?.let(::identifier)) } }
+    } finally { capability.fill(0) }
+    override fun activateRecoveryCredentials(source: ByteArray, capability: ByteArray): Int = try {
+        status { withWriter { it.activateRecoveryCredentials(recoveryMetadata(source), recoveryMetadata(capability)) } }
+    } finally { capability.fill(0) }
     override fun saveDraft(file: ParcelFileDescriptor): Int = status {
         val incoming = arrayOf(file)
         withIncoming(incoming) { active ->
@@ -223,9 +235,6 @@ internal class CipherPersistenceEndpoint(
     override fun recoverySource(operation: String): Bundle = snapshotResult {
         withWriter { recoveryBundle(it.recoverySource(identifier(operation)), ::transfer) }
     }
-    override fun authorRecovery(source: ByteArray): CipherAuthorResult = try {
-        withWriter { CipherAuthorResult(0, it.authorRecovery(recoveryMetadata(source))) }
-    } catch (error: Exception) { CipherAuthorResult(code(error), null) }
     override fun recoveryCandidate(intent: ByteArray): Bundle = snapshotResult {
         withWriter { recoveryBundle(it.recoveryCandidate(recoveryMetadata(intent)), ::transfer) }
     }
@@ -238,6 +247,20 @@ internal class CipherPersistenceEndpoint(
             })
         }
     }
+    override fun publishRecoveryCredentials(intent: ByteArray, controls: ByteArray, objects: Array<ParcelFileDescriptor>, checkpoint: String, baseline: String, cipher: ByteArray, capability: ByteArray): Bundle = try {
+        snapshotResult {
+            withIncoming(objects) { active ->
+                consume(objects, { ids ->
+                    if (cipher.size > 131072) throw AndroidException.InvalidFile()
+                    (recoveryMetadata(intent) to recoveryMetadata(capability)) to CipherSeed(metadata(controls), ids, identifier(checkpoint), identifier(baseline))
+                }, { (public, seed) ->
+                    val result = active.publishRecoveryCredentials(public.first, seed, cipher, public.second)
+                    try { Bundle().apply { putInt("status", 0); putByteArray("publication", recoveryMetadata(result)) } }
+                    catch (_: Exception) { throw AndroidException.CommitUncertain() }
+                })
+            }
+        }
+    } finally { capability.fill(0) }
     override fun confirmRecovery(publication: ByteArray): Int = status {
         withWriter { it.confirmRecovery(recoveryMetadata(publication)) }
     }
@@ -278,16 +301,23 @@ internal class BinderDocumentPersistence(
             commitSnapshot(reply)
         }
     }
-    override fun author(authenticated: String?): ByteArray = remote {
-        val result = host.author(authenticated?.let(::identifier))
-        try {
-            checked(result.status)
-            val seed = result.seed ?: throw AndroidException.InvalidFile()
-            if (seed.size != 32) throw AndroidException.InvalidFile()
-            seed
-        } catch (error: Exception) { result.seed?.fill(0); throw error }
+    override fun credential(scope: ByteArray, prepared: Boolean): ByteArray? = remote {
+        val result = host.credential(recoveryMetadata(scope), prepared)
+        checked(result.getInt("status", 6))
+        if (result.keySet() != setOf("status", "cipher")) throw AndroidException.InvalidFile()
+        result.getByteArray("cipher")?.also { if (it.size > 131072) throw AndroidException.InvalidFile() }
     }
-    override fun transportPublic(): String = remote { identifier(host.transportPublic()) }
+    override fun publishCredential(scope: ByteArray, cipher: ByteArray, prepared: Boolean) = mutation {
+        if (cipher.size > 131072) throw AndroidException.InvalidFile()
+        checked(host.publishCredential(recoveryMetadata(scope), cipher, prepared))
+    }
+    override fun finalizeCredential(scope: ByteArray, promotePrepared: Boolean) = mutation { checked(host.finalizeCredential(recoveryMetadata(scope), promotePrepared)) }
+    override fun activateCredentials(capability: ByteArray, authenticated: String?) = try {
+        mutation { checked(host.activateCredentials(recoveryMetadata(capability), authenticated?.let(::identifier))) }
+    } finally { capability.fill(0) }
+    override fun activateRecoveryCredentials(source: ByteArray, capability: ByteArray) = try {
+        mutation { checked(host.activateRecoveryCredentials(recoveryMetadata(source), recoveryMetadata(capability))) }
+    } finally { capability.fill(0) }
     override fun saveDraft(file: ULong) = mutation { files.transfer(file).use { checked(host.saveDraft(it)) } }
     override fun loadDraft(): ULong? = remote {
         val result = host.loadDraft()
@@ -300,15 +330,6 @@ internal class BinderDocumentPersistence(
     }
     override fun recoverySource(operation: String): CipherRecoverySource? = remote {
         recoverySource(host.recoverySource(identifier(operation)), files)
-    }
-    override fun authorRecovery(source: ByteArray): ByteArray = remote {
-        val result = host.authorRecovery(recoveryMetadata(source))
-        try {
-            checked(result.status)
-            val seed = result.seed ?: throw AndroidException.InvalidFile()
-            if (seed.size != 32) throw AndroidException.InvalidFile()
-            seed
-        } catch (error: Exception) { result.seed?.fill(0); throw error }
     }
     override fun recoveryCandidate(intent: ByteArray): CipherRecoveryArchive? = remote {
         recoveryArchive(host.recoveryCandidate(recoveryMetadata(intent)), files)
@@ -324,6 +345,20 @@ internal class BinderDocumentPersistence(
             } catch (_: Exception) { throw AndroidException.CommitUncertain() }
         }
     }
+    override fun publishRecoveryCredentials(intent: ByteArray, seed: CipherSeed, cipher: ByteArray, capability: ByteArray): ByteArray = try {
+        mutation {
+            if (cipher.size > 131072) throw AndroidException.InvalidFile()
+            transfer(seed.objects) { descriptors ->
+                val result = host.publishRecoveryCredentials(recoveryMetadata(intent), metadata(seed.controls), descriptors,
+                    identifier(seed.checkpoint), identifier(seed.baseline), cipher, recoveryMetadata(capability))
+                checked(result.getInt("status", 6))
+                try {
+                    if (result.keySet() != setOf("status", "publication")) throw AndroidException.InvalidFile()
+                    recoveryMetadata(result.getByteArray("publication") ?: throw AndroidException.InvalidFile())
+                } catch (_: Exception) { throw AndroidException.CommitUncertain() }
+            }
+        }
+    } finally { capability.fill(0) }
     override fun confirmRecovery(publication: ByteArray) = mutation {
         checked(host.confirmRecovery(recoveryMetadata(publication)))
     }

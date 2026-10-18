@@ -2,7 +2,6 @@ package dev.taypeer
 
 import android.app.Application
 import dev.taypeer.bridge.Host
-import dev.taypeer.platform.KeystoreCredentials
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -24,7 +23,6 @@ class TaypeerApplication : Application() {
     }
     val host by lazy {
         check(Application.getProcessName() == packageName)
-        scope.async { Host.withOsBiometry(File(noBackupFilesDir, "profile").path,
-            KeystoreCredentials(this@TaypeerApplication), osBiometry) }
+        scope.async { Host.portableWithOsBiometry(File(noBackupFilesDir, "profiles/portable-v1").path, osBiometry) }
     }
 }

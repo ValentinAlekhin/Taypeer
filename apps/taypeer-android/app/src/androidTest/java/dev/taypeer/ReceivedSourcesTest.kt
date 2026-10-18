@@ -4,7 +4,6 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.taypeer.bridge.AndroidException
 import dev.taypeer.bridge.ChangedObject
-import dev.taypeer.bridge.CredentialPort
 import dev.taypeer.bridge.DocumentSession
 import dev.taypeer.bridge.EnrollmentProgress
 import dev.taypeer.bridge.EntryTextField
@@ -15,21 +14,19 @@ import dev.taypeer.bridge.RelayPreference
 import dev.taypeer.bridge.SaveState
 import dev.taypeer.bridge.TextEdit
 import dev.taypeer.platform.DocumentManager
-import dev.taypeer.platform.KeystoreCredentials
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicInteger
 
 /** Real Iroh delivery and isolated workers retain late closed-generation changes for explicit handling. */
 @RunWith(AndroidJUnit4::class)
 class ReceivedSourcesTest {
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
     private val password = "PUBLIC closed-source master"
-    private data class Replica(val host: Host, val documents: DocumentManager, val accessPublications: AtomicInteger)
+    private data class Replica(val host: Host, val documents: DocumentManager, val profile: File)
 
     /** Runs actual worker commands and loses only one already durable extraction response. */
     private class LostExtractionReplyCommands(var session: DocumentSession) : SessionCommands {
@@ -57,17 +54,10 @@ class ReceivedSourcesTest {
         val replicas = mutableListOf<Replica>()
         try {
             repeat(2) { index ->
-                val accessPublications = AtomicInteger()
-                val delegate = KeystoreCredentials(context)
-                val credentials = object : CredentialPort by delegate {
-                    override fun set(service: String, account: String, bytes: ByteArray) {
-                        if (account.startsWith("state:entry-access:")) accessPublications.incrementAndGet()
-                        delegate.set(service, account, bytes)
-                    }
-                }
-                val host = Host(File(directory, "replica-$index").path, credentials)
+                val profile = File(directory, "replica-$index")
+                val host = Host.portable(profile.path)
                 host.setRelayPreference(RelayPreference.Disabled)
-                replicas += Replica(host, DocumentManager(context, host), accessPublications)
+                replicas += Replica(host, DocumentManager(context, host), profile)
             }
             scenario(replicas)
         } finally {
@@ -100,7 +90,7 @@ class ReceivedSourcesTest {
     }
 
     private fun enroll(authority: Replica, session: DocumentSession, recipient: Replica): String {
-        val progress = recipient.documents.join(session.createInvitation())
+        val progress = recipient.documents.join(session.createInvitation(), password)
         assertTrue("PUBLIC enrollment pending", progress is EnrollmentProgress.Pending)
         val request = (progress as EnrollmentProgress.Pending).request
         until("PUBLIC original proof reaches managing replica") {
@@ -111,7 +101,7 @@ class ReceivedSourcesTest {
         }
         session.approveInvitation(request)
         until("PUBLIC approved original ciphertext reaches recipient") {
-            when (val received = recipient.documents.resumeJoin(request)) {
+            when (val received = recipient.documents.resumeJoin(request, password)) {
                 is EnrollmentProgress.Received -> { assertEquals(session.databaseId(), received.database); true }
                 is EnrollmentProgress.Pending -> false
                 is EnrollmentProgress.Rejected -> throw AssertionError("PUBLIC enrollment rejected")
@@ -189,6 +179,7 @@ class ReceivedSourcesTest {
         val source = authority.pendingSources().single()
         assertEquals(old.generation, source.generation)
         val beforeInspect = File(path).readBytes()
+        val localState = replicas.flatMap { publicPortableStates(it.profile).entries }.associate { it.toPair() }
         val inspection = authority.inspectPending(source.source)
         assertEquals("PUBLIC late source with password alternatives", inspection.entry!!.title)
         assertTrue(inspection.entry!!.alternatives)
@@ -198,7 +189,7 @@ class ReceivedSourcesTest {
             variant.origins to authority.revealPending(source.source, variant.origins)
         }
         assertEquals(expectedPasswords, revealed.values.toSet())
-        assertTrue(replicas.all { it.accessPublications.get() == 0 })
+        assertPublicPortableStatesUnchanged(localState)
         assertArrayEquals(beforeInspect, File(path).readBytes())
         assertTrue(authority.overview("").entries.isEmpty())
         assertThrows(AndroidException::class.java) {
@@ -289,6 +280,7 @@ class ReceivedSourcesTest {
             assertNotNull(source.revision)
         }
         val beforeInspect = File(path).readBytes()
+        val localState = replicas.flatMap { publicPortableStates(it.profile).entries }.associate { it.toPair() }
         val inspections = sources.associateWith { authority.inspectPending(it.source) }
         val selected = inspections.entries.single { it.value.entry?.title == "PUBLIC late closed first" }
         val remaining = sources.single { it.source != selected.key.source }
@@ -301,7 +293,7 @@ class ReceivedSourcesTest {
             authority.revealPending(selected.key.source, listOf("PUBLIC wrong immutable origins"))
         }
         assertEquals("PUBLIC late first password", authority.revealPending(selected.key.source, origins))
-        assertTrue(replicas.all { it.accessPublications.get() == 0 })
+        assertPublicPortableStatesUnchanged(localState)
         assertArrayEquals(beforeInspect, File(path).readBytes())
         assertTrue(authority.overview("").entries.isEmpty())
 

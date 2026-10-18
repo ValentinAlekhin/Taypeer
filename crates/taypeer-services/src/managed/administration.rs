@@ -299,7 +299,11 @@ impl DatabaseService {
             )?,
         };
         if metadata.administrative_retry(operation, &intent)? {
-            return Ok(());
+            let epoch = managed.snapshot.chain().head().epoch;
+            let current = metadata.key(epoch)?;
+            let previous =
+                metadata.key(epoch.checked_sub(1).ok_or(ServiceError::InvalidContext)?)?;
+            return credentials(EpochCredentialStage::Finalize, &previous, &current, epoch);
         }
         let chain = managed.snapshot.chain().transition(
             managed.manager()?,
@@ -344,6 +348,30 @@ impl DatabaseService {
         policy: DatabasePolicy,
         password: Option<&[u8]>,
     ) -> Result<(), ServiceError> {
+        self.set_database_policy_with_credentials(
+            session,
+            operation,
+            policy,
+            password,
+            |_, _, _, _| Ok(()),
+        )
+    }
+
+    /// Update protection and durably rewrap device-local credentials around an
+    /// epoch change. Exact retries complete finalization without another rotation.
+    pub fn set_database_policy_with_credentials(
+        &mut self,
+        session: &SessionToken,
+        operation: Digest,
+        policy: DatabasePolicy,
+        password: Option<&[u8]>,
+        mut credentials: impl FnMut(
+            EpochCredentialStage,
+            &ReadKey,
+            &ReadKey,
+            u64,
+        ) -> Result<(), ServiceError>,
+    ) -> Result<(), ServiceError> {
         let state = self.checked_mut(session)?;
         let document = state.document().clone();
         let managed = state.managed.as_mut().ok_or(ServiceError::InvalidContext)?;
@@ -351,6 +379,19 @@ impl DatabaseService {
         let open = managed.open.as_ref().ok_or(ServiceError::Locked)?;
         let receipt = codec::AdministrativeIntent::Policy(policy);
         if open.metadata.administrative_retry(operation, &receipt)? {
+            let records = managed.snapshot.chain().records();
+            let rotated = records.windows(2).any(|pair| {
+                pair[1].body.operation == Some(operation)
+                    && pair[1].body.epoch != pair[0].body.epoch
+            });
+            if rotated {
+                let epoch = managed.snapshot.chain().head().epoch;
+                let current = open.metadata.key(epoch)?;
+                let previous = open
+                    .metadata
+                    .key(epoch.checked_sub(1).ok_or(ServiceError::InvalidContext)?)?;
+                return credentials(EpochCredentialStage::Finalize, &previous, &current, epoch);
+            }
             return Ok(());
         }
         let kdf_changed = policy.kdf_target_ms() != open.metadata.policy.kdf_target_ms();
@@ -371,6 +412,7 @@ impl DatabaseService {
         if chain == *managed.snapshot.chain() {
             return Ok(());
         }
+        let mut credential_rotation = None;
         let header = if kdf_changed {
             let password = password.ok_or(ServiceError::InvalidInput)?;
             let checkpoint = managed
@@ -388,6 +430,14 @@ impl DatabaseService {
             metadata
                 .keys
                 .insert(chain.head().epoch, Zeroizing::new(*key.secret_bytes()));
+            let previous = open.metadata.key(managed.snapshot.chain().head().epoch)?;
+            credentials(
+                EpochCredentialStage::Prepare,
+                &previous,
+                &key,
+                chain.head().epoch,
+            )?;
+            credential_rotation = Some((previous, key, chain.head().epoch));
             header
         } else {
             open.header.clone()
@@ -398,6 +448,10 @@ impl DatabaseService {
             header,
             journal: managed.snapshot.metadata().journal.clone(),
         };
-        managed.persist(&document, metadata, Vec::new(), Some(transition))
+        managed.persist(&document, metadata, Vec::new(), Some(transition))?;
+        if let Some((previous, key, epoch)) = credential_rotation {
+            credentials(EpochCredentialStage::Finalize, &previous, &key, epoch)?;
+        }
+        Ok(())
     }
 }

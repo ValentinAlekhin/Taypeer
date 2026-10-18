@@ -84,4 +84,4 @@ jobs:
       - name: Check packaged private worker and fixture exclusion
         run: sh scripts/check-linux-package.sh result
       - name: Verify encrypted sessions with packaged worker
-        run: nix --extra-experimental-features 'nix-command flakes' develop -c env TAYPEER_PUBLIC_LINUX_WORKER="$PWD/result/bin/taypeer" cargo test -p taypeer-runtime host::linux_tests --locked -- --test-threads=1
+        run: nix --extra-experimental-features 'nix-command flakes' develop -c env TAYPEER_PUBLIC_PORTABLE_WORKER="$PWD/result/bin/taypeer" cargo test -p taypeer-runtime host::portable_tests --locked -- --test-threads=1

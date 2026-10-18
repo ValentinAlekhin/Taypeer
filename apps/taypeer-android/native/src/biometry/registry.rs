@@ -71,7 +71,7 @@ impl std::fmt::Debug for ConfirmedEnrollment {
 pub(super) enum SetupState {
     PendingEnable {
         operation: Digest,
-        candidate: WrapperRecord,
+        candidate: Box<WrapperRecord>,
         active: Option<WrapperRecord>,
     },
     PendingDisable {
@@ -287,7 +287,7 @@ impl Registry {
             action: SetupAction::Enable,
             generation: candidate.generation(),
         });
-        record.active = Some(candidate);
+        record.active = Some(*candidate);
         record.pending = None;
         self.prepare_and_publish(Some(loaded.bytes), record, operation)
     }

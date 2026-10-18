@@ -229,7 +229,7 @@ impl Worker {
             client.control.invalidate(LockReason::Authority);
             return Err(RuntimeError::SessionClosed(LockReason::Authority));
         }
-        let linux_credentials = contexts.profile.is_linux_lazy();
+        let portable_credentials = contexts.profile.is_portable();
         let application = Arc::new(Mutex::new(None));
         let application_revision = Arc::new(AtomicU64::new(0));
         let application_observer =
@@ -321,7 +321,7 @@ impl Worker {
                         database,
                         lock: true,
                         ..
-                    })) if database == watched_database && !linux_credentials => {
+                    })) if database == watched_database && !portable_credentials => {
                         client.control.invalidate(LockReason::Authority);
                         break;
                     }
@@ -351,7 +351,7 @@ impl Worker {
                     break;
                 }
                 if state.epoch != epoch {
-                    if linux_credentials && state.admitted {
+                    if portable_credentials && state.admitted {
                         let prepared = watched_context
                             .profile
                             .load_state::<Option<u64>>("credential_prepared")

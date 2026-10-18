@@ -44,11 +44,12 @@ pub struct RecoveryPublication {
 /// A restart-visible public operation linked to its existing catalog source.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingRecovery {
-    /// Exact protected operation and immutable source binding.
+    /// Source selection. A cold locator is rechecked against protected state after unlock.
     pub source: RecoverySource,
     /// Existing source locator, never a candidate activation claim.
     pub working_copy: crate::WorkingCopy,
-    /// Actual reconciled phase; source-writer closure is checked only during adoption.
+    /// Protected phase after unlock; a cold locator reports only SourceFrozen.
+    /// Source-writer closure is checked afresh during adoption.
     pub phase: RecoveryPhase,
 }
 

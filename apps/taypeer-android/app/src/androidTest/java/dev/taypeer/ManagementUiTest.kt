@@ -10,14 +10,12 @@ import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.taypeer.bridge.*
-import dev.taypeer.platform.KeystoreCredentials
 import kotlinx.coroutines.*
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
 import java.io.File
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
 import java.util.Locale
 
 /** Product handlers backed by two real hosts, isolated Binder workers and authenticated Iroh. */
@@ -111,23 +109,9 @@ class ManagementUiTest {
         }
     }
 
-    @Test fun lostAcceptPublicationKeepsOnlyExactResumeAcrossLockAndRealHostRestart() {
-        val armed = AtomicBoolean()
-        val fired = AtomicBoolean()
+    @Test fun interruptedAcceptKeepsOnlyExactResumeAcrossLockAndRealHostRestart() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
-        PublicManagementFixture { index ->
-            val delegate = KeystoreCredentials(context)
-            if (index == 0) delegate else object : CredentialPort by delegate {
-                override fun set(service: String, account: String, bytes: ByteArray) {
-                    // The real store erases its input on return; retain only this PUBLIC phase match.
-                    val acceptRequested = account.startsWith("state:management:") && armed.get() &&
-                        bytes.toString(Charsets.UTF_8).contains("\"kind\":\"accept_requested\"")
-                    delegate.set(service, account, bytes)
-                    if (acceptRequested && fired.compareAndSet(false, true))
-                        throw AndroidException.CommitUncertain()
-                }
-            }
-        }.use { fixture ->
+        PublicManagementFixture().use { fixture ->
             fixture.prepare()
             val proposal = fixture.propose()
             val before = File(fixture.sourceCopy.path).readBytes()
@@ -136,12 +120,11 @@ class ManagementUiTest {
                 compose.setContent { Content(displayed, fixture.name) }
                 await { peer.state.row(proposal.intent.operation) != null }
                 compose.onNodeWithTag("review-management-${proposal.intent.operation}").performScrollTo().performClick()
-                armed.set(true)
+                fixture.peerHost.stopExchange()
                 compose.onNodeWithTag("confirm-management-accept").performClick()
                 await { !peer.state.busy(proposal.intent.operation) && peer.state.problem(proposal.intent.operation) == ManagementProblem.UNCONFIRMED }
                 compose.runOnIdle { peer.state.load() }
                 await { peer.state.row(proposal.intent.operation)?.phase == ManagementPhase.ACCEPT_REQUESTED }
-                assertTrue(fired.get())
                 compose.onNodeWithTag("reject-management").assertDoesNotExist()
                 val configuration = Configuration(context.resources.configuration).apply { setLocale(Locale.ENGLISH) }
                 val continueLabel = context.createConfigurationContext(configuration).getString(R.string.continue_action)

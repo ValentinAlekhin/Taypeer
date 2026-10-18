@@ -111,25 +111,24 @@ impl Journal {
             {
                 return Err(ProfileError::Invalid.into());
             }
-            let valid = match (&record.direction, &record.phase) {
+            let valid = matches!(
+                (&record.direction, &record.phase),
                 (
                     Direction::Source,
                     Phase::Proposed
-                    | Phase::Rejected
-                    | Phase::SourceCommitted(_)
-                    | Phase::AwaitingApply(_)
-                    | Phase::Completed(_),
-                ) => true,
-                (
+                        | Phase::Rejected
+                        | Phase::SourceCommitted(_)
+                        | Phase::AwaitingApply(_)
+                        | Phase::Completed(_),
+                ) | (
                     Direction::Recipient,
                     Phase::WaitingDecision
-                    | Phase::AcceptRequested
-                    | Phase::ConsentRecorded(_)
-                    | Phase::Rejected
-                    | Phase::Completed(_),
-                ) => true,
-                _ => false,
-            };
+                        | Phase::AcceptRequested
+                        | Phase::ConsentRecorded(_)
+                        | Phase::Rejected
+                        | Phase::Completed(_),
+                )
+            );
             if !valid {
                 return Err(ProfileError::Invalid.into());
             }

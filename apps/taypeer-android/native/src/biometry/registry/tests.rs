@@ -66,7 +66,7 @@ impl Fixture {
                 .begin_enable(public_proof(&self.binding, generation, operation)),
             Ok(SetupState::PendingEnable {
                 operation: digest(operation),
-                candidate: expected.clone(),
+                candidate: Box::new(expected.clone()),
                 active
             })
         );
@@ -357,7 +357,7 @@ fn actual_prepublication_failure_preserves_active_and_retries_exact_candidate() 
         fixture.registry.retry(digest(9)),
         Ok(SetupState::PendingEnable {
             operation: digest(9),
-            candidate: wrapper(&fixture.binding, 4),
+            candidate: Box::new(wrapper(&fixture.binding, 4)),
             active: Some(active),
         })
     );
@@ -397,7 +397,7 @@ fn lost_pending_reply_keeps_exact_intent_and_active_until_final_ack() {
         fixture.registry.retry(digest(9)),
         Ok(SetupState::PendingEnable {
             operation: digest(9),
-            candidate: wrapper(&fixture.binding, 4),
+            candidate: Box::new(wrapper(&fixture.binding, 4)),
             active: Some(active),
         })
     );
@@ -575,7 +575,7 @@ fn lost_enable_survives_rotation_exact_metadata_disposition_and_cold_retry_then_
         fixture.registry.retry(digest(8)),
         Ok(SetupState::PendingEnable {
             operation: digest(8),
-            candidate: old.clone(),
+            candidate: Box::new(old.clone()),
             active: None
         })
     );

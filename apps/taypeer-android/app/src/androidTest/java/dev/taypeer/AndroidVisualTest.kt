@@ -254,7 +254,7 @@ private fun VisualSurface(case: String, theme: ThemeMode, language: UiLanguage) 
             DisposableEffect(state) { onDispose { state.lock() } }
             GeneratorScreen(state, use = if (case == "generator-use") ({}) else null, copy = {})
         }
-        "receive" -> ReceiveInvitationScreen(onJoin = {}, onClose = {})
+        "receive" -> ReceiveInvitationScreen(onJoin = { _, _ -> }, onClose = {})
         "invitation" -> InvitationScreen("TAYPEER-DEMO-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", if (language == UiLanguage.RUSSIAN) "Рабочая" else "Working", {}, {})
         "trash", "trash-selected" -> TrashScreen(publicTrash(language), localizedOverview(language).groups, null, false, false, { _, _ -> }, {}, {}, {}, {}, {})
         "clone", "move" -> ObjectActionScreen(ObjectActionSelection(FormKind.ENTRY, "PUBLIC-entry", if (case == "clone") ObjectAction.CLONE else ObjectAction.MOVE, "GitHub", "PUBLIC-services"), localizedOverview(language).groups, false, false, { _, _, _ -> }, {})

@@ -19,7 +19,7 @@ struct Prepared {
     reservation: Arc<Reservation>,
 }
 enum EnrollmentState {
-    Prepared(Prepared),
+    Prepared(Box<Prepared>),
     Running,
     Finished,
 }
@@ -119,10 +119,10 @@ impl DocumentSession {
                 binding: binding.clone(),
                 call,
                 fence: Arc::clone(&fence),
-                state: Mutex::new(EnrollmentState::Prepared(Prepared {
+                state: Mutex::new(EnrollmentState::Prepared(Box::new(Prepared {
                     candidate,
                     reservation,
-                })),
+                }))),
             }))
         })();
         if prepared.is_err() {
@@ -215,12 +215,10 @@ impl BiometricEnrollment {
         // fence. Cancelling a prepared attempt releases it without waiting.
         if let Ok(mut state) = self.state.lock()
             && matches!(*state, EnrollmentState::Prepared(_))
-        {
-            if let EnrollmentState::Prepared(prepared) =
+            && let EnrollmentState::Prepared(prepared) =
                 std::mem::replace(&mut *state, EnrollmentState::Finished)
-            {
-                self.broker.discard_orphan(prepared.candidate);
-            }
+        {
+            self.broker.discard_orphan(prepared.candidate);
         }
     }
 }

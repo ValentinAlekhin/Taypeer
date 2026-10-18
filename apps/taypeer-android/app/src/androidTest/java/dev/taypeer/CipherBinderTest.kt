@@ -9,7 +9,6 @@ import dev.taypeer.bridge.AndroidException
 import dev.taypeer.bridge.CipherCommit
 import dev.taypeer.bridge.CipherSeed
 import dev.taypeer.platform.BinderDocumentPersistence
-import dev.taypeer.platform.CipherAuthorResult
 import dev.taypeer.platform.CipherFileResult
 import dev.taypeer.platform.CiphertextDescriptors
 import dev.taypeer.platform.ICipherPersistence
@@ -28,8 +27,11 @@ class CipherBinderTest {
         override fun snapshot() = Bundle().apply { putInt("status", 1) }
         override fun create(controls: ByteArray, objects: Array<ParcelFileDescriptor>, checkpoint: String, baseline: String) = 1
         override fun commit(expected: String, control: String, controls: ByteArray, objects: Array<ParcelFileDescriptor>, remove: Array<String>, checkpoint: String, baseline: String, journal: ByteArray) = Bundle().apply { putInt("status", 1) }
-        override fun author(authenticated: String?) = CipherAuthorResult(1, null)
-        override fun transportPublic() = "PUBLIC transport"
+        override fun credential(scope: ByteArray, prepared: Boolean) = Bundle().apply { putInt("status", 1) }
+        override fun publishCredential(scope: ByteArray, cipher: ByteArray, prepared: Boolean) = 1
+        override fun finalizeCredential(scope: ByteArray, promotePrepared: Boolean) = 1
+        override fun activateCredentials(capability: ByteArray, authenticated: String?) = 1
+        override fun activateRecoveryCredentials(source: ByteArray, capability: ByteArray) = 1
         override fun saveDraft(file: ParcelFileDescriptor) = 1
         override fun loadDraft() = CipherFileResult(1, null)
         override fun discardDraft() = 1
@@ -38,10 +40,13 @@ class CipherBinderTest {
         private fun recoveryFailure() = Bundle().apply { putInt("status", recoveryRefusal()) }
         override fun freezeRecovery(operation: String, authenticated: String) = recoveryFailure()
         override fun recoverySource(operation: String) = recoveryFailure()
-        override fun authorRecovery(source: ByteArray) = CipherAuthorResult(recoveryRefusal(), null)
         override fun recoveryCandidate(intent: ByteArray) = recoveryFailure()
         override fun publishRecovery(intent: ByteArray, controls: ByteArray, objects: Array<ParcelFileDescriptor>, checkpoint: String, baseline: String): Bundle {
             objects.forEach { it.close() }
+            return recoveryFailure()
+        }
+        override fun publishRecoveryCredentials(intent: ByteArray, controls: ByteArray, objects: Array<ParcelFileDescriptor>, checkpoint: String, baseline: String, cipher: ByteArray, capability: ByteArray): Bundle {
+            objects.forEach { it.close() }; capability.fill(0)
             return recoveryFailure()
         }
         override fun confirmRecovery(publication: ByteArray) = recoveryRefusal()
@@ -84,6 +89,24 @@ class CipherBinderTest {
             }, files)
             assertThrows(AndroidException.InvalidFile::class.java) { port.snapshot() }
             assertFalse(received.fileDescriptor.valid())
+        }
+    }
+    @Test fun credentialPortsBoundCiphertextPreserveUncertaintyAndEraseTransportInput() {
+        CiphertextDescriptors { anonymousCiphertext(context) }.use { files ->
+            val oversized = BinderDocumentPersistence(object : Port() {
+                override fun credential(scope: ByteArray, prepared: Boolean) = Bundle().apply {
+                    putInt("status", 0); putByteArray("cipher", ByteArray(131073))
+                }
+            }, files)
+            assertThrows(AndroidException.InvalidFile::class.java) { oversized.credential(byteArrayOf(), false) }
+            val lost = BinderDocumentPersistence(object : Port() {
+                override fun finalizeCredential(scope: ByteArray, promotePrepared: Boolean): Int = throw RemoteException()
+                override fun activateCredentials(capability: ByteArray, authenticated: String?): Int = throw RemoteException()
+            }, files)
+            assertThrows(AndroidException.CommitUncertain::class.java) { lost.finalizeCredential(byteArrayOf(), true) }
+            val capability = "PUBLIC transport capability".toByteArray()
+            assertThrows(AndroidException.CommitUncertain::class.java) { lost.activateCredentials(capability, null) }
+            assertArrayEquals(ByteArray(capability.size), capability)
         }
     }
     @Test fun malformedSnapshotAfterSuccessfulCommitIsUncertainAndClosesTheReceivedFile() {

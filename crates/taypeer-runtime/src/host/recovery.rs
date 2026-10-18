@@ -11,6 +11,27 @@ use taypeer_trust::{AuthorKey, Identity};
 
 const VERSION: u16 = 1;
 
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RecoveryLocator {
+    version: u16,
+    source: RecoverySource,
+    source_path: PathBuf,
+}
+
+fn locator_path(profile: &NativeProfile, working_copy: Digest) -> PathBuf {
+    profile
+        .directory()
+        .join("recovery-locators")
+        .join(format!("{working_copy}.json"))
+}
+
+fn retained_source_key(source: &RecoverySource) -> Result<String, RuntimeError> {
+    let id = Digest::object(b"taypeer/local-recovery-source-capability/1", source)
+        .map_err(|_| RuntimeError::Protocol)?;
+    Ok(format!("recovery-source-capability:{id}"))
+}
+
 mod writer_lifetimes;
 pub(super) use writer_lifetimes::{LocalWriter, WriterLifetimes};
 
@@ -43,8 +64,8 @@ fn load(context: &HostContext, copy: Digest) -> Result<Option<Attempt>, RuntimeE
     {
         return Err(crate::profile::ProfileError::Invalid.into());
     }
-    if let Some(value) = &value {
-        if value
+    if let Some(value) = &value
+        && (value
             .identity
             .is_some_and(|identity| identity.validate().is_err())
             || value.publication.as_ref().is_some_and(|publication| {
@@ -60,10 +81,9 @@ fn load(context: &HostContext, copy: Digest) -> Result<Option<Attempt>, RuntimeE
             ) && value.publication.is_none())
             || (value.phase == RecoveryPhase::RefusedBeforePublication
                 && (value.publication.is_some()
-                    || !value.refused.contains(&value.source.operation)))
-        {
-            return Err(crate::profile::ProfileError::Invalid.into());
-        }
+                    || !value.refused.contains(&value.source.operation))))
+    {
+        return Err(crate::profile::ProfileError::Invalid.into());
     }
     Ok(value)
 }
@@ -72,6 +92,24 @@ fn save(context: &HostContext, attempt: &Attempt) -> Result<(), RuntimeError> {
     context
         .profile
         .save_state(&account(attempt.source.working_copy), attempt)?;
+    if context.profile.active_root().is_some() {
+        let path = locator_path(&context.profile, attempt.source.working_copy);
+        let directory = path.parent().ok_or(RuntimeError::Protocol)?;
+        std::fs::create_dir_all(directory).map_err(|_| RuntimeError::Transport)?;
+        let mut file =
+            tempfile::NamedTempFile::new_in(directory).map_err(|_| RuntimeError::Transport)?;
+        serde_json::to_writer(
+            &mut file,
+            &RecoveryLocator {
+                version: VERSION,
+                source: attempt.source.clone(),
+                source_path: attempt.source_path.clone(),
+            },
+        )
+        .map_err(|_| RuntimeError::Protocol)?;
+        taypeer_storage::publish_file(file, &path, PublicationMode::Replace)
+            .map_err(cipher_ipc::storage)?;
+    }
     Ok(())
 }
 fn source_path(context: &HostContext, source: &RecoverySource) -> Result<PathBuf, RuntimeError> {
@@ -145,11 +183,16 @@ fn bind(
         .identity
         .validate()
         .map_err(|_| RuntimeError::Protocol)?;
-    if intent.identity.transport != context.transport.public()
-        || attempt.identity != Some(intent.identity)
+    if attempt
+        .identity
+        .is_some_and(|prior| prior != intent.identity)
+        || (context.profile.active_root().is_none()
+            && (intent.identity.transport != context.transport.public()
+                || attempt.identity != Some(intent.identity)))
     {
         return Err(mismatch());
     }
+    attempt.identity = Some(intent.identity);
     save(context, attempt)
 }
 fn check_chain(intent: &RecoveryIntent, chain: &ControlChain) -> Result<Digest, RuntimeError> {
@@ -202,19 +245,175 @@ fn receipt(
 }
 
 impl PlatformCipherWriter {
+    fn source_registration(&self) -> Result<Registration, RuntimeError> {
+        let context = self.active_context()?;
+        match context.profile.registration(&self.path)? {
+            Some(registration) => Ok(registration),
+            None => self.registration(),
+        }
+    }
+    fn public_recovery_locator(
+        &self,
+        operation: Digest,
+    ) -> Result<Option<RecoveryLocator>, RuntimeError> {
+        let current = ArchiveSnapshot::open(&self.path, None).map_err(cipher_ipc::storage)?;
+        let registration = self.context.profile.bootstrap_registration(&current)?;
+        let path = locator_path(&self.context.profile, registration.working_copy);
+        let file = match File::open(path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(_) => return Err(cipher_ipc::storage(taypeer_storage::Error::Io)),
+        };
+        if file.metadata().map_err(|_| RuntimeError::Transport)?.len() > 65536 {
+            return Err(RuntimeError::TooLarge);
+        }
+        let locator: RecoveryLocator =
+            serde_json::from_reader(file).map_err(|_| RuntimeError::Protocol)?;
+        if locator.version != VERSION
+            || locator.source.operation != operation
+            || locator.source.database != registration.database
+            || locator.source.root != registration.root
+            || locator.source.working_copy != registration.working_copy
+            || locator.source_path != self.path
+        {
+            return Err(mismatch());
+        }
+        Ok(Some(locator))
+    }
+
+    /// Authenticate a target's local state before restoring its exact retained source capability.
+    /// Public locators alone never restore a protected recovery attempt.
+    pub fn activate_recovery_credentials(
+        &self,
+        source: &RecoverySource,
+        capability: crate::profile::TransportCapability,
+    ) -> Result<(), RuntimeError> {
+        if capability.database != source.database
+            || capability.root == source.root
+            || !capability.enrolled
+        {
+            return Err(mismatch());
+        }
+        let (target, _) = self.context.profile.activate(&capability)?;
+        let (retained_source, retained): (RecoverySource, crate::profile::TransportCapability) =
+            target
+                .load_state(&retained_source_key(source)?)?
+                .ok_or_else(mismatch)?;
+        if retained_source != *source
+            || retained.database != source.database
+            || retained.root != source.root
+        {
+            return Err(mismatch());
+        }
+        let context = self.context.activate(retained)?;
+        let attempt = load(&context, source.working_copy)?.ok_or_else(mismatch)?;
+        check_source(&attempt, source)?;
+        let original = read(&context, &source_path(&context, source)?, Some(source.root))?
+            .ok_or_else(mismatch)?;
+        if original.fingerprint() != source.fingerprint {
+            return Err(mismatch());
+        }
+        *self.active.lock().map_err(|_| RuntimeError::Transport)? = Some(context);
+        *self
+            .recovery_target
+            .lock()
+            .map_err(|_| RuntimeError::Transport)? = Some(target);
+        Ok(())
+    }
+
+    /// Publish separately encrypted recovery data and independently enrolled target credentials.
+    pub fn publish_recovery_with_credentials(
+        &self,
+        intent: &RecoveryIntent,
+        seed: ArchiveSeed,
+        ciphertext: Vec<u8>,
+        capability: crate::profile::TransportCapability,
+    ) -> Result<RecoveryPublication, RuntimeError> {
+        let context = self.active_context()?;
+        let _serial = context
+            .recovery
+            .lock()
+            .map_err(|_| RuntimeError::Transport)?;
+        let mut attempt = self.recovery_attempt(&intent.source)?;
+        let root = seed
+            .controls
+            .first()
+            .ok_or(RuntimeError::Protocol)?
+            .hash()
+            .map_err(|_| RuntimeError::Protocol)?;
+        let chain = ControlChain::validate(seed.controls.clone(), root)
+            .map_err(|_| RuntimeError::Protocol)?;
+        check_chain(intent, &chain)?;
+        if capability.database != intent.source.database
+            || capability.root != root
+            || !capability.enrolled
+            || TransportKey::from_seed(&capability.transport_seed).public()
+                != intent.identity.transport
+        {
+            return Err(mismatch());
+        }
+        let path = destination(&context, &intent.source)?;
+        if read(&context, &path, None)?.is_some() {
+            return Err(cipher_ipc::storage(taypeer_storage::Error::AlreadyExists));
+        }
+        let scope = taypeer_storage::LocalCredentialScope {
+            database: capability.database.clone(),
+            root,
+            epoch: chain.head().epoch,
+        };
+        self.context
+            .profile
+            .publish_credential(&scope, &ciphertext, false)?;
+        let (target, transport) = self.context.profile.activate(&capability)?;
+        target.save_state(
+            &retained_source_key(&intent.source)?,
+            &(&intent.source, context.profile.recovery_capability()?),
+        )?;
+        let registration = target.prepare_registration(&path, capability.database, root)?;
+        let store = seed
+            .create(&path, &transport, Some(target.anchor(&registration)))
+            .map_err(cipher_ipc::storage)?;
+        drop(store);
+        let snapshot = read(&context, &path, Some(root))?.ok_or_else(mismatch)?;
+        let value = publication(intent, &snapshot)?;
+        attempt.identity = Some(intent.identity);
+        attempt.publication = Some(value.clone());
+        attempt.phase = RecoveryPhase::CandidatePublished;
+        save(&context, &attempt)?;
+        *self
+            .recovery_target
+            .lock()
+            .map_err(|_| RuntimeError::Transport)? = Some(target);
+        Ok(value)
+    }
     /// Select an existing protected ciphertext source before recovery password authentication.
     /// Normal document snapshots retain their current-generation policy.
     pub fn recovery_snapshot(
         &self,
         operation: Digest,
     ) -> Result<Option<(RecoverySource, ArchiveSnapshot)>, RuntimeError> {
-        let _serial = self
-            .context
+        if self.context.profile.is_portable() && self.active_context().is_err() {
+            let Some(locator) = self.public_recovery_locator(operation)? else {
+                return Ok(None);
+            };
+            let original = read(
+                &self.context,
+                &source_path(&self.context, &locator.source)?,
+                Some(locator.source.root),
+            )?
+            .ok_or_else(mismatch)?;
+            if original.fingerprint() != locator.source.fingerprint {
+                return Err(mismatch());
+            }
+            return Ok(Some((locator.source, original)));
+        }
+        let context = self.active_context()?;
+        let _serial = context
             .recovery
             .lock()
             .map_err(|_| RuntimeError::Transport)?;
-        let registration = self.registration()?;
-        let Some(mut attempt) = load(&self.context, registration.working_copy)? else {
+        let registration = self.source_registration()?;
+        let Some(mut attempt) = load(&context, registration.working_copy)? else {
             return Ok(None);
         };
         if attempt.source.operation != operation {
@@ -238,19 +437,18 @@ impl PlatformCipherWriter {
             return Err(mismatch());
         }
         if attempt.owner != self.recovery_owner
-            && read(&self.context, &destination(&self.context, source)?, None)?.is_none()
+            && read(&context, &destination(&context, source)?, None)?.is_none()
         {
             if attempt.publication.is_some() || attempt.phase != RecoveryPhase::SourceFrozen {
                 return Err(cipher_ipc::storage(taypeer_storage::Error::Changed));
             }
             attempt.phase = RecoveryPhase::RefusedBeforePublication;
             attempt.refused.insert(operation);
-            save(&self.context, &attempt)?;
+            save(&context, &attempt)?;
             return Err(RuntimeError::RecoveryRequiresNewOperation);
         }
-        let path = source_path(&self.context, &attempt.source)?;
-        let snapshot =
-            read(&self.context, &path, Some(attempt.source.root))?.ok_or_else(mismatch)?;
+        let path = source_path(&context, &attempt.source)?;
+        let snapshot = read(&context, &path, Some(attempt.source.root))?.ok_or_else(mismatch)?;
         if snapshot.fingerprint() != attempt.source.fingerprint {
             return Err(mismatch());
         }
@@ -264,13 +462,38 @@ impl PlatformCipherWriter {
         &self,
         source: &RecoverySource,
     ) -> Result<Option<(RecoveryIntent, ArchiveSnapshot)>, RuntimeError> {
-        let _serial = self
-            .context
+        if self.context.profile.is_portable() && self.active_context().is_err() {
+            let locator = self
+                .public_recovery_locator(source.operation)?
+                .ok_or_else(mismatch)?;
+            if locator.source != *source {
+                return Err(mismatch());
+            }
+            let Some(candidate) = read(&self.context, &destination(&self.context, source)?, None)?
+            else {
+                return Ok(None);
+            };
+            let head = candidate.chain().head();
+            let identity = head
+                .members
+                .get(&head.manager)
+                .ok_or_else(mismatch)?
+                .identity;
+            let intent = RecoveryIntent {
+                source: source.clone(),
+                identity,
+            };
+            publication(&intent, &candidate)?;
+            self.allow_recovery_credential(&candidate)?;
+            return Ok(Some((intent, candidate)));
+        }
+        let context = self.active_context()?;
+        let _serial = context
             .recovery
             .lock()
             .map_err(|_| RuntimeError::Transport)?;
         let attempt = self.recovery_attempt(source)?;
-        let candidate = read(&self.context, &destination(&self.context, source)?, None)?;
+        let candidate = read(&context, &destination(&context, source)?, None)?;
         let Some(candidate) = candidate else {
             if attempt.publication.is_some() {
                 return Err(cipher_ipc::storage(taypeer_storage::Error::Changed));
@@ -278,7 +501,8 @@ impl PlatformCipherWriter {
             return Ok(None);
         };
         let identity = attempt.identity.ok_or_else(mismatch)?;
-        if self.context.profile.identity()? != Some(identity) {
+        if context.profile.active_root().is_none() && context.profile.identity()? != Some(identity)
+        {
             return Err(mismatch());
         }
         let intent = RecoveryIntent {
@@ -293,6 +517,7 @@ impl PlatformCipherWriter {
         {
             return Err(mismatch());
         }
+        self.allow_recovery_credential(&candidate)?;
         Ok(Some((intent, candidate)))
     }
 
@@ -302,13 +527,13 @@ impl PlatformCipherWriter {
         operation: Digest,
         authenticated: Digest,
     ) -> Result<(RecoverySource, ArchiveSnapshot), RuntimeError> {
-        let _serial = self
-            .context
+        let context = self.active_context()?;
+        let _serial = context
             .recovery
             .lock()
             .map_err(|_| RuntimeError::Transport)?;
-        let registration = self.registration()?;
-        let prior = load(&self.context, registration.working_copy)?;
+        let registration = self.source_registration()?;
+        let prior = load(&context, registration.working_copy)?;
         let mut source = RecoverySource {
             operation,
             database: registration.database,
@@ -331,7 +556,7 @@ impl PlatformCipherWriter {
                     return Err(mismatch());
                 }
                 if prior.owner != self.recovery_owner
-                    && read(&self.context, &destination(&self.context, &source)?, None)?.is_none()
+                    && read(&context, &destination(&context, &source)?, None)?.is_none()
                 {
                     if prior.publication.is_some() || prior.phase != RecoveryPhase::SourceFrozen {
                         return Err(cipher_ipc::storage(taypeer_storage::Error::Changed));
@@ -339,7 +564,7 @@ impl PlatformCipherWriter {
                     // A new worker cannot prove the vanished password/name attempt from a source-only receipt.
                     prior.phase = RecoveryPhase::RefusedBeforePublication;
                     prior.refused.insert(operation);
-                    save(&self.context, &prior)?;
+                    save(&context, &prior)?;
                     return Err(RuntimeError::RecoveryRequiresNewOperation);
                 }
                 prior
@@ -371,8 +596,8 @@ impl PlatformCipherWriter {
                 }
             }
         };
-        let path = source_path(&self.context, &source)?;
-        let snapshot = if let Some(snapshot) = read(&self.context, &path, Some(source.root))? {
+        let path = source_path(&context, &source)?;
+        let snapshot = if let Some(snapshot) = read(&context, &path, Some(source.root))? {
             if snapshot.fingerprint() != source.fingerprint {
                 return Err(mismatch());
             }
@@ -401,7 +626,7 @@ impl PlatformCipherWriter {
                 return Err(mismatch());
             }
             // Protect the original operation before any source-file publication; all future reads reconcile it.
-            save(&self.context, &attempt)?;
+            save(&context, &attempt)?;
             let mut temporary = NamedTempFile::new_in(path.parent().ok_or(RuntimeError::Protocol)?)
                 .map_err(|_| RuntimeError::Transport)?;
             issued
@@ -409,18 +634,18 @@ impl PlatformCipherWriter {
                 .map_err(cipher_ipc::storage)?;
             taypeer_storage::publish_file(temporary, &path, PublicationMode::Create)
                 .map_err(cipher_ipc::storage)?;
-            read(&self.context, &path, Some(source.root))?.ok_or_else(mismatch)?
+            read(&context, &path, Some(source.root))?.ok_or_else(mismatch)?
         };
         sync(&path)?;
         attempt.owner = self.recovery_owner;
-        save(&self.context, &attempt)?;
+        save(&context, &attempt)?;
         Ok((source, snapshot))
     }
 
     /// Issue an author only to the private exact recovery generation, including a readable frozen fork.
     pub fn author_recovery(&self, source: &RecoverySource) -> Result<AuthorKey, RuntimeError> {
-        let _serial = self
-            .context
+        let context = self.active_context()?;
+        let _serial = context
             .recovery
             .lock()
             .map_err(|_| RuntimeError::Transport)?;
@@ -428,24 +653,20 @@ impl PlatformCipherWriter {
         if attempt.owner != self.recovery_owner {
             return Err(mismatch());
         }
-        let snapshot = read(
-            &self.context,
-            &source_path(&self.context, source)?,
-            Some(source.root),
-        )?
-        .ok_or_else(mismatch)?;
+        let snapshot = read(&context, &source_path(&context, source)?, Some(source.root))?
+            .ok_or_else(mismatch)?;
         if snapshot.fingerprint() != source.fingerprint {
             return Err(mismatch());
         }
-        let author = self.context.profile.author()?;
-        let identity = Identity::new(author.public(), self.context.transport.public())
+        let author = context.profile.author()?;
+        let identity = Identity::new(author.public(), context.transport.public())
             .map_err(|_| RuntimeError::Protocol)?;
         if attempt.identity.is_some_and(|prior| prior != identity) {
             return Err(mismatch());
         }
         attempt.identity = Some(identity);
         bind(
-            &self.context,
+            &context,
             &mut attempt,
             &RecoveryIntent {
                 source: source.clone(),
@@ -460,18 +681,14 @@ impl PlatformCipherWriter {
         &self,
         intent: &RecoveryIntent,
     ) -> Result<Option<ArchiveSnapshot>, RuntimeError> {
-        let _serial = self
-            .context
+        let context = self.active_context()?;
+        let _serial = context
             .recovery
             .lock()
             .map_err(|_| RuntimeError::Transport)?;
         let mut attempt = self.recovery_attempt(&intent.source)?;
-        bind(&self.context, &mut attempt, intent)?;
-        let value = read(
-            &self.context,
-            &destination(&self.context, &intent.source)?,
-            None,
-        )?;
+        bind(&context, &mut attempt, intent)?;
+        let value = read(&context, &destination(&context, &intent.source)?, None)?;
         if let Some(value) = &value {
             let actual = publication(intent, value)?;
             if attempt
@@ -491,15 +708,15 @@ impl PlatformCipherWriter {
         intent: &RecoveryIntent,
         seed: ArchiveSeed,
     ) -> Result<RecoveryPublication, RuntimeError> {
-        let _serial = self
-            .context
+        let context = self.active_context()?;
+        let _serial = context
             .recovery
             .lock()
             .map_err(|_| RuntimeError::Transport)?;
         let mut attempt = self.recovery_attempt(&intent.source)?;
-        bind(&self.context, &mut attempt, intent)?;
-        let path = destination(&self.context, &intent.source)?;
-        if read(&self.context, &path, None)?.is_some() {
+        bind(&context, &mut attempt, intent)?;
+        let path = destination(&context, &intent.source)?;
+        if read(&context, &path, None)?.is_some() {
             return Err(cipher_ipc::storage(taypeer_storage::Error::AlreadyExists));
         }
         let root = seed
@@ -511,24 +728,24 @@ impl PlatformCipherWriter {
         let chain = ControlChain::validate(seed.controls.clone(), root)
             .map_err(|_| RuntimeError::Protocol)?;
         check_chain(intent, &chain)?;
-        self.context.publish_recovery(&path, seed)?;
-        let snapshot = read(&self.context, &path, None)?.ok_or_else(mismatch)?;
+        context.publish_recovery(&path, seed)?;
+        let snapshot = read(&context, &path, None)?.ok_or_else(mismatch)?;
         let value = publication(intent, &snapshot)?;
         attempt.publication = Some(value.clone());
         attempt.phase = RecoveryPhase::CandidatePublished;
-        save(&self.context, &attempt)?;
+        save(&context, &attempt)?;
         Ok(value)
     }
 
     /// Confirm actual candidate durability and protected proof before catalog adoption.
     pub fn confirm_recovery(&self, value: &RecoveryPublication) -> Result<(), RuntimeError> {
-        let _serial = self
-            .context
+        let context = self.active_context()?;
+        let _serial = context
             .recovery
             .lock()
             .map_err(|_| RuntimeError::Transport)?;
         let mut attempt = self.recovery_attempt(&value.intent.source)?;
-        bind(&self.context, &mut attempt, &value.intent)?;
+        bind(&context, &mut attempt, &value.intent)?;
         if attempt
             .publication
             .as_ref()
@@ -536,34 +753,39 @@ impl PlatformCipherWriter {
         {
             return Err(mismatch());
         }
-        let path = destination(&self.context, &value.intent.source)?;
-        let snapshot = read(&self.context, &path, Some(value.root))?.ok_or_else(mismatch)?;
+        let path = destination(&context, &value.intent.source)?;
+        let snapshot = read(&context, &path, Some(value.root))?.ok_or_else(mismatch)?;
         if publication(&value.intent, &snapshot)? != *value {
             return Err(mismatch());
         }
-        let registration = self
-            .context
-            .profile
-            .registration(&path)?
-            .ok_or_else(mismatch)?;
+        let target = self
+            .recovery_target
+            .lock()
+            .map_err(|_| RuntimeError::Transport)?;
+        let target_profile = target.as_ref().unwrap_or(&context.profile);
+        let registration = target_profile.registration(&path)?.ok_or_else(mismatch)?;
         if registration.database != value.intent.source.database || registration.root != value.root
         {
             return Err(mismatch());
         }
+        // This is only a protected public receipt in the source state. New
+        // transport/author credentials remain exclusively in the target state.
+        context.profile.register(&path, &snapshot)?;
         sync(&path)?;
-        let proof = receipt(&self.context, &attempt, value)?;
+        let proof = receipt(&context, &attempt, value)?;
         let key = proof.account()?;
-        if self
-            .context
+        if context
             .profile
             .load_state::<catalog::RecoveryReceipt>(&key)?
             .is_some_and(|prior| prior != proof)
         {
             return Err(mismatch());
         }
-        self.context.profile.save_state(&key, &proof)?;
-        let mut catalog = self
-            .context
+        context.profile.save_state(&key, &proof)?;
+        if let Some(target) = target.as_ref() {
+            target.save_state(&key, &proof)?;
+        }
+        let mut catalog = context
             .catalog
             .lock()
             .map_err(|_| RuntimeError::Transport)?;
@@ -571,12 +793,13 @@ impl PlatformCipherWriter {
         catalog.record_recovery(proof)?;
         attempt.publication = Some(value.clone());
         attempt.phase = RecoveryPhase::ProofConfirmed;
-        save(&self.context, &attempt)
+        save(&context, &attempt)
     }
 
     fn recovery_attempt(&self, source: &RecoverySource) -> Result<Attempt, RuntimeError> {
-        let registration = self.registration()?;
-        let attempt = load(&self.context, source.working_copy)?.ok_or_else(mismatch)?;
+        let context = self.active_context()?;
+        let registration = self.source_registration()?;
+        let attempt = load(&context, source.working_copy)?.ok_or_else(mismatch)?;
         check_source(&attempt, source)?;
         if registration.database != source.database
             || registration.root != source.root
@@ -596,7 +819,9 @@ impl RuntimeHost {
         &self,
         source: &RecoverySource,
     ) -> Result<Option<RecoveryPhase>, RuntimeError> {
-        let context = self.context.for_database(&source.database)?;
+        let Some(context) = self.context.known_context(&source.database, source.root)? else {
+            return Ok(None);
+        };
         let _serial = context
             .recovery
             .lock()
@@ -663,7 +888,47 @@ impl RuntimeHost {
         let copies = self.working_copies()?;
         let mut pending = Vec::new();
         for copy in copies {
-            let context = self.context.for_database(&copy.database)?;
+            let Some(context) = self.context.known_context(&copy.database, copy.root)? else {
+                let snapshot = ArchiveSnapshot::open(&copy.path, Some(copy.root))
+                    .map_err(cipher_ipc::storage)?;
+                let registration = self.profile().bootstrap_registration(&snapshot)?;
+                let path = locator_path(self.profile(), registration.working_copy);
+                let file = match File::open(path) {
+                    Ok(file) => file,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                    Err(_) => return Err(cipher_ipc::storage(taypeer_storage::Error::Io)),
+                };
+                if file.metadata().map_err(|_| RuntimeError::Transport)?.len() > 65536 {
+                    return Err(RuntimeError::TooLarge);
+                }
+                let locator: RecoveryLocator =
+                    serde_json::from_reader(file).map_err(|_| RuntimeError::Protocol)?;
+                if locator.version != VERSION
+                    || locator.source.database != copy.database
+                    || locator.source.root != copy.root
+                    || locator.source.working_copy != registration.working_copy
+                    || locator.source_path != copy.path
+                {
+                    return Err(mismatch());
+                }
+                let original = read(
+                    &self.context,
+                    &source_path(&self.context, &locator.source)?,
+                    Some(copy.root),
+                )?
+                .ok_or_else(mismatch)?;
+                if original.fingerprint() != locator.source.fingerprint {
+                    return Err(mismatch());
+                }
+                // A cold locator is only an unlock choice. Protected later phases
+                // are unavailable until the exact local credential is authenticated.
+                pending.push(crate::PendingRecovery {
+                    source: locator.source,
+                    working_copy: copy,
+                    phase: RecoveryPhase::SourceFrozen,
+                });
+                continue;
+            };
             let Some(registration) = context.profile.registration(&copy.path)? else {
                 return Err(RuntimeError::Protocol);
             };
@@ -702,7 +967,13 @@ impl RuntimeHost {
         &self,
         value: &RecoveryPublication,
     ) -> Result<WorkingCopy, RuntimeError> {
-        let context = self.context.for_database(&value.intent.source.database)?;
+        if let Some(copy) = self.repeated_platform_adoption(value)? {
+            return Ok(copy);
+        }
+        let context = self
+            .context
+            .known_context(&value.intent.source.database, value.intent.source.root)?
+            .ok_or(RuntimeError::Closed)?;
         let _serial = context
             .recovery
             .lock()
@@ -720,7 +991,13 @@ impl RuntimeHost {
         &self,
         value: &RecoveryPublication,
     ) -> Result<WorkingCopy, RuntimeError> {
-        let context = self.context.for_database(&value.intent.source.database)?;
+        if let Some(copy) = self.repeated_platform_adoption(value)? {
+            return Ok(copy);
+        }
+        let context = self
+            .context
+            .known_context(&value.intent.source.database, value.intent.source.root)?
+            .ok_or(RuntimeError::Closed)?;
         let _serial = context
             .recovery
             .lock()
@@ -736,6 +1013,22 @@ impl RuntimeHost {
                 self.require_closed_recovery_source(&value.intent.source.database)?;
                 self.publish_platform_adoption(&context, attempt, proof)
             })
+    }
+
+    fn repeated_platform_adoption(
+        &self,
+        value: &RecoveryPublication,
+    ) -> Result<Option<WorkingCopy>, RuntimeError> {
+        let proof = {
+            let mut catalog = self.catalog.lock().map_err(|_| RuntimeError::Transport)?;
+            catalog.reconcile()?;
+            catalog.adopted_platform_recovery(value)?
+        };
+        let Some(proof) = proof else {
+            return Ok(None);
+        };
+        self.verify_recovery_proof(&proof)?;
+        Ok(Some(proof.destination))
     }
 
     fn verified_platform_recovery(

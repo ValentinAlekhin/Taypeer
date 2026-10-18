@@ -4,7 +4,6 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.taypeer.bridge.AndroidException
 import dev.taypeer.bridge.Host
-import dev.taypeer.platform.KeystoreCredentials
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -20,7 +19,7 @@ class DeviceSettingsTest {
     @Test fun policyUpdatesSurviveHostRestartAndInvalidValuesDoNotApply() {
         val profile = File(context.noBackupFilesDir, "PUBLIC-device-policy-${UUID.randomUUID()}")
         try {
-            Host(profile.path, KeystoreCredentials(context)).use { host ->
+            Host.portable(profile.path).use { host ->
                 val defaults = host.deviceSettings()
                 assertEquals(300u, defaults.idleSeconds)
                 assertEquals(30u, defaults.clipboardSeconds)
@@ -31,12 +30,12 @@ class DeviceSettingsTest {
                 assertThrows(AndroidException.InvalidOptions::class.java) { host.setClipboardSeconds(0u) }
                 assertEquals(applied, host.deviceSettings())
             }
-            Host(profile.path, KeystoreCredentials(context)).use { restored ->
+            Host.portable(profile.path).use { restored ->
                 assertEquals(17u, restored.deviceSettings().idleSeconds)
                 assertNull(restored.deviceSettings().clipboardSeconds)
                 assertEquals(43u, restored.setClipboardSeconds(43u).clipboardSeconds)
             }
-            Host(profile.path, KeystoreCredentials(context)).use { restored ->
+            Host.portable(profile.path).use { restored ->
                 assertEquals(43u, restored.deviceSettings().clipboardSeconds)
             }
         } finally { assertTrue(profile.deleteRecursively()) }
@@ -49,11 +48,11 @@ class DeviceSettingsTest {
             val clipboard = File(profile, "clipboard-policy.json")
             val malformed = "{\"version\":1,\"clipboard\":{\"mode\":\"timed\",\"seconds\":0}}"
             clipboard.writeText(malformed)
-            assertThrows(AndroidException.ProfileInvalid::class.java) { Host(profile.path, KeystoreCredentials(context)) }
+            assertThrows(AndroidException.ProfileInvalid::class.java) { Host.portable(profile.path) }
             assertEquals(malformed, clipboard.readText())
             assertTrue(clipboard.delete())
             File(profile, "session-policy.json").writeText("{\"version\":1,\"policy\":{\"idle_seconds\":0}}")
-            assertThrows(AndroidException.ProfileInvalid::class.java) { Host(profile.path, KeystoreCredentials(context)) }
+            assertThrows(AndroidException.ProfileInvalid::class.java) { Host.portable(profile.path) }
         } finally { assertTrue(profile.deleteRecursively()) }
     }
 
@@ -62,7 +61,7 @@ class DeviceSettingsTest {
         val raw = "  PUBLIC Android телефон α  "
         val boundary = "PUBLIC " + "Ж".repeat(124) + "a"
         try {
-            Host(profile.path, KeystoreCredentials(context)).use { host ->
+            Host.portable(profile.path).use { host ->
                 assertEquals("Taypeer", host.deviceSettings().deviceName)
                 assertEquals(raw, host.setDeviceName(raw).deviceName)
                 assertEquals(256, boundary.toByteArray(Charsets.UTF_8).size)
@@ -74,7 +73,7 @@ class DeviceSettingsTest {
                 assertEquals(boundary, host.deviceSettings().deviceName)
                 assertEquals(raw, host.setDeviceName(raw).deviceName)
             }
-            Host(profile.path, KeystoreCredentials(context)).use { host ->
+            Host.portable(profile.path).use { host ->
                 assertEquals(raw, host.deviceSettings().deviceName)
                 assertEquals(300u, host.deviceSettings().idleSeconds)
                 assertEquals(30u, host.deviceSettings().clipboardSeconds)
@@ -88,7 +87,7 @@ class DeviceSettingsTest {
         val first = "  PUBLIC first captured name  "
         val second = "PUBLIC newer Android name"
         try {
-            Host(profile.path, KeystoreCredentials(context)).use { host ->
+            Host.portable(profile.path).use { host ->
                 val loaded = CompletableDeferred<Unit>()
                 val releaseLoad = CompletableDeferred<Unit>()
                 val firstWritten = CompletableDeferred<Unit>()
@@ -148,7 +147,7 @@ class DeviceSettingsTest {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
         val raw = "  PUBLIC queued policy name β  "
         try {
-            Host(profile.path, KeystoreCredentials(context)).use { host ->
+            Host.portable(profile.path).use { host ->
                 val idleWritten = CompletableDeferred<Unit>()
                 val releaseIdle = CompletableDeferred<Unit>()
                 val clipboardWritten = CompletableDeferred<Unit>()
@@ -192,7 +191,7 @@ class DeviceSettingsTest {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
         val raw = "PUBLIC durable name with lost reply"
         try {
-            Host(profile.path, KeystoreCredentials(context)).use { host ->
+            Host.portable(profile.path).use { host ->
                 var loseReply = true
                 val names = java.util.Collections.synchronizedList(mutableListOf<String>())
                 val backend = object : PublicSettingsBackend(host) {
@@ -248,7 +247,7 @@ class DeviceSettingsTest {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
         val other = "PUBLIC published name before lost confirmation"
         try {
-            Host(profile.path, KeystoreCredentials(context)).use { host ->
+            Host.portable(profile.path).use { host ->
                 val published = CompletableDeferred<Unit>()
                 val releaseFailure = CompletableDeferred<Unit>()
                 val names = java.util.Collections.synchronizedList(mutableListOf<String>())

@@ -10,6 +10,7 @@ pub(in crate::platform_worker) fn open_keyed(
     document: Arc<dyn PlatformDocument>,
     inputs: Option<&dyn BiometricInputs>,
     lease: BiometricInputLease,
+    credential: &mut Option<taypeer_storage::LocalCredential>,
 ) -> Result<Option<SessionToken>, RuntimeError> {
     lease.require(BiometricInputPurpose::KeyedBoot)?;
     let inputs = inputs.ok_or(taypeer_services::ServiceError::Unauthorized)?;
@@ -48,6 +49,12 @@ pub(in crate::platform_worker) fn open_keyed(
     let key = super::super::read_private_key_input(inputs.consume(&lease)?)?;
     inputs.check(&lease)?;
     require_scope(&current_scope(document.as_ref())?, &lease)?;
+    if document.portable_credentials() {
+        let snapshot = document.snapshot().map_err(crate::cipher_ipc::storage)?;
+        *credential = super::super::credentials::open(document.as_ref(), &snapshot, &key)?;
+        inputs.check(&lease)?;
+        require_scope(&current_scope(document.as_ref())?, &lease)?;
+    }
     let port = Box::new(super::super::Persistence(Arc::clone(&document)));
     let mut author_failure = None;
     let session = service.open_managed_with_key_and_author(port, key, |snapshot| {
@@ -58,7 +65,13 @@ pub(in crate::platform_worker) fn open_keyed(
                 &lease,
             )?;
             require_scope(&current_scope(document.as_ref())?, &lease)?;
-            let author = document.author(Some(snapshot.fingerprint()))?;
+            let author = if document.portable_credentials() {
+                credential
+                    .as_ref()
+                    .and_then(taypeer_storage::LocalCredential::author)
+            } else {
+                document.author(Some(snapshot.fingerprint()))?
+            };
             inputs.check(&lease)?;
             require_scope(&current_scope(document.as_ref())?, &lease)?;
             Ok(author)

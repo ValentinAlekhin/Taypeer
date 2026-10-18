@@ -71,6 +71,131 @@ fn saved_entry(service: &mut DatabaseService, session: &SessionToken) -> EntryId
 }
 
 #[test]
+fn exact_administrative_retry_finishes_credentials_after_the_database_committed() {
+    use taypeer_storage::{
+        LocalCredential, LocalCredentialScope, LocalCredentialStore, LocalStateKey,
+    };
+    for kdf_policy in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let profile = Profile::new(111);
+        let path = directory
+            .path()
+            .join("PUBLIC credential-finalization.taypeer");
+        let (mut service, session) = create(&profile, path.clone());
+        let before = profile.coordinator.snapshot(&session.database).unwrap();
+        let old = DatabaseService::authenticate_archive_credentials(&before, PASSWORD).unwrap();
+        let scope = LocalCredentialScope {
+            database: session.database.clone(),
+            root: before.chain().root().unwrap(),
+            epoch: before.chain().head().epoch,
+        };
+        let mut record = LocalCredential::new(
+            scope,
+            &profile.author(),
+            &profile.transport,
+            &LocalStateKey::generate().unwrap(),
+        );
+        let active = directory.path().join("credentials");
+        let prepared = directory.path().join("credentials.prepared");
+        LocalCredentialStore::create_record(&active, &old, &record).unwrap();
+        let operation = Digest::of(b"PUBLIC recover credential finalization");
+        let policy = DatabasePolicy::new(1024 * 1024, 2 * 1024 * 1024, 600).unwrap();
+        let mut fail_finalize = true;
+        let mut callback = |stage, _previous: &ReadKey, current: &ReadKey, epoch| {
+            match stage {
+                EpochCredentialStage::Prepare => {
+                    record.set_epoch(epoch);
+                    LocalCredentialStore::create_record(&prepared, current, &record)?;
+                }
+                EpochCredentialStage::Finalize if fail_finalize => {
+                    fail_finalize = false;
+                    return Err(ServiceError::Storage(StorageError::CommitUncertain));
+                }
+                EpochCredentialStage::Finalize => {
+                    let store = LocalCredentialStore::open(&prepared)?;
+                    let restored = store.unlock_record(current, record.scope())?;
+                    assert_eq!(
+                        restored.author().unwrap().public(),
+                        profile.author().public()
+                    );
+                    drop(store);
+                    std::fs::rename(&prepared, &active).unwrap();
+                }
+            }
+            Ok(())
+        };
+        let first = if kdf_policy {
+            service.set_database_policy_with_credentials(
+                &session,
+                operation,
+                policy,
+                Some(PASSWORD),
+                &mut callback,
+            )
+        } else {
+            service.rotate_password_with_credentials(
+                &session,
+                operation,
+                NEW_PASSWORD,
+                None,
+                &mut callback,
+            )
+        };
+        assert_eq!(
+            first,
+            Err(ServiceError::Storage(StorageError::CommitUncertain))
+        );
+        let committed = profile.coordinator.snapshot(&session.database).unwrap();
+        assert_eq!(
+            committed.chain().head().epoch,
+            before.chain().head().epoch + 1
+        );
+        let committed_bytes = std::fs::read(&path).unwrap();
+        if kdf_policy {
+            service
+                .set_database_policy_with_credentials(
+                    &session,
+                    operation,
+                    policy,
+                    None,
+                    &mut callback,
+                )
+                .unwrap();
+        } else {
+            service
+                .rotate_password_with_credentials(
+                    &session,
+                    operation,
+                    NEW_PASSWORD,
+                    None,
+                    &mut callback,
+                )
+                .unwrap();
+        }
+        assert_eq!(std::fs::read(&path).unwrap(), committed_bytes);
+        assert!(!prepared.exists());
+        let password = if kdf_policy { PASSWORD } else { NEW_PASSWORD };
+        let current =
+            DatabaseService::authenticate_archive_credentials(&committed, password).unwrap();
+        let scope = LocalCredentialScope {
+            database: session.database.clone(),
+            root: committed.chain().root().unwrap(),
+            epoch: committed.chain().head().epoch,
+        };
+        let store = LocalCredentialStore::open(&active).unwrap();
+        assert!(store.unlock_record(&current, &scope).is_ok());
+        assert!(store.unlock(&old).is_err());
+        service.lock(&session).unwrap();
+        let reopened = service
+            .open_managed(port(&profile, &session, &path), password, || {
+                Ok(Some(profile.author()))
+            })
+            .unwrap();
+        assert!(service.database_info(&reopened).unwrap().writable);
+    }
+}
+
+#[test]
 fn descriptor_only_policy_read_reports_actual_ciphertext_size_without_file_or_history_writes() {
     let directory = tempfile::tempdir().unwrap();
     let profile = Profile::new(107);

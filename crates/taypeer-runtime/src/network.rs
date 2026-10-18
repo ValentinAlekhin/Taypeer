@@ -86,6 +86,14 @@ pub(crate) struct Network {
 impl RuntimeHost {
     /// Start Iroh for this CLI lifetime. A relay is used only when explicitly selected.
     pub fn start_network(&self, relay: RelaySetting) -> Result<EndpointAddr, RuntimeError> {
+        self.enable_network(relay)?.ok_or(RuntimeError::Closed)
+    }
+    /// Configure exchange, starting endpoints only for authenticated, enrolled databases.
+    /// A dormant portable profile retains the choice and has no endpoint until first unlock.
+    pub fn enable_network(
+        &self,
+        relay: RelaySetting,
+    ) -> Result<Option<EndpointAddr>, RuntimeError> {
         *self
             .requested_relay
             .lock()
@@ -93,19 +101,22 @@ impl RuntimeHost {
         let contexts = self.context.active_contexts()?;
         let mut first = None;
         for context in contexts {
-            if !context.profile.is_persistent() {
+            if !context.profile.permits_exchange() {
                 continue;
             }
             let address = self.start_context_network(context, relay.clone())?;
             first.get_or_insert(address);
         }
-        first.ok_or(RuntimeError::Closed)
+        Ok(first)
     }
     fn start_context_network(
         &self,
         context: Arc<crate::host::HostContext>,
         relay: RelaySetting,
     ) -> Result<EndpointAddr, RuntimeError> {
+        if !context.profile.permits_exchange() {
+            return Err(RuntimeError::Closed);
+        }
         let mut slot = self.network.lock().map_err(|_| RuntimeError::Transport)?;
         let key = context.transport.public();
         if let Some(network) = slot.get(&key) {
@@ -184,6 +195,9 @@ impl RuntimeHost {
                             Ok(_) => {},
                         }
                     }
+                }
+                if !context.profile.permits_exchange() {
+                    break;
                 }
                 let routes = match context.coordinator.routes() {
                     Ok(routes) => routes,
@@ -283,6 +297,9 @@ impl RuntimeHost {
     }
     pub(crate) fn node_for(&self, database: &DatabaseId) -> Result<Arc<Node>, RuntimeError> {
         let context = self.context.for_database(database)?;
+        if !context.profile.permits_exchange() {
+            return Err(RuntimeError::Closed);
+        }
         self.network
             .lock()
             .map_err(|_| RuntimeError::Transport)?
@@ -398,7 +415,7 @@ impl RuntimeHost {
             path: destination,
         };
         let request = code.invitation.id().map_err(|_| RuntimeError::Protocol)?;
-        if self.profile().is_linux_lazy() {
+        if self.profile().is_portable() {
             self.enrollments
                 .lock()
                 .map_err(|_| RuntimeError::Transport)?
@@ -425,8 +442,22 @@ impl RuntimeHost {
         proof: JoinProof,
         cancellation: &NetworkCancellation,
     ) -> Result<JoinProgress, RuntimeError> {
+        self.join_platform_proof_with_password(code, proof, &[], cancellation)
+    }
+
+    /// Persist password-protected platform enrollment before presenting its proof.
+    pub fn join_platform_proof_with_password(
+        &self,
+        code: InvitationCode,
+        proof: JoinProof,
+        password: &[u8],
+        cancellation: &NetworkCancellation,
+    ) -> Result<JoinProgress, RuntimeError> {
         cancellation.check()?;
-        if !self.profile().is_persistent() {
+        if self.profile().is_portable() && password.is_empty() {
+            return Err(crate::profile::ProfileError::Credentials.into());
+        }
+        if !self.profile().is_portable() && !self.profile().is_persistent() {
             return Err(RuntimeError::Profile(
                 crate::profile::ProfileError::Credentials,
             ));
@@ -438,10 +469,13 @@ impl RuntimeHost {
         {
             return Err(RuntimeError::Protocol);
         }
+        let context = self.context.for_database(&code.invitation.database)?;
         proof
-            .verify(&code.invitation, self.context.transport.public())
+            .verify(&code.invitation, context.transport.public())
             .map_err(|_| RuntimeError::Protocol)?;
-        if self.profile().identity()?.as_ref() != Some(&proof.recipient) {
+        if !self.profile().is_portable()
+            && self.profile().identity()?.as_ref() != Some(&proof.recipient)
+        {
             return Err(RuntimeError::Protocol);
         }
         let request = code.invitation.id().map_err(|_| RuntimeError::Protocol)?;
@@ -479,7 +513,7 @@ impl RuntimeHost {
             if copy.path != pending.path || copy.root != pending.invitation.root {
                 return Err(taypeer_services::ServiceError::OperationConflict.into());
             }
-            self.context.attach(&copy.path)?;
+            context.attach(&copy.path)?;
             self.register_working_copy(&copy.path)?;
             return Ok(JoinProgress::Received(copy.database.clone()));
         }
@@ -491,8 +525,38 @@ impl RuntimeHost {
             return Err(storage(taypeer_storage::Error::AlreadyExists));
         }
         let proof = pending.proof.clone();
-        self.record_join_intent(request, pending, None)?;
+        self.record_join_intent(request, pending, Some(password))?;
         self.present_join(code, proof, request, cancellation)
+    }
+
+    /// Resume a password-protected invitation with an isolated platform process,
+    /// never by launching the Android application executable as a desktop worker.
+    pub fn resume_platform_join(
+        &self,
+        launcher: &dyn crate::platform::ProcessLauncher,
+        request: Digest,
+        password: String,
+    ) -> Result<JoinProgress, RuntimeError> {
+        let password = Zeroizing::new(password);
+        let active = self
+            .enrollments
+            .lock()
+            .map_err(|_| RuntimeError::Transport)?
+            .get(&request)
+            .is_some_and(|client| client.control.check(false).is_ok());
+        if self.profile().is_portable() && !active {
+            let pending = self
+                .profile()
+                .restore_join_request(request, password.as_bytes())?;
+            let proof =
+                self.platform_enroll(launcher, pending.invitation.clone(), password.to_string())?;
+            if proof != pending.proof {
+                return Err(RuntimeError::Protocol);
+            }
+            self.record_join_intent(request, pending, Some(password.as_bytes()))?;
+            self.ensure_join_network()?;
+        }
+        self.resume_join(request, password.to_string())
     }
 
     fn ensure_join_network(&self) -> Result<(), RuntimeError> {
@@ -513,7 +577,7 @@ impl RuntimeHost {
         database: &DatabaseId,
     ) -> Result<(), RuntimeError> {
         let context = self.context.for_database(database)?;
-        if !self.profile().is_linux_lazy() {
+        if !self.profile().is_portable() {
             // A persistent profile owns all databases in one state file. Filtering here
             // would silently discard other invitations when presenting or finishing one.
             context.profile.save_state("joins", joins)?;
@@ -546,7 +610,7 @@ impl RuntimeHost {
         {
             return Err(RuntimeError::Protocol);
         }
-        if self.profile().is_linux_lazy() {
+        if self.profile().is_portable() {
             self.profile().save_join_request(
                 request,
                 &pending,
@@ -599,7 +663,7 @@ impl RuntimeHost {
     pub fn pending_join_summaries(
         &self,
     ) -> Result<BTreeMap<Digest, PendingJoinSummary>, RuntimeError> {
-        if self.profile().is_linux_lazy() {
+        if self.profile().is_portable() {
             return self.profile().join_summaries().map_err(RuntimeError::from);
         }
         Ok(self
@@ -643,10 +707,10 @@ impl RuntimeHost {
             .is_some_and(|client| client.control.check(false).is_ok());
         let pending = if let Some(pending) = joins
             .get(&request)
-            .filter(|_| !self.profile().is_linux_lazy() || active_enrollment)
+            .filter(|_| !self.profile().is_portable() || active_enrollment)
         {
             pending.clone()
-        } else if self.profile().is_linux_lazy() {
+        } else if self.profile().is_portable() {
             let pending = self
                 .profile()
                 .restore_join_request(request, password.as_bytes())?;
@@ -695,7 +759,7 @@ impl RuntimeHost {
             _ => return Err(RuntimeError::Protocol),
         };
         let database = self.download_join(request, &pending, metadata, cancellation)?;
-        if self.profile().is_linux_lazy() {
+        if self.profile().is_portable() {
             // An incorrect password preserves ciphertext and the pending request for retry.
             let enrollment = self
                 .enrollments
@@ -740,7 +804,7 @@ impl RuntimeHost {
         let mut joins = self.pending_joins()?;
         joins.remove(&request);
         self.save_pending_joins(&joins, &pending.invitation.database)?;
-        if self.profile().is_linux_lazy() {
+        if self.profile().is_portable() {
             self.profile().finish_join_request(request)?;
         }
         Ok(JoinProgress::Received(database))

@@ -23,7 +23,7 @@ class HostDeathProbeService : Service() {
         executor.execute {
             try {
                 val profile = File(noBackupFilesDir, "PUBLIC-host-death-${UUID.randomUUID()}")
-                val host = Host(profile.path, KeystoreCredentials(this))
+                val host = Host.portable(profile.path)
                 this.host = host
                 val manager = DocumentManager(this, host)
                 this.manager = manager

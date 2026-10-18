@@ -39,6 +39,12 @@ impl From<RelayPreference> for taypeer_runtime::RelayPreference {
 }
 #[uniffi::export]
 impl Host {
+    /// Resource-lifetime observation only, never an admission or unlocked-document claim.
+    pub fn enrollment_active(&self, request: String) -> Result<bool, AndroidError> {
+        self.runtime
+            .platform_enrollment_active(super::digest(&request)?)
+            .map_err(runtime)
+    }
     /// Read validated local settings without unlocking any database.
     pub fn relay_preference(&self) -> Result<RelayPreference, AndroidError> {
         self.runtime
@@ -81,7 +87,7 @@ impl Host {
         }
         self.runtime.stop_configured_network();
         self.runtime
-            .start_network(taypeer_sync::RelaySetting::RelayOnly {
+            .enable_network(taypeer_sync::RelaySetting::RelayOnly {
                 url,
                 root_der: Some(root_der),
             })
@@ -225,72 +231,113 @@ pub struct ExchangeView {
 }
 #[uniffi::export]
 impl Host {
-    /// Redeem an explicitly entered bounded bearer code. A proof-only isolated
-    /// generation exits before host networking; no master password is acquired.
+    /// Redeem a code with password-protected isolated enrollment staging.
     pub fn join_invitation(
         &self,
         code: String,
+        password: String,
         process: Box<dyn DocumentProcess>,
         files: Box<dyn CiphertextFiles>,
     ) -> Result<EnrollmentProgress, AndroidError> {
         let code = Zeroizing::new(code);
+        let password = Zeroizing::new(password);
         if code.len() > super::MAX_METADATA {
             return Err(AndroidError::InvalidOptions);
         }
         let code: InvitationCode =
             serde_json::from_str(&code).map_err(|_| AndroidError::InvalidOptions)?;
         let request = code.invitation.id().map_err(failure)?;
-        let proof =
-            if let Some(pending) = self.runtime.pending_joins().map_err(runtime)?.get(&request) {
-                pending.proof.clone()
-            } else {
-                // This capability path never becomes a document. Keeping it distinct
-                // from the received file allows exact completed-operation retries.
-                let path = self
-                    .runtime
-                    .creation_path(&taypeer_core::OperationId::new(format!(
-                        "join-proof:{request}"
-                    )))
-                    .map_err(runtime)?;
-                let writer = Arc::new(CipherWriter {
-                    writer: self
-                        .runtime
-                        .platform_cipher_writer(&path)
-                        .map_err(runtime)?,
-                    files: Arc::from(files),
+        let path = self
+            .runtime
+            .creation_path(&taypeer_core::OperationId::new(format!("join:{request}")))
+            .map_err(runtime)?;
+        if let Some(copy) = self
+            .runtime
+            .working_copies()
+            .map_err(runtime)?
+            .iter()
+            .find(|copy| copy.database == code.invitation.database)
+        {
+            if copy.path == path && copy.root == code.invitation.root {
+                return Ok(EnrollmentProgress::Received {
+                    database: copy.database.to_string(),
                 });
-                self.runtime
-                    .platform_join_proof(
-                        &Launcher {
-                            writer,
-                            process: Arc::from(process),
-                            selected: Arc::new(super::SelectedTransfersHost::default()),
-                        },
-                        code.invitation.clone(),
-                    )
-                    .map_err(runtime)?
-            };
+            }
+            return Err(runtime(
+                taypeer_services::ServiceError::OperationConflict.into(),
+            ));
+        }
+        let proof = {
+            // This capability path never becomes a document. Keeping it distinct
+            // from the received file allows exact completed-operation retries.
+            let writer = Arc::new(CipherWriter {
+                writer: self
+                    .runtime
+                    .platform_enrollment_cipher_writer(&path, &code.invitation)
+                    .map_err(runtime)?,
+                files: Arc::from(files),
+            });
+            self.runtime
+                .platform_enroll(
+                    &Launcher {
+                        writer,
+                        process: Arc::from(process),
+                        selected: Arc::new(super::SelectedTransfersHost::default()),
+                    },
+                    code.invitation.clone(),
+                    password.to_string(),
+                )
+                .map_err(runtime)?
+        };
         self.runtime
-            .join_platform_proof(code, proof, &NetworkCancellation::default())
+            .join_platform_proof_with_password(
+                code,
+                proof,
+                password.as_bytes(),
+                &NetworkCancellation::default(),
+            )
             .map(Into::into)
             .map_err(runtime)
     }
     /// Resume a public durable proof without a bearer or an unlocked document.
-    pub fn resume_join(&self, request: String) -> Result<EnrollmentProgress, AndroidError> {
+    pub fn resume_join(
+        &self,
+        request: String,
+        password: String,
+        process: Box<dyn DocumentProcess>,
+        files: Box<dyn CiphertextFiles>,
+    ) -> Result<EnrollmentProgress, AndroidError> {
+        let password = Zeroizing::new(password);
+        let request = super::digest(&request)?;
+        let writer = Arc::new(CipherWriter {
+            writer: self
+                .runtime
+                .platform_pending_join_cipher_writer(request, password.as_bytes())
+                .map_err(runtime)?,
+            files: Arc::from(files),
+        });
         self.runtime
-            .resume_join(super::digest(&request)?, String::new())
+            .resume_platform_join(
+                &Launcher {
+                    writer,
+                    process: Arc::from(process),
+                    selected: Arc::new(super::SelectedTransfersHost::default()),
+                },
+                request,
+                password.to_string(),
+            )
             .map(Into::into)
             .map_err(runtime)
     }
     /// List durable public requests, including requests from previous lifetimes.
     pub fn pending_joins(&self) -> Result<Vec<EnrollmentRow>, AndroidError> {
         self.runtime
-            .pending_joins()
+            .pending_join_summaries()
             .map(|rows| {
                 rows.into_iter()
                     .map(|(id, pending)| EnrollmentRow {
                         request: id.to_string(),
-                        database: pending.invitation.database.to_string(),
+                        database: pending.database.to_string(),
                     })
                     .collect()
             })

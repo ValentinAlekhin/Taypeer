@@ -38,6 +38,11 @@ mod recovery_close;
 
 #[derive(Serialize, Deserialize)]
 enum Request {
+    Portable,
+    Credential(taypeer_storage::LocalCredentialScope, bool),
+    PublishCredential(taypeer_storage::LocalCredentialScope, Vec<u8>, bool),
+    FinalizeCredential(taypeer_storage::LocalCredentialScope, bool),
+    ActivateCredential(crate::profile::TransportCapability, Option<Digest>),
     Allocate,
     Length(u64),
     Read(u64, u64, usize),
@@ -73,6 +78,8 @@ enum Request {
 }
 #[derive(Serialize, Deserialize)]
 enum Reply {
+    Flag(bool),
+    OptionalBytes(Option<Vec<u8>>),
     Done,
     Ticket(u64),
     OptionalTicket(Option<u64>),
@@ -272,6 +279,51 @@ impl CipherPersistence for Document {
     }
 }
 impl PlatformDocument for Document {
+    fn portable_credentials(&self) -> bool {
+        matches!(self.rpc.call(Request::Portable), Ok(Reply::Flag(true)))
+    }
+    fn credential(
+        &self,
+        scope: &taypeer_storage::LocalCredentialScope,
+        prepared: bool,
+    ) -> Result<Option<Vec<u8>>, RuntimeError> {
+        match self
+            .rpc
+            .call(Request::Credential(scope.clone(), prepared))?
+        {
+            Reply::OptionalBytes(bytes) => Ok(bytes),
+            _ => Err(RuntimeError::Protocol),
+        }
+    }
+    fn publish_credential(
+        &self,
+        scope: &taypeer_storage::LocalCredentialScope,
+        cipher: &[u8],
+        prepared: bool,
+    ) -> Result<(), RuntimeError> {
+        self.done(Request::PublishCredential(
+            scope.clone(),
+            cipher.to_vec(),
+            prepared,
+        ))
+        .map_err(crate::cipher_ipc::storage)
+    }
+    fn finalize_credential(
+        &self,
+        scope: &taypeer_storage::LocalCredentialScope,
+        promote_prepared: bool,
+    ) -> Result<(), RuntimeError> {
+        self.done(Request::FinalizeCredential(scope.clone(), promote_prepared))
+            .map_err(crate::cipher_ipc::storage)
+    }
+    fn activate_credentials(
+        &self,
+        capability: crate::profile::TransportCapability,
+        authenticated: Option<Digest>,
+    ) -> Result<(), RuntimeError> {
+        self.done(Request::ActivateCredential(capability, authenticated))
+            .map_err(crate::cipher_ipc::storage)
+    }
     fn temporary(&self) -> TemporaryStorage {
         self.temporary.clone()
     }
@@ -460,6 +512,23 @@ impl Server {
     }
     fn handle(&mut self, request: Request) -> Result<Reply, RuntimeError> {
         match request {
+            Request::Portable => Ok(Reply::Flag(self.writer.context.profile.is_portable())),
+            Request::Credential(scope, prepared) => Ok(Reply::OptionalBytes(
+                self.writer.credential(&scope, prepared)?,
+            )),
+            Request::PublishCredential(scope, cipher, prepared) => {
+                self.writer.publish_credential(&scope, &cipher, prepared)?;
+                Ok(Reply::Done)
+            }
+            Request::FinalizeCredential(scope, promote_prepared) => {
+                self.writer.finalize_credential(&scope, promote_prepared)?;
+                Ok(Reply::Done)
+            }
+            Request::ActivateCredential(capability, authenticated) => {
+                self.writer
+                    .activate_credentials(capability, authenticated)?;
+                Ok(Reply::Done)
+            }
             Request::Allocate => {
                 self.faults.allocations.fetch_add(1, Ordering::Relaxed);
                 if self.faults.deny_allocate.load(Ordering::Acquire) {
@@ -767,14 +836,24 @@ struct Fixture {
 }
 impl Fixture {
     fn new() -> Self {
+        Self::with_portable(false)
+    }
+    fn portable() -> Self {
+        Self::with_portable(true)
+    }
+    fn with_portable(portable: bool) -> Self {
         let directory = tempfile::tempdir().unwrap();
         let credentials = Arc::new(Credentials::default());
-        let host = RuntimeHost::with_platform_credentials(
-            &directory.path().join("profile"),
-            SessionController::new(Default::default()),
-            credentials.clone(),
-        )
-        .unwrap();
+        let host = if portable {
+            RuntimeHost::new(&directory.path().join("profile")).unwrap()
+        } else {
+            RuntimeHost::with_platform_credentials(
+                &directory.path().join("profile"),
+                SessionController::new(Default::default()),
+                credentials.clone(),
+            )
+            .unwrap()
+        };
         let path = directory.path().join("PUBLIC descriptor.taypeer");
         let writer = host.platform_cipher_writer(&path).unwrap();
         let launcher = Launcher {
@@ -802,6 +881,409 @@ impl Fixture {
             }),
         )
     }
+    fn restart_portable(self) -> Self {
+        let Self {
+            _directory,
+            host,
+            path,
+            launcher,
+            credentials,
+        } = self;
+        drop(launcher);
+        drop(host);
+        let host = RuntimeHost::new(&_directory.path().join("profile")).unwrap();
+        let launcher = Launcher {
+            writer: host.platform_cipher_writer(&path).unwrap(),
+            directory: _directory.path().to_owned(),
+            faults: Arc::new(Faults::default()),
+        };
+        Self {
+            _directory,
+            host,
+            path,
+            launcher,
+            credentials,
+        }
+    }
+}
+
+#[test]
+fn portable_descriptor_credentials_survive_restart_without_host_author_access() {
+    let fixture = Fixture::portable();
+    assert!(
+        fixture
+            .host
+            .enable_network(taypeer_sync::RelaySetting::Disabled)
+            .unwrap()
+            .is_none()
+    );
+    assert!(!fixture.host.network_snapshot().unwrap().running);
+    let mut worker = fixture.open(PASSWORD, true).unwrap();
+    assert!(fixture.host.network_snapshot().unwrap().running);
+    let policy: taypeer_services::DatabasePolicyDetails =
+        serde_json::from_value(worker.request(&Command::PolicyDetails).unwrap()).unwrap();
+    assert!(
+        policy
+            .protection
+            .password_derivation_ms
+            .is_some_and(|elapsed| elapsed > 0)
+    );
+    worker
+        .request(&Command::CreateGroup {
+            name: "PUBLIC portable group".into(),
+            parent: None,
+            operation: taypeer_services::new_operation_id().unwrap(),
+        })
+        .unwrap();
+    assert_eq!(
+        fixture.launcher.faults.author_calls.load(Ordering::Acquire),
+        0
+    );
+    worker.close().unwrap();
+    drop(worker);
+    let fixture = fixture.restart_portable();
+    assert!(fixture.host.context.active_contexts().unwrap().is_empty());
+    assert!(
+        fixture
+            .host
+            .enable_network(taypeer_sync::RelaySetting::Disabled)
+            .unwrap()
+            .is_none()
+    );
+    assert!(fixture.open("PUBLIC wrong password", false).is_err());
+    assert!(!fixture.host.network_snapshot().unwrap().running);
+    let mut reopened = fixture.open(PASSWORD, false).unwrap();
+    assert!(fixture.host.network_snapshot().unwrap().running);
+    let policy: taypeer_services::DatabasePolicyDetails =
+        serde_json::from_value(reopened.request(&Command::PolicyDetails).unwrap()).unwrap();
+    assert!(
+        policy
+            .protection
+            .password_derivation_ms
+            .is_some_and(|elapsed| elapsed > 0)
+    );
+    let groups: Vec<taypeer_services::GroupSummary> =
+        serde_json::from_value(reopened.request(&Command::Groups).unwrap()).unwrap();
+    assert_eq!(groups[0].name, "PUBLIC portable group");
+    assert_eq!(
+        fixture.launcher.faults.author_calls.load(Ordering::Acquire),
+        0
+    );
+    reopened.close().unwrap();
+}
+
+#[test]
+fn portable_descriptor_file_copy_persists_reader_state_without_admission() {
+    let source = Fixture::portable();
+    let mut worker = source.open(PASSWORD, true).unwrap();
+    worker.close().unwrap();
+    drop(worker);
+    let reader = Fixture::portable();
+    std::fs::copy(&source.path, &reader.path).unwrap();
+    reader
+        .host
+        .enable_network(taypeer_sync::RelaySetting::Disabled)
+        .unwrap();
+    let mut copied = reader.open(PASSWORD, false).unwrap();
+    assert!(!reader.host.network_snapshot().unwrap().running);
+    assert!(matches!(
+        copied.request(&Command::CreateGroup {
+            name: "PUBLIC forbidden".into(),
+            parent: None,
+            operation: taypeer_services::new_operation_id().unwrap()
+        }),
+        Err(RuntimeError::Service(
+            taypeer_services::ServiceError::ReadOnly
+        ))
+    ));
+    assert!(
+        !reader
+            .host
+            .context
+            .for_database(copied.database_id())
+            .unwrap()
+            .profile
+            .permits_exchange()
+    );
+    copied.close().unwrap();
+    drop(copied);
+    let reader = reader.restart_portable();
+    let mut reopened = reader.open(PASSWORD, false).unwrap();
+    assert_eq!(
+        reader.launcher.faults.author_calls.load(Ordering::Acquire),
+        0
+    );
+    reopened.close().unwrap();
+}
+
+#[test]
+fn portable_descriptor_rotation_and_kdf_policy_rewrap_credentials_before_success() {
+    let fixture = Fixture::portable();
+    let mut worker = fixture.open(PASSWORD, true).unwrap();
+    worker
+        .request(&Command::RotatePassword {
+            operation: Digest::of(b"PUBLIC portable password rotation"),
+            password: Zeroizing::new(b"PUBLIC portable next password".to_vec()),
+            revoke: None,
+        })
+        .unwrap();
+    worker
+        .request(&Command::SetDatabasePolicy {
+            operation: Digest::of(b"PUBLIC portable KDF policy"),
+            policy: taypeer_core::DatabasePolicy::new(1024 * 1024, 2 * 1024 * 1024, 750).unwrap(),
+            password: Some(Zeroizing::new(b"PUBLIC portable next password".to_vec())),
+        })
+        .unwrap();
+    worker.close().unwrap();
+    drop(worker);
+    let fixture = fixture.restart_portable();
+    assert!(fixture.open(PASSWORD, false).is_err());
+    let mut opened = fixture
+        .open("PUBLIC portable next password", false)
+        .unwrap();
+    assert_eq!(
+        fixture.launcher.faults.author_calls.load(Ordering::Acquire),
+        0
+    );
+    opened.close().unwrap();
+}
+
+#[test]
+fn portable_descriptor_open_never_promotes_an_unauthenticated_preparation() {
+    let fixture = Fixture::portable();
+    let mut worker = fixture.open(PASSWORD, true).unwrap();
+    let snapshot = fixture.launcher.writer.snapshot().unwrap();
+    let scope = credentials::scope(&snapshot).unwrap();
+    let previous = fixture
+        .launcher
+        .writer
+        .credential(&scope, false)
+        .unwrap()
+        .unwrap();
+    let unrelated = taypeer_storage::LocalCredential::new(
+        scope.clone(),
+        &AuthorKey::from_seed(&[91; 32]),
+        &taypeer_trust::TransportKey::from_seed(&[92; 32]),
+        &taypeer_storage::LocalStateKey::from_secret(&[93; 32]),
+    );
+    let staged = unrelated
+        .seal_with_password(b"PUBLIC incomplete invitation", 500)
+        .unwrap();
+    fixture
+        .launcher
+        .writer
+        .publish_credential(&scope, &staged, true)
+        .unwrap();
+    worker.close().unwrap();
+    drop(worker);
+    let mut reopened = fixture.open(PASSWORD, false).unwrap();
+    assert_eq!(
+        fixture
+            .launcher
+            .writer
+            .credential(&scope, false)
+            .unwrap()
+            .unwrap(),
+        previous
+    );
+    assert_eq!(
+        fixture
+            .launcher
+            .writer
+            .credential(&scope, true)
+            .unwrap()
+            .unwrap(),
+        staged
+    );
+    reopened.close().unwrap();
+}
+
+#[test]
+fn portable_descriptor_credential_port_cannot_cross_database_lineages() {
+    let fixture = Fixture::portable();
+    let mut first = fixture.open(PASSWORD, true).unwrap();
+    let other_path = fixture
+        ._directory
+        .path()
+        .join("PUBLIC other database.taypeer");
+    let other = Launcher {
+        writer: fixture.host.platform_cipher_writer(&other_path).unwrap(),
+        directory: fixture._directory.path().to_owned(),
+        faults: Arc::new(Faults::default()),
+    };
+    let mut second = fixture
+        .host
+        .open_platform_worker(
+            &other,
+            PASSWORD.into(),
+            Some(taypeer_services::CreateDatabase {
+                name: "PUBLIC independent database".into(),
+                description: None,
+                policy: taypeer_core::DatabasePolicy::new(1024 * 1024, 2 * 1024 * 1024, 500)
+                    .unwrap(),
+            }),
+        )
+        .unwrap();
+    let scope = credentials::scope(&other.writer.snapshot().unwrap()).unwrap();
+    let cipher = other.writer.credential(&scope, false).unwrap().unwrap();
+    other
+        .writer
+        .publish_credential(&scope, &cipher, true)
+        .unwrap();
+    let denied = |result: Result<(), RuntimeError>| {
+        assert!(matches!(
+            result,
+            Err(RuntimeError::Service(
+                taypeer_services::ServiceError::Unauthorized
+            ))
+        ));
+    };
+    for prepared in [false, true] {
+        denied(
+            fixture
+                .launcher
+                .writer
+                .credential(&scope, prepared)
+                .map(|_| ()),
+        );
+        denied(fixture.launcher.writer.publish_credential(
+            &scope,
+            b"PUBLIC foreign bytes",
+            prepared,
+        ));
+        denied(
+            fixture
+                .launcher
+                .writer
+                .finalize_credential(&scope, prepared),
+        );
+    }
+    let other_context = fixture.host.context.for_database(&scope.database).unwrap();
+    let other_capability = other_context.profile.recovery_capability().unwrap();
+    let capability = crate::profile::TransportCapability {
+        database: other_capability.database.clone(),
+        root: other_capability.root,
+        transport_seed: Zeroizing::new(*other_capability.transport_seed),
+        local_state_seed: other_capability
+            .local_state_seed
+            .as_ref()
+            .map(|seed| Zeroizing::new(**seed)),
+        enrolled: other_capability.enrolled,
+    };
+    denied(
+        fixture
+            .launcher
+            .writer
+            .activate_credentials(capability, None),
+    );
+    let unbound = fixture
+        .host
+        .platform_cipher_writer(&fixture._directory.path().join("PUBLIC absent.taypeer"))
+        .unwrap();
+    denied(unbound.credential(&scope, false).map(|_| ()));
+    denied(unbound.publish_credential(&scope, &cipher, false));
+    denied(unbound.publish_credential(&scope, &cipher, true));
+    denied(unbound.finalize_credential(&scope, true));
+    let fresh = taypeer_storage::LocalCredentialScope {
+        database: taypeer_core::DatabaseId::new("PUBLIC failed first publication"),
+        root: Digest::of(b"PUBLIC independent fresh lineage"),
+        epoch: 1,
+    };
+    // Even a failed first publication retains its exact owner. An uncertain
+    // publication takes the same branch, allowing equal-byte reconciliation.
+    assert!(unbound.publish_credential(&fresh, b"", false).is_err());
+    assert_eq!(unbound.credential(&fresh, false).unwrap(), None);
+    denied(unbound.publish_credential(&scope, &cipher, false));
+    unbound
+        .publish_credential(&fresh, b"PUBLIC retry bytes", false)
+        .unwrap();
+    assert_eq!(
+        unbound.credential(&fresh, false).unwrap(),
+        Some(b"PUBLIC retry bytes".to_vec())
+    );
+    assert_eq!(
+        other.writer.credential(&scope, false).unwrap(),
+        Some(cipher.clone())
+    );
+    assert_eq!(other.writer.credential(&scope, true).unwrap(), Some(cipher));
+    first.close().unwrap();
+    second.close().unwrap();
+}
+
+#[test]
+fn portable_descriptor_enrollment_restarts_from_ciphertext_without_an_author_callback() {
+    let source = Fixture::portable();
+    let mut manager = source.open(PASSWORD, true).unwrap();
+    let mut encoded = manager.request(&Command::CreateInvitation).unwrap();
+    let invitation: taypeer_trust::Invitation = serde_json::from_value(encoded[0].take()).unwrap();
+    let request = invitation.id().unwrap();
+    let mut recipient = Fixture::portable();
+    recipient.launcher.writer = recipient
+        .host
+        .platform_enrollment_cipher_writer(&recipient.path, &invitation)
+        .unwrap();
+    let proof = recipient
+        .host
+        .platform_enroll(&recipient.launcher, invitation.clone(), PASSWORD.into())
+        .unwrap();
+    assert!(recipient.host.platform_enrollment_active(request).unwrap());
+    assert!(!recipient.path.exists());
+    assert_eq!(
+        recipient
+            .launcher
+            .faults
+            .author_calls
+            .load(Ordering::Acquire),
+        0
+    );
+    let client = recipient
+        .host
+        .enrollments
+        .lock()
+        .unwrap()
+        .remove(&request)
+        .unwrap();
+    client.control.invalidate(LockReason::Manual);
+    client.control.wait_closed().unwrap();
+    drop(client);
+    let mut recipient = recipient.restart_portable();
+    recipient.launcher.writer = recipient
+        .host
+        .platform_enrollment_cipher_writer(&recipient.path, &invitation)
+        .unwrap();
+    assert!(
+        recipient
+            .host
+            .platform_enroll(
+                &recipient.launcher,
+                invitation.clone(),
+                "PUBLIC wrong staging password".into()
+            )
+            .is_err()
+    );
+    let repeated = recipient
+        .host
+        .platform_enroll(&recipient.launcher, invitation, PASSWORD.into())
+        .unwrap();
+    assert_eq!(repeated, proof);
+    assert_eq!(
+        recipient
+            .launcher
+            .faults
+            .author_calls
+            .load(Ordering::Acquire),
+        0
+    );
+    let client = recipient
+        .host
+        .enrollments
+        .lock()
+        .unwrap()
+        .remove(&request)
+        .unwrap();
+    client.control.invalidate(LockReason::Manual);
+    client.control.wait_closed().unwrap();
+    manager.close().unwrap();
 }
 fn editor(worker: &mut Worker) -> EditorView {
     serde_json::from_value(worker.request(&Command::EditorView).unwrap()).unwrap()

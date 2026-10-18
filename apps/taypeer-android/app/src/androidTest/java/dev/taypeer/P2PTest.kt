@@ -13,7 +13,6 @@ import dev.taypeer.bridge.RelayPreference
 import dev.taypeer.bridge.SaveState
 import dev.taypeer.bridge.TextEdit
 import dev.taypeer.platform.DocumentManager
-import dev.taypeer.platform.KeystoreCredentials
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -40,7 +39,7 @@ class P2PTest {
             else replica.host.startExchange()
         }
         fun add(): Replica {
-            val host = Host(File(directory, "replica-${replicas.size}").path, KeystoreCredentials(context))
+            val host = Host.portable(File(directory, "replica-${replicas.size}").path)
             host.setRelayPreference(RelayPreference.Disabled)
             return Replica(host, DocumentManager(context, host)).also(replicas::add)
         }
@@ -48,7 +47,7 @@ class P2PTest {
             val previous = replicas[index]
             previous.host.stopExchange()
             try { previous.documents.close() } finally { previous.host.close() }
-            val host = Host(File(directory, "replica-$index").path, KeystoreCredentials(context))
+            val host = Host.portable(File(directory, "replica-$index").path)
             return Replica(host, DocumentManager(context, host)).also { replicas[index] = it }
         }
         fun wake() = replicas.forEach { it.host.wakeExchange() }
@@ -84,7 +83,7 @@ class P2PTest {
         return receive(recipient, request, database)
     }
     private fun pendingRequest(manager: Replica, session: DocumentSession, recipient: Replica, database: String): String {
-        val progress = recipient.documents.join(session.createInvitation())
+        val progress = recipient.documents.join(session.createInvitation(), password)
         assertTrue("PUBLIC enrollment pending", progress is EnrollmentProgress.Pending)
         val request = (progress as EnrollmentProgress.Pending).request
         assertTrue(recipient.documents.catalog().isEmpty())
@@ -96,7 +95,7 @@ class P2PTest {
     }
     private fun receive(recipient: Replica, request: String, database: String): File {
         until("PUBLIC recipient receives approved ciphertext") {
-            when (val received = recipient.documents.resumeJoin(request)) {
+            when (val received = recipient.documents.resumeJoin(request, password)) {
                 is EnrollmentProgress.Received -> { assertEquals(database, received.database); true }
                 is EnrollmentProgress.Pending -> false
                 is EnrollmentProgress.Rejected -> throw AssertionError("PUBLIC enrollment rejected")
@@ -118,7 +117,7 @@ class P2PTest {
         assertEquals(request, restarted.documents.pendingJoins().single().request)
         assertTrue(restarted.documents.catalog().isEmpty())
         restarted.host.startExchange()
-        assertTrue(restarted.documents.resumeJoin(request) is EnrollmentProgress.Pending)
+        assertTrue(restarted.documents.resumeJoin(request, password) is EnrollmentProgress.Pending)
         authority.approveInvitation(request)
         val received = receive(restarted, request, database)
         // The common catalog is published while the database remains locked.
@@ -139,13 +138,13 @@ class P2PTest {
             val recipient = fixture.replicas[index + 1]
             val request = pendingRequest(manager, authority, recipient, database)
             authority.closeInvitation(request, reject)
-            assertTrue(recipient.documents.resumeJoin(request) is EnrollmentProgress.Rejected)
+            assertTrue(recipient.documents.resumeJoin(request, password) is EnrollmentProgress.Rejected)
             assertTrue(recipient.documents.catalog().isEmpty())
             val phase = if (reject) InvitationPhase.REJECTED else InvitationPhase.CANCELLED
             assertEquals(phase, manager.host.exchangeView(database).invitations.single { it.request == request }.phase)
             val restarted = fixture.restart(index + 1)
             restarted.host.startExchange()
-            assertTrue(restarted.documents.resumeJoin(request) is EnrollmentProgress.Rejected)
+            assertTrue(restarted.documents.resumeJoin(request, password) is EnrollmentProgress.Rejected)
             assertTrue(restarted.documents.catalog().isEmpty())
             assertEquals(1, manager.host.exchangeView(database).devices.size)
         }
@@ -202,7 +201,7 @@ class P2PTest {
         val replicas = mutableListOf<Replica>()
         try {
             repeat(3) { index ->
-                val host = Host(File(directory, "replica-$index").path, KeystoreCredentials(context))
+                val host = Host.portable(File(directory, "replica-$index").path)
                 host.setRelayPreference(RelayPreference.Disabled)
                 replicas += Replica(host, DocumentManager(context, host))
             }

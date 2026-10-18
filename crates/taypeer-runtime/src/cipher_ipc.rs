@@ -37,11 +37,13 @@ pub(crate) enum IoRequest {
         path: PathBuf,
         seed: Seed,
         operation: Digest,
+        capability: Option<Box<crate::profile::TransportCapability>>,
     },
     ConfirmRecovery {
         path: PathBuf,
         root: Digest,
         operation: Digest,
+        capability: Option<Box<crate::profile::TransportCapability>>,
     },
     Snapshot {
         known: Option<Digest>,

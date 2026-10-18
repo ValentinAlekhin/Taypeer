@@ -153,6 +153,32 @@ fn authors(fixture: &Fixture) -> usize {
 }
 
 #[test]
+fn configured_portable_network_starts_only_after_biometric_completion() {
+    let fixture = Fixture::portable();
+    let mut worker = fixture.open(PASSWORD, true).unwrap();
+    worker.close().unwrap();
+    drop(worker);
+    let fixture = fixture.restart_portable();
+    assert!(
+        fixture
+            .host
+            .enable_network(taypeer_sync::RelaySetting::Disabled)
+            .unwrap()
+            .is_none()
+    );
+    let pending = begin(&fixture, "valid");
+    let lease = pending.challenge().clone();
+    assert!(!fixture.host.network_snapshot().unwrap().running);
+    let mut worker = fixture
+        .host
+        .complete_platform_biometric_open(pending, &lease)
+        .unwrap();
+    assert!(fixture.host.network_snapshot().unwrap().running);
+    assert_eq!(authors(&fixture), 0);
+    worker.close().unwrap();
+}
+
+#[test]
 fn pending_challenge_is_actual_opening_and_exact_completion_attaches_the_ordinary_worker() {
     let fixture = fixture();
     let before = std::fs::read(&fixture.path).unwrap();
@@ -167,7 +193,10 @@ fn pending_challenge_is_actual_opening_and_exact_completion_attaches_the_ordinar
     assert_eq!(challenge.scope.generation, control.status().generation);
     assert_eq!(authors(&fixture), initial_authors);
     assert_eq!(std::fs::read(&fixture.path).unwrap(), before);
-    let mut worker = pending.complete(&challenge).unwrap();
+    let mut worker = fixture
+        .host
+        .complete_platform_biometric_open(pending, &challenge)
+        .unwrap();
     assert_eq!(worker.session_status().phase, SessionPhase::Open);
     assert_eq!(worker.database_id(), &challenge.scope.managed.database);
     assert_eq!(authors(&fixture), initial_authors + 1);
@@ -212,7 +241,12 @@ fn opening_close_drop_background_and_idle_are_real_terminal_supervisor_transitio
         control.status().phase,
         SessionPhase::Closing | SessionPhase::Closed
     ));
-    assert!(pending.complete(&lease).is_err());
+    assert!(
+        fixture
+            .host
+            .complete_platform_biometric_open(pending, &lease)
+            .is_err()
+    );
     assert_eq!(
         control.wait_closed().unwrap().reason,
         LockReason::Background
@@ -242,7 +276,9 @@ fn changed_or_foreign_challenge_cannot_acquire_author_or_create_a_late_open_work
     let mut wrong = pending.challenge().clone();
     wrong.input = Digest::of(b"PUBLIC foreign private input");
     assert!(matches!(
-        pending.complete(&wrong),
+        fixture
+            .host
+            .complete_platform_biometric_open(pending, &wrong),
         Err(RuntimeError::Protocol)
     ));
     control.wait_closed().unwrap();
@@ -266,7 +302,9 @@ fn changed_or_foreign_challenge_cannot_acquire_author_or_create_a_late_open_work
     service.lock(&session).unwrap();
     let changed = std::fs::read(&fixture.path).unwrap();
     assert!(matches!(
-        pending.complete(&lease),
+        fixture
+            .host
+            .complete_platform_biometric_open(pending, &lease),
         Err(RuntimeError::Service(
             taypeer_services::ServiceError::Storage(StorageError::Changed)
         ))
@@ -284,24 +322,28 @@ fn blocked_private_read_cannot_delay_revocation_or_actual_forced_process_exit() 
     let pending = begin(&fixture, "blocked");
     let lease = pending.challenge().clone();
     let control = pending.control();
-    let completion = std::thread::spawn(move || pending.complete(&lease));
     let started = fixture
         .launcher
         .directory
         .join("PUBLIC private read started");
-    wait(|| started.exists());
-    let at = Instant::now();
-    control.invalidate(LockReason::Background);
-    assert!(at.elapsed() < Duration::from_millis(100));
-    assert!(matches!(
-        completion.join().unwrap(),
-        Err(RuntimeError::OperationInterrupted(LockReason::Background))
-    ));
-    assert_eq!(
-        control.wait_closed().unwrap().termination,
-        Termination::Forced
-    );
-    assert!(at.elapsed() < Duration::from_secs(3));
+    std::thread::scope(|scope| {
+        let host = &fixture.host;
+        let completion =
+            scope.spawn(move || host.complete_platform_biometric_open(pending, &lease));
+        wait(|| started.exists());
+        let at = Instant::now();
+        control.invalidate(LockReason::Background);
+        assert!(at.elapsed() < Duration::from_millis(100));
+        assert!(matches!(
+            completion.join().unwrap(),
+            Err(RuntimeError::OperationInterrupted(LockReason::Background))
+        ));
+        assert_eq!(
+            control.wait_closed().unwrap().termination,
+            Termination::Forced
+        );
+        assert!(at.elapsed() < Duration::from_secs(3));
+    });
     assert_eq!(authors(&fixture), initial_authors);
     assert_eq!(std::fs::read(&fixture.path).unwrap(), before);
     let mut fallback = fixture.open(PASSWORD, false).unwrap();

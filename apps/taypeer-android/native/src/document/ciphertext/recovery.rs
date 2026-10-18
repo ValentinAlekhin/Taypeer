@@ -116,16 +116,6 @@ impl CipherWriter {
             .transpose()
     }
 
-    /// Private author issuance for an exact frozen recovery; ordinary author guards are unchanged.
-    pub fn author_recovery(&self, source: Vec<u8>) -> Result<Vec<u8>, AndroidError> {
-        let source: RecoverySource = decode_public(&source)?;
-        let author = self
-            .writer
-            .author_recovery(&source)
-            .map_err(recovery_error)?;
-        Ok(author.secret_seed().to_vec())
-    }
-
     /// Transfer the actual encrypted candidate, retaining absence versus malformed/unreadable data.
     pub fn recovery_candidate(
         &self,
@@ -169,6 +159,41 @@ impl CipherWriter {
         encode_public(&result).map_err(|_| AndroidError::CommitUncertain)
     }
 
+    /// Persist only encrypted author credentials and the independent transport role.
+    pub fn publish_recovery_credentials(
+        &self,
+        intent: Vec<u8>,
+        seed: CipherSeed,
+        cipher: Vec<u8>,
+        capability: Vec<u8>,
+    ) -> Result<Vec<u8>, AndroidError> {
+        let sources = self.sources(seed.objects)?;
+        let intent: RecoveryIntent = decode_public(&intent)?;
+        let capability = zeroize::Zeroizing::new(capability);
+        let capability = decode(&capability)?;
+        if cipher.len() > 128 * 1024 {
+            return Err(AndroidError::InvalidFile);
+        }
+        let controls: Vec<SignedControl> = decode(&seed.controls)?;
+        let root = controls
+            .first()
+            .ok_or(AndroidError::InvalidFile)?
+            .hash()
+            .map_err(failure)?;
+        let chain = ControlChain::validate(controls.clone(), root).map_err(failure)?;
+        let seed = ArchiveSeed {
+            controls,
+            objects: self.objects(sources, &chain)?,
+            checkpoint: digest(&seed.checkpoint)?,
+            baseline: digest(&seed.baseline)?,
+        };
+        let result = self
+            .writer
+            .publish_recovery_with_credentials(&intent, seed, cipher, capability)
+            .map_err(recovery_error)?;
+        encode_public(&result).map_err(|_| AndroidError::CommitUncertain)
+    }
+
     /// Recheck the candidate, registration, fsync and protected proof on every confirmation.
     pub fn confirm_recovery(&self, publication: Vec<u8>) -> Result<(), AndroidError> {
         let publication: RecoveryPublication = decode_public(&publication)?;
@@ -178,7 +203,7 @@ impl CipherWriter {
     }
 }
 
-fn remote_error(error: AndroidError) -> RuntimeError {
+pub(super) fn remote_error(error: AndroidError) -> RuntimeError {
     use taypeer_runtime::profile::ProfileError;
     match error {
         AndroidError::RecoveryRequiresNewOperation => RuntimeError::RecoveryRequiresNewOperation,
@@ -331,19 +356,6 @@ pub(super) fn source(
         .transpose()
 }
 
-pub(super) fn author(
-    remote: &RemoteDocument,
-    source: &RecoverySource,
-) -> Result<taypeer_trust::AuthorKey, RuntimeError> {
-    let bytes = encode_public(source).map_err(remote_error)?;
-    let seed = zeroize::Zeroizing::new(remote.port.author_recovery(bytes).map_err(remote_error)?);
-    let seed: &[u8; 32] = seed
-        .as_slice()
-        .try_into()
-        .map_err(|_| RuntimeError::Protocol)?;
-    Ok(taypeer_trust::AuthorKey::from_seed(seed))
-}
-
 pub(super) fn candidate(
     remote: &RemoteDocument,
     intent: &RecoveryIntent,
@@ -373,6 +385,37 @@ pub(super) fn publish(
                 checkpoint: seed.checkpoint.to_string(),
                 baseline: seed.baseline.to_string(),
             },
+        )
+        .map_err(remote_error)?;
+    let publication: RecoveryPublication =
+        decode_public(&reply).map_err(|_| remote_error(AndroidError::CommitUncertain))?;
+    if publication.intent != *intent {
+        return Err(remote_error(AndroidError::CommitUncertain));
+    }
+    Ok(publication)
+}
+
+pub(super) fn publish_credentials(
+    remote: &RemoteDocument,
+    intent: &RecoveryIntent,
+    seed: ArchiveSeed,
+    cipher: Vec<u8>,
+    capability: taypeer_runtime::profile::TransportCapability,
+) -> Result<RecoveryPublication, RuntimeError> {
+    let ids = remote.spool(seed.objects).map_err(remote_error)?;
+    let capability = zeroize::Zeroizing::new(encode(&capability).map_err(remote_error)?);
+    let reply = remote
+        .port
+        .publish_recovery_credentials(
+            encode_public(intent).map_err(remote_error)?,
+            CipherSeed {
+                controls: encode(&seed.controls).map_err(remote_error)?,
+                objects: ids.ids.clone(),
+                checkpoint: seed.checkpoint.to_string(),
+                baseline: seed.baseline.to_string(),
+            },
+            cipher,
+            capability.to_vec(),
         )
         .map_err(remote_error)?;
     let publication: RecoveryPublication =

@@ -11,7 +11,6 @@ import dev.taypeer.bridge.RelayPreference
 import dev.taypeer.bridge.SaveState
 import dev.taypeer.bridge.TextEdit
 import dev.taypeer.platform.DocumentManager
-import dev.taypeer.platform.KeystoreCredentials
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -26,7 +25,7 @@ class LifecycleTest {
     private fun fixture(scenario: (DocumentManager) -> Unit) {
         val directory = File(context.noBackupFilesDir, "PUBLIC-lifecycle-${UUID.randomUUID()}")
         try {
-            Host(directory.path, KeystoreCredentials(context)).use { host ->
+            Host.portable(directory.path).use { host ->
                 host.setRelayPreference(RelayPreference.Disabled)
                 DocumentManager(context, host).use(scenario)
             }

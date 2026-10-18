@@ -52,6 +52,7 @@ pub(crate) struct HostContext {
     pub transport: Arc<TransportKey>,
     pub copies: Mutex<BTreeMap<PathBuf, Registration>>,
     children: Mutex<BTreeMap<DatabaseId, Arc<HostContext>>>,
+    retired: Mutex<BTreeMap<(DatabaseId, Digest), Arc<HostContext>>>,
     catalog: Arc<Mutex<catalog::Catalog>>,
     pub(crate) recovery: Mutex<()>,
     pub(crate) recovery_writers: Arc<recovery::WriterLifetimes>,
@@ -98,6 +99,61 @@ impl RuntimeHost {
         let lifetime = self.context.recovery_writers.acquire(&path)?;
         let existed = self.context.has_path(&path)?;
         let opened = (|| {
+            if self.profile().is_portable() {
+                let crate::profile::PreparedOpen {
+                    seed,
+                    author,
+                    capability,
+                    authenticated,
+                    key,
+                } = self.profile().prepare_open(
+                    &path,
+                    password,
+                    name.map(|name| taypeer_services::CreateDatabase {
+                        name,
+                        description: None,
+                        policy: Default::default(),
+                    }),
+                )?;
+                let persistent = capability.local_state_seed.is_some();
+                let context = self.context.activate(capability)?;
+                let registration = match seed {
+                    Some(seed) => context.create(&path, seed)?,
+                    None => context.attach(&path)?,
+                };
+                let snapshot = context
+                    .coordinator
+                    .snapshot(&registration.database)
+                    .map_err(sync_error)?;
+                if authenticated.is_some_and(|expected| expected != snapshot.fingerprint()) {
+                    return Err(cipher_ipc::storage(taypeer_storage::Error::Changed));
+                }
+                if persistent {
+                    let epoch = snapshot.chain().head().epoch;
+                    self.profile().finalize_authenticated_credentials(
+                        &registration.database,
+                        registration.root,
+                        &key,
+                        epoch,
+                    )?;
+                    context.profile.save_state("credential_final", &epoch)?;
+                    context
+                        .profile
+                        .save_state("credential_prepared", &None::<u64>)?;
+                }
+                let port = taypeer_sync::CoordinatorPersistence::new(
+                    Arc::clone(&context.coordinator),
+                    registration.database,
+                    path.clone(),
+                    registration.working_copy,
+                )
+                .map_err(sync_error)?;
+                return Ok(service.open_managed(
+                    Box::new(recovery::LocalWriter::new(port, lifetime)),
+                    password,
+                    || Ok(author),
+                )?);
+            }
             let registration = if let Some(name) = name {
                 let author = self.profile().author()?;
                 let identity =
@@ -139,6 +195,9 @@ impl RuntimeHost {
         })();
         if opened.is_err() && !existed {
             self.context.unregister_path(&path)?;
+        }
+        if opened.is_ok() {
+            self.start_requested_network();
         }
         opened
     }
@@ -227,7 +286,7 @@ impl RuntimeHost {
         let profile = lease.profile().clone();
         let entry_access = Arc::new(crate::profile::entry_access::EntryAccessStore::new(clock)?);
         let catalog = Arc::new(Mutex::new(catalog::Catalog::load(profile.directory())?));
-        let transport = Arc::new(if profile.is_linux_lazy() {
+        let transport = Arc::new(if profile.is_portable() {
             TransportKey::generate().map_err(|_| RuntimeError::Transport)?
         } else {
             profile.transport()?
@@ -255,6 +314,7 @@ impl RuntimeHost {
                 transport,
                 copies: Mutex::new(BTreeMap::new()),
                 children: Mutex::new(BTreeMap::new()),
+                retired: Mutex::new(BTreeMap::new()),
                 catalog,
                 recovery: Mutex::new(()),
                 recovery_writers: Arc::new(recovery::WriterLifetimes::default()),
@@ -349,16 +409,7 @@ impl RuntimeHost {
             &self.sessions,
         );
         if opened.is_ok() {
-            let relay = self
-                .requested_relay
-                .lock()
-                .map_err(|_| RuntimeError::Transport)?
-                .clone();
-            if let Some(relay) = relay {
-                // Network startup never publishes an authentication failure; its
-                // independently queryable status records whether exchange is running.
-                let _ = self.start_network(relay);
-            }
+            self.start_requested_network();
         }
         // A cancelled open may still be finishing an admitted ciphertext callback.
         // Retain that writer for retry/host shutdown; cleanup must not wait for it
@@ -376,6 +427,19 @@ impl RuntimeHost {
         }
         opened
     }
+
+    /// Authentication remains successful when exchange cannot start. Its separate
+    /// snapshot reports the endpoint state, and another configuration/open can retry.
+    pub(crate) fn start_requested_network(&self) {
+        let relay = self
+            .requested_relay
+            .lock()
+            .ok()
+            .and_then(|value| value.clone());
+        if let Some(relay) = relay {
+            let _ = self.enable_network(relay);
+        }
+    }
     /// Release a locked/unlocked catalog item after its worker has been closed.
     pub fn close(&self, database: &DatabaseId) -> Result<(), RuntimeError> {
         let context = self.context.for_database(database)?;
@@ -388,8 +452,8 @@ impl RuntimeHost {
                 .coordinator
                 .unregister(database)
                 .map_err(sync_error)?;
-            self.forget_network_observation(database)?;
             copies.remove(&path);
+            self.forget_network_observation(database)?;
         }
         Ok(())
     }
@@ -431,9 +495,9 @@ impl RuntimeHost {
 
 fn profile_directory(data: &Path) -> PathBuf {
     if cfg!(target_os = "macos") {
-        data.join("Taypeer")
+        data.join("Taypeer/profiles/portable-v1")
     } else {
-        data.join("taypeer/profiles/default")
+        data.join("taypeer/profiles/portable-v1")
     }
 }
 pub(crate) fn sync_error(error: taypeer_sync::Error) -> RuntimeError {
@@ -444,6 +508,30 @@ pub(crate) fn sync_error(error: taypeer_sync::Error) -> RuntimeError {
     }
 }
 impl HostContext {
+    pub(crate) fn known_context(
+        self: &Arc<Self>,
+        database: &DatabaseId,
+        root: Digest,
+    ) -> Result<Option<Arc<Self>>, RuntimeError> {
+        if !self.profile.is_portable() {
+            return Ok(Some(Arc::clone(self)));
+        }
+        if let Some(context) = self
+            .children
+            .lock()
+            .map_err(|_| RuntimeError::Transport)?
+            .get(database)
+            && context.profile.active_root() == Some(root)
+        {
+            return Ok(Some(Arc::clone(context)));
+        }
+        Ok(self
+            .retired
+            .lock()
+            .map_err(|_| RuntimeError::Transport)?
+            .get(&(database.clone(), root))
+            .cloned())
+    }
     pub(crate) fn ciphertext_staging(&self) -> taypeer_storage::TemporaryStorage {
         taypeer_storage::TemporaryStorage::in_directory(self.profile.directory().to_owned())
     }
@@ -464,7 +552,7 @@ impl HostContext {
         self: &Arc<Self>,
         database: &DatabaseId,
     ) -> Result<Arc<Self>, RuntimeError> {
-        if !self.profile.is_linux_lazy() {
+        if !self.profile.is_portable() {
             return Ok(Arc::clone(self));
         }
         self.children
@@ -475,7 +563,7 @@ impl HostContext {
             .ok_or(RuntimeError::Closed)
     }
     pub(crate) fn active_contexts(self: &Arc<Self>) -> Result<Vec<Arc<Self>>, RuntimeError> {
-        if !self.profile.is_linux_lazy() {
+        if !self.profile.is_portable() {
             return Ok(vec![Arc::clone(self)]);
         }
         Ok(self
@@ -486,33 +574,79 @@ impl HostContext {
             .cloned()
             .collect())
     }
-    fn activate(
+    pub(crate) fn activate(
         self: &Arc<Self>,
         capability: crate::profile::TransportCapability,
     ) -> Result<Arc<Self>, RuntimeError> {
-        if !self.profile.is_linux_lazy() {
+        if !self.profile.is_portable() {
             return Err(RuntimeError::Protocol);
         }
         let mut children = self.children.lock().map_err(|_| RuntimeError::Transport)?;
         let database = capability.database.clone();
         if let Some(context) = children.get(&database) {
             let transport = TransportKey::from_seed(&capability.transport_seed);
-            if context.profile.is_persistent() != capability.local_state_seed.is_some()
-                || (context.profile.is_persistent()
-                    && transport.public() != context.transport.public())
+            if context
+                .profile
+                .active_root()
+                .is_some_and(|root| root != capability.root)
+            {
+                if !context
+                    .copies
+                    .lock()
+                    .map_err(|_| RuntimeError::Transport)?
+                    .is_empty()
+                {
+                    return Err(cipher_ipc::storage(taypeer_storage::Error::Busy));
+                }
+                if let Some(root) = context.profile.active_root() {
+                    self.retired
+                        .lock()
+                        .map_err(|_| RuntimeError::Transport)?
+                        .insert((database.clone(), root), Arc::clone(context));
+                }
+            } else {
+                if context.profile.is_persistent() != capability.local_state_seed.is_some()
+                    || context.profile.permits_exchange() != capability.enrolled
+                    || (context.profile.is_persistent()
+                        && transport.public() != context.transport.public())
+                {
+                    return Err(RuntimeError::Protocol);
+                }
+                return Ok(Arc::clone(context));
+            }
+        }
+        let prior = self
+            .retired
+            .lock()
+            .map_err(|_| RuntimeError::Transport)?
+            .remove(&(database.clone(), capability.root));
+        if let Some(context) = prior {
+            if context.transport.public()
+                != TransportKey::from_seed(&capability.transport_seed).public()
+                || context.profile.permits_exchange() != capability.enrolled
             {
                 return Err(RuntimeError::Protocol);
             }
-            return Ok(Arc::clone(context));
+            children.insert(database, Arc::clone(&context));
+            return Ok(context);
         }
-        let (profile, transport) = self.profile.activate(&capability)?;
+        let context = self.detached(&capability)?;
+        children.insert(database, Arc::clone(&context));
+        Ok(context)
+    }
+    pub(crate) fn detached(
+        self: &Arc<Self>,
+        capability: &crate::profile::TransportCapability,
+    ) -> Result<Arc<Self>, RuntimeError> {
+        let (profile, transport) = self.profile.activate(capability)?;
         let transport = Arc::new(transport);
-        let context = Arc::new(Self {
+        Ok(Arc::new(Self {
             profile,
             coordinator: Arc::new(Coordinator::new(Arc::clone(&transport))),
             transport,
             copies: Mutex::new(BTreeMap::new()),
             children: Mutex::new(BTreeMap::new()),
+            retired: Mutex::new(BTreeMap::new()),
             catalog: Arc::clone(&self.catalog),
             recovery: Mutex::new(()),
             recovery_writers: Arc::clone(&self.recovery_writers),
@@ -522,12 +656,10 @@ impl HostContext {
                 self.credential_fault
                     .load(std::sync::atomic::Ordering::Acquire),
             ),
-        });
-        children.insert(database, Arc::clone(&context));
-        Ok(context)
+        }))
     }
     fn unregister_path(&self, path: &Path) -> Result<(), RuntimeError> {
-        if self.profile.is_linux_lazy() {
+        if self.profile.is_portable() {
             let children = self.children.lock().map_err(|_| RuntimeError::Transport)?;
             for context in children.values() {
                 context.unregister_path(path)?;
@@ -708,6 +840,7 @@ impl Callbacks {
                 path,
                 seed,
                 operation,
+                capability,
             } => {
                 let root = seed
                     .controls
@@ -726,15 +859,40 @@ impl Callbacks {
                 }
                 self.require_recovery_destination(&path, root, operation)?;
                 let objects = cipher_ipc::read_objects(seed.objects, &self.directory, &chain)?;
-                self.context.publish_recovery(
-                    &path,
-                    ArchiveSeed {
-                        controls: seed.controls,
-                        objects,
-                        checkpoint: seed.checkpoint,
-                        baseline: seed.baseline,
-                    },
-                )?;
+                let seed = ArchiveSeed {
+                    controls: seed.controls,
+                    objects,
+                    checkpoint: seed.checkpoint,
+                    baseline: seed.baseline,
+                };
+                if let Some(capability) = capability {
+                    if capability.root != root
+                        || capability.database != chain.head().database
+                        || !capability.enrolled
+                    {
+                        return Err(RuntimeError::Protocol);
+                    }
+                    let (target, transport) = self.context.profile.activate(&capability)?;
+                    if chain
+                        .head()
+                        .members
+                        .get(&chain.head().manager)
+                        .is_none_or(|member| member.identity.transport != transport.public())
+                    {
+                        return Err(RuntimeError::Protocol);
+                    }
+                    let registration =
+                        target.prepare_registration(&path, capability.database.clone(), root)?;
+                    let store = seed
+                        .create(&path, &transport, Some(target.anchor(&registration)))
+                        .map_err(cipher_ipc::storage)?;
+                    drop(store);
+                    let snapshot =
+                        ArchiveSnapshot::open(&path, Some(root)).map_err(cipher_ipc::storage)?;
+                    self.context.profile.register(&path, &snapshot)?;
+                } else {
+                    self.context.publish_recovery(&path, seed)?;
+                }
                 self.confirm_recovery(&path, root, operation)?;
                 Ok(IoValue::Done)
             }
@@ -742,7 +900,18 @@ impl Callbacks {
                 path,
                 root,
                 operation,
+                capability,
             } => {
+                if let Some(capability) = capability {
+                    let (target, _) = self.context.profile.activate(&capability)?;
+                    let registration = target.registration(&path)?.ok_or(RuntimeError::Protocol)?;
+                    if registration.root != root || registration.database != capability.database {
+                        return Err(RuntimeError::Protocol);
+                    }
+                    let snapshot =
+                        ArchiveSnapshot::open(&path, Some(root)).map_err(cipher_ipc::storage)?;
+                    self.context.profile.register(&path, &snapshot)?;
+                }
                 self.confirm_recovery(&path, root, operation)?;
                 Ok(IoValue::Done)
             }
@@ -879,5 +1048,5 @@ pub(crate) fn canonical_path(path: &Path) -> Result<PathBuf, RuntimeError> {
         .join(path.file_name().ok_or(RuntimeError::Protocol)?))
 }
 
-#[cfg(all(test, target_os = "linux"))]
-mod linux_tests;
+#[cfg(test)]
+mod portable_tests;

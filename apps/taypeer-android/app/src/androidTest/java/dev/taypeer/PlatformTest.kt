@@ -49,18 +49,17 @@ class PlatformTest {
         assertTrue(file.delete())
     }
 
-    @Test fun rustHostUsesKeystoreCallbacksAndEnforcesSingleOwner() {
+    @Test fun portableRustHostEnforcesSingleOwner() {
         val directory = File(context.noBackupFilesDir, "PUBLIC-profile-${UUID.randomUUID()}")
-        val credentials = KeystoreCredentials(context)
         try {
-            dev.taypeer.bridge.Host(directory.path, credentials).use { host ->
+            dev.taypeer.bridge.Host.portable(directory.path).use { host ->
                 host.activity()
                 host.background()
                 assertThrows(AndroidException.ProfileBusy::class.java) {
-                    dev.taypeer.bridge.Host(directory.path, credentials)
+                    dev.taypeer.bridge.Host.portable(directory.path)
                 }
             }
-            dev.taypeer.bridge.Host(directory.path, KeystoreCredentials(context)).use { it.background() }
+            dev.taypeer.bridge.Host.portable(directory.path).use { it.background() }
         } finally { assertTrue(directory.deleteRecursively()) }
     }
 

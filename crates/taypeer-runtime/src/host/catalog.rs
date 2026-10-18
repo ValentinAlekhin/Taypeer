@@ -282,6 +282,36 @@ impl Catalog {
         self.publish(candidate, self.recoveries.clone())
     }
 
+    /// Public locators select an exact previously adopted publication; callers
+    /// must still authenticate its matching protected receipt before returning it.
+    pub(super) fn adopted_platform_recovery(
+        &self,
+        value: &crate::RecoveryPublication,
+    ) -> Result<Option<RecoveryReceipt>, RuntimeError> {
+        let source = &value.intent.source;
+        let Some(copy) = self.copies.get(&source.database) else {
+            return Ok(None);
+        };
+        if copy.root != value.root {
+            return Ok(None);
+        }
+        let receipt = self
+            .recoveries
+            .iter()
+            .find(|receipt| {
+                receipt.source.database == source.database && receipt.operation == source.operation
+            })
+            .ok_or(RuntimeError::Protocol)?;
+        if receipt.intent.as_ref() != Some(&value.intent)
+            || receipt.destination != *copy
+            || receipt.destination.root != value.root
+            || receipt.fingerprint != value.fingerprint
+        {
+            return Err(RuntimeError::Protocol);
+        }
+        Ok(Some(receipt.clone()))
+    }
+
     fn publish(
         &mut self,
         candidate: BTreeMap<DatabaseId, WorkingCopy>,
@@ -629,7 +659,13 @@ impl RuntimeHost {
         &self,
         receipt: &RecoveryReceipt,
     ) -> Result<(), RuntimeError> {
-        let context = self.context.for_database(&receipt.destination.database)?;
+        let context = self
+            .context
+            .known_context(&receipt.destination.database, receipt.destination.root)?
+            .or(self
+                .context
+                .known_context(&receipt.source.database, receipt.source.root)?)
+            .ok_or(RuntimeError::Closed)?;
         let proof = context
             .profile
             .load_state::<RecoveryReceipt>(&receipt.account()?)?
@@ -1120,12 +1156,12 @@ mod tests {
     }
 
     #[test]
-    fn profile_suffix_preserves_the_platforms_existing_gui_location() {
+    fn profile_suffix_selects_the_fresh_portable_namespace() {
         let base = Path::new("/PUBLIC/data");
         let suffix = if cfg!(target_os = "macos") {
-            "Taypeer"
+            "Taypeer/profiles/portable-v1"
         } else {
-            "taypeer/profiles/default"
+            "taypeer/profiles/portable-v1"
         };
         assert_eq!(profile_directory(base), base.join(suffix));
     }

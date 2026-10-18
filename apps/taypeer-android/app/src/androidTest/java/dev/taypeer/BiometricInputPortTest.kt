@@ -43,7 +43,7 @@ class BiometricInputPortTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val directory = File(context.noBackupFilesDir, "PUBLIC-biometric-input-${UUID.randomUUID()}")
         try {
-            Host(directory.path, KeystoreCredentials(context)).use { host ->
+            Host.portable(directory.path).use { host ->
                 DocumentManager(context, host).use { manager ->
                     val session = manager.create("PUBLIC unarmed biometric port", null, newOperation(), "PUBLIC biometric port master")
                     val path = manager.catalog().single().path

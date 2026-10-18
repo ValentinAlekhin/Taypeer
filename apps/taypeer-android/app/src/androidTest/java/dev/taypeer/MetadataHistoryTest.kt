@@ -6,7 +6,6 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.taypeer.bridge.*
 import dev.taypeer.platform.DocumentManager
-import dev.taypeer.platform.KeystoreCredentials
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -44,7 +43,7 @@ class MetadataHistoryTest {
     private fun fixture(block: (DocumentManager, DocumentSession, String) -> Unit) {
         val profile = File(context.noBackupFilesDir, "PUBLIC-metadata-history-${UUID.randomUUID()}")
         try {
-            Host(profile.path, KeystoreCredentials(context)).use { host ->
+            Host.portable(profile.path).use { host ->
                 host.setRelayPreference(RelayPreference.Disabled)
                 DocumentManager(context, host).use { manager ->
                     val session = manager.create("PUBLIC saved database metadata", "PUBLIC saved database description", newOperation(), password)

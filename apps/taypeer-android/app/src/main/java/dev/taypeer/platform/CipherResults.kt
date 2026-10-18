@@ -20,20 +20,3 @@ class CipherFileResult(val status: Int, val file: ParcelFileDescriptor?) : Parce
         }
     }
 }
-
-/** Private authenticated author capability; never a UI DTO, saved-state value or Bundle. */
-class CipherAuthorResult(val status: Int, val seed: ByteArray?) : Parcelable {
-    private constructor(parcel: Parcel) : this(parcel.readInt(), parcel.createByteArray())
-    override fun writeToParcel(parcel: Parcel, flags: Int) {
-        parcel.writeInt(status)
-        parcel.writeByteArray(seed)
-        if (flags and Parcelable.PARCELABLE_WRITE_RETURN_VALUE != 0) seed?.fill(0)
-    }
-    override fun describeContents(): Int = 0
-    companion object {
-        @JvmField val CREATOR = object : Parcelable.Creator<CipherAuthorResult> {
-            override fun createFromParcel(parcel: Parcel) = CipherAuthorResult(parcel)
-            override fun newArray(size: Int): Array<CipherAuthorResult?> = arrayOfNulls(size)
-        }
-    }
-}

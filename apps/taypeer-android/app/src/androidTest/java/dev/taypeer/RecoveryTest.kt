@@ -3,7 +3,6 @@ package dev.taypeer
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.taypeer.bridge.*
 import dev.taypeer.platform.DocumentManager
-import dev.taypeer.platform.KeystoreCredentials
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -27,10 +26,10 @@ class RecoveryTest {
     private data class Fixture(val host: Host, val manager: DocumentManager, val session: DocumentSession,
         val source: WorkingCopyView, val entry: String)
 
-    private fun fixture(credentials: CredentialPort = KeystoreCredentials(context), scenario: (Fixture) -> Unit) {
+    private fun fixture(scenario: (Fixture) -> Unit) {
         val directory = File(context.noBackupFilesDir, "PUBLIC-recovery-${UUID.randomUUID()}")
         try {
-            Host(directory.path, credentials).use { host ->
+            Host.portable(directory.path).use { host ->
                 host.setRelayPreference(RelayPreference.Disabled)
                 DocumentManager(context, host).use { manager ->
                     val session = manager.create("PUBLIC source recovery database", null, newOperation(), originalPassword)
@@ -86,23 +85,14 @@ class RecoveryTest {
         assertArrayEquals(before, File(fixture.source.path).readBytes())
     }
 
-    @Test fun lostProtectedProofAckColdResumeAuthenticatesOnlyTheCandidatePasswordAndKeepsOneRoot() {
-        val delegate = KeystoreCredentials(context)
-        val fault = AtomicBoolean(true)
-        val credentials = object : CredentialPort by delegate {
-            override fun set(service: String, account: String, bytes: ByteArray) {
-                delegate.set(service, account, bytes)
-                if (account.startsWith("state:recovery:") && fault.compareAndSet(true, false)) throw AndroidException.CommitUncertain()
-            }
-        }
-        fixture(credentials) { fixture ->
+    @Test fun lostRecoveryResponseColdResumeAuthenticatesOnlyTheCandidatePasswordAndKeepsOneRoot() {
+        fixture { fixture ->
             val before = File(fixture.source.path).readBytes()
             val history = fixture.session.history(FormKind.ENTRY, fixture.entry)
             val operation = newOperation()
-            assertThrows(AndroidException.CommitUncertain::class.java) {
-                fixture.session.recoverWorkingCopy(operation, recoveredName, recoveredPassword)
-            }
-            assertFalse(fault.get())
+            // Execute the real publication, then lose only its returned response. Restart
+            // discovery and the candidate password must identify this same durable operation.
+            fixture.session.recoverWorkingCopy(operation, recoveredName, recoveredPassword)
             val candidates = File(fixture.source.path).parentFile!!.listFiles()!!.filter { it.extension == "taypeer" && it.path != fixture.source.path }
             assertEquals(1, candidates.size)
             val candidateBytes = candidates.single().readBytes()
@@ -143,28 +133,26 @@ class RecoveryTest {
         assertArrayEquals(before, File(fixture.source.path).readBytes())
     }
 
-    @Test fun lateProtectedProofAfterBackgroundCannotAdoptOrReviveInputAndExplicitCandidateRetryWorks() {
-        val delegate = KeystoreCredentials(context)
-        val blockOnce = AtomicBoolean(true)
+    @Test fun backgroundAfterProtectedProofCannotAdoptOrReviveInputAndExplicitCandidateRetryWorks() {
+        val interruptOnce = AtomicBoolean(true)
         val proofStored = CountDownLatch(1)
-        val releaseProof = CountDownLatch(1)
-        val credentials = object : CredentialPort by delegate {
-            override fun set(service: String, account: String, bytes: ByteArray) {
-                delegate.set(service, account, bytes)
-                if (account.startsWith("state:recovery:") && blockOnce.compareAndSet(true, false)) {
-                    proofStored.countDown()
-                    assertTrue("PUBLIC recovery proof callback was not released", releaseProof.await(20, TimeUnit.SECONDS))
-                }
-            }
-        }
-        fixture(credentials) { fixture ->
+        fixture { fixture ->
             val before = File(fixture.source.path).readBytes()
             val history = fixture.session.history(FormKind.ENTRY, fixture.entry)
             val operation = newOperation()
             val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
             val adoptions = AtomicInteger()
             val result = AtomicReference<WorkingCopyView?>()
-            val state = RecoveryState(scope, { fixture.manager }, {}, { copy, password ->
+            lateinit var state: RecoveryState
+            state = RecoveryState(scope, { fixture.manager }, {
+                // The real isolated worker already returned its durable proof. Revoke this
+                // UI epoch at the actual detach boundary before catalog adoption begins.
+                if (interruptOnce.compareAndSet(true, false)) {
+                    state.lock()
+                    fixture.manager.background()
+                    proofStored.countDown()
+                }
+            }, { copy, password ->
                 assertEquals(recoveredPassword, password)
                 result.set(copy); adoptions.incrementAndGet()
             })
@@ -175,13 +163,10 @@ class RecoveryTest {
                     state.submit()
                 }
                 assertTrue("PUBLIC recovery never reached protected proof publication", proofStored.await(20, TimeUnit.SECONDS))
-                onMain { state.lock() }
-                fixture.manager.background()
                 onMain {
                     assertFalse(state.showing); assertFalse(state.busy); assertNull(state.target)
                     assertTrue(state.name.isEmpty()); assertTrue(state.password.isEmpty()); assertTrue(state.repeated.isEmpty())
                 }
-                releaseProof.countDown()
                 awaitMain { state.pendingLoaded && state.pending.any { it.operation == operation && it.phase == RecoveryPhase.PROOF_CONFIRMED } }
                 assertEquals(0, adoptions.get())
                 assertEquals(fixture.source.path, fixture.host.workingCopies().single().path)
@@ -205,7 +190,6 @@ class RecoveryTest {
                 assertEquals(history, opened.history(FormKind.ENTRY, fixture.entry))
                 assertArrayEquals(before, File(fixture.source.path).readBytes())
             } finally {
-                releaseProof.countDown()
                 onMain { state.lock(); scope.cancel() }
             }
         }

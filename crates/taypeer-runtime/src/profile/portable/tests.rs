@@ -5,6 +5,73 @@ use taypeer_sync::{Backend, Coordinator, CoordinatorPersistence, EndpointAddr};
 use taypeer_trust::{InvitationSecret, JoinProof};
 
 #[test]
+fn reader_state_creation_resumes_authenticated_preparation_without_authority() {
+    for state_exists in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let lease = NativeProfile::acquire(directory.path()).unwrap();
+        let profile = lease.profile();
+        let database = DatabaseId::new("PUBLIC reader credential recovery");
+        let root = Digest::of(b"PUBLIC reader root");
+        let key = ReadKey::from_secret(&[57; 32]);
+        let scope = LocalCredentialScope {
+            database: database.clone(),
+            root,
+            epoch: 0,
+        };
+        let transport = TransportKey::from_seed(&[58; 32]);
+        let local = LocalStateKey::generate().unwrap();
+        let record = LocalCredential::read_only(scope.clone(), &transport, &local);
+        let path = profile.database_directory(&database, root);
+        private_directory(&path).unwrap();
+        LocalCredentialStore::create_record(&path.join("credentials.prepared"), &key, &record)
+            .unwrap();
+        if state_exists {
+            let (active, _) = profile
+                .activate(&TransportCapability {
+                    database: database.clone(),
+                    root,
+                    enrolled: false,
+                    transport_seed: transport.secret_seed(),
+                    local_state_seed: Some(Zeroizing::new(*local.secret_bytes())),
+                })
+                .unwrap();
+            active
+                .save_state("PUBLIC retained marker", &41_u64)
+                .unwrap();
+            drop(active);
+        } else {
+            std::fs::create_dir(path.join("state")).unwrap();
+            assert!(
+                profile
+                    .database_credentials(&database, root, 0, &key, &[])
+                    .is_err()
+            );
+            assert!(path.join("credentials.prepared").exists());
+            assert!(!path.join("credentials").exists());
+            std::fs::remove_dir(path.join("state")).unwrap();
+        }
+        let (author, capability) = profile
+            .database_credentials(&database, root, 0, &key, &[])
+            .unwrap();
+        assert!(author.is_none());
+        assert!(!capability.enrolled);
+        assert_eq!(
+            capability.transport_seed.as_slice(),
+            transport.secret_seed().as_slice()
+        );
+        assert!(!path.join("credentials.prepared").exists());
+        let (active, _) = profile.activate(&capability).unwrap();
+        assert!(!active.permits_exchange());
+        if state_exists {
+            assert_eq!(
+                active.load_state::<u64>("PUBLIC retained marker").unwrap(),
+                Some(41)
+            );
+        }
+    }
+}
+
+#[test]
 fn incorrect_initial_join_password_can_be_corrected_before_epoch_binding() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("PUBLIC manager.taypeer");

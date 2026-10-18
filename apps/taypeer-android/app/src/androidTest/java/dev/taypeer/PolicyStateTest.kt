@@ -5,7 +5,6 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.taypeer.bridge.*
 import dev.taypeer.platform.DocumentManager
-import dev.taypeer.platform.KeystoreCredentials
 import dev.taypeer.platform.SelectedDescriptors
 import org.junit.Assert.*
 import org.junit.Test
@@ -49,7 +48,7 @@ class PolicyStateTest {
         val selected = File(context.cacheDir, "PUBLIC-selected-fixtures/PUBLIC-${UUID.randomUUID()}.bin")
         check(selected.parentFile!!.isDirectory || selected.parentFile!!.mkdirs())
         try {
-            Host(directory.path, KeystoreCredentials(context)).use { host ->
+            Host.portable(directory.path).use { host ->
                 host.setRelayPreference(RelayPreference.Disabled)
                 DocumentManager(context, host).use { manager ->
                     val session = manager.create("PUBLIC policy database", null, newOperation(), master)

@@ -129,7 +129,7 @@ class DocumentState internal constructor(application: Application, private val i
     fun selectDatabaseImport(uri: Uri?) { databaseImport = uri }
     var undo by mutableStateOf<UndoTarget?>(null); private set
     var selectedGroup by mutableStateOf<String?>(null); private set
-    var entrySort by mutableStateOf(EntrySort.TITLE_ASC); private set
+    internal var entrySort by mutableStateOf(EntrySort.TITLE_ASC); private set
     internal fun selectEntrySort(value: EntrySort) {
         if (entrySort == value) return
         entrySort = value
@@ -1324,15 +1324,15 @@ class DocumentState internal constructor(application: Application, private val i
         io { binding.session.closeInvitation(request, true) }
         if (current(binding)) exchange = io { app.host.awaitBlocking().exchangeView(binding.database) }
     }
-    fun join(code: String) = startExchange { request ->
+    fun join(code: String, password: String) = startExchange { request ->
         val owner = manager.await()
-        io { owner.join(code) }
+        io { owner.join(code, password) }
         val copies = io { owner.catalog() }; val requests = io { owner.pendingJoins() }
         if (epoch == request) { catalog = copies; pending = requests }
     }
-    fun resumeJoin(request: String) = startExchange { requestedEpoch ->
+    fun resumeJoin(request: String, password: String = "") = startExchange { requestedEpoch ->
         val owner = manager.await()
-        io { owner.resumeJoin(request) }
+        io { owner.resumeJoin(request, password) }
         val copies = io { owner.catalog() }; val requests = io { owner.pendingJoins() }
         if (epoch == requestedEpoch) { catalog = copies; pending = requests }
     }

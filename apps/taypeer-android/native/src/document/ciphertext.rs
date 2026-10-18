@@ -64,10 +64,33 @@ pub trait DocumentPersistence: Send + Sync {
     fn create(&self, seed: CipherSeed) -> Result<(), AndroidError>;
     /// Durably commit all ciphertext objects and return the verified new generation.
     fn commit(&self, commit: CipherCommit) -> Result<CipherSnapshot, AndroidError>;
-    /// Transfer author seed only after authenticated snapshot, or explicit creation.
-    fn author(&self, authenticated: Option<String>) -> Result<Vec<u8>, AndroidError>;
-    /// Public transport identity for genesis.
-    fn transport_public(&self) -> Result<String, AndroidError>;
+    /// Read bounded epoch-encrypted credentials; missing differs from corrupt or denied.
+    fn credential(&self, scope: Vec<u8>, prepared: bool) -> Result<Option<Vec<u8>>, AndroidError>;
+    /// Publish worker-encrypted credential bytes with a durable acknowledgement.
+    fn publish_credential(
+        &self,
+        scope: Vec<u8>,
+        cipher: Vec<u8>,
+        prepared: bool,
+    ) -> Result<(), AndroidError>;
+    /// Complete the prepared credential after the database epoch is durable.
+    fn finalize_credential(
+        &self,
+        scope: Vec<u8>,
+        promote_prepared: bool,
+    ) -> Result<(), AndroidError>;
+    /// Private ciphertext-only transport authority; never an author or read key.
+    fn activate_credentials(
+        &self,
+        capability: Vec<u8>,
+        authenticated: Option<String>,
+    ) -> Result<(), AndroidError>;
+    /// Activate an exact retained recovery source through the independently unlocked target.
+    fn activate_recovery_credentials(
+        &self,
+        source: Vec<u8>,
+        capability: Vec<u8>,
+    ) -> Result<(), AndroidError>;
     /// Durably retain the encrypted local collection.
     fn save_draft(&self, file: u64) -> Result<(), AndroidError>;
     /// Transfer an optional encrypted collection into the worker's table.
@@ -89,10 +112,6 @@ pub trait DocumentPersistence: Send + Sync {
     ) -> Result<Option<CipherRecoverySource>, AndroidError> {
         Err(AndroidError::Runtime)
     }
-    /// Recovery-only author capability, bound to the protected immutable source.
-    fn author_recovery(&self, _source: Vec<u8>) -> Result<Vec<u8>, AndroidError> {
-        Err(AndroidError::Runtime)
-    }
     /// Read the actual candidate; a missing candidate differs from a failed read.
     fn recovery_candidate(
         &self,
@@ -105,6 +124,16 @@ pub trait DocumentPersistence: Send + Sync {
         &self,
         _intent: Vec<u8>,
         _seed: CipherSeed,
+    ) -> Result<Vec<u8>, AndroidError> {
+        Err(AndroidError::Runtime)
+    }
+    /// Publish a new trust set plus independently wrapped local credentials.
+    fn publish_recovery_credentials(
+        &self,
+        _intent: Vec<u8>,
+        _seed: CipherSeed,
+        _cipher: Vec<u8>,
+        _capability: Vec<u8>,
     ) -> Result<Vec<u8>, AndroidError> {
         Err(AndroidError::Runtime)
     }
@@ -238,16 +267,65 @@ impl CipherWriter {
             .map_err(|_| AndroidError::CommitUncertain)
     }
     /// Private process capability; never expose this object to Compose or saved state.
-    pub fn author(&self, authenticated: Option<String>) -> Result<Vec<u8>, AndroidError> {
-        let author = self
-            .writer
-            .author(authenticated.as_deref().map(digest).transpose()?)
-            .map_err(runtime)?;
-        Ok(author.secret_seed().to_vec())
+    pub fn credential(
+        &self,
+        scope: Vec<u8>,
+        prepared: bool,
+    ) -> Result<Option<Vec<u8>>, AndroidError> {
+        let scope = decode(&scope)?;
+        self.writer.credential(&scope, prepared).map_err(runtime)
     }
-    /// Public transport half, no secret authority.
-    pub fn transport_public(&self) -> String {
-        self.writer.transport_public().to_string()
+    /// Persist ciphertext produced only inside the isolated document process.
+    pub fn publish_credential(
+        &self,
+        scope: Vec<u8>,
+        cipher: Vec<u8>,
+        prepared: bool,
+    ) -> Result<(), AndroidError> {
+        let scope = decode(&scope)?;
+        if cipher.len() > 128 * 1024 {
+            return Err(AndroidError::InvalidFile);
+        }
+        self.writer
+            .publish_credential(&scope, &cipher, prepared)
+            .map_err(runtime)
+    }
+    /// Confirm prepared publication before the worker can acknowledge rotation.
+    pub fn finalize_credential(
+        &self,
+        scope: Vec<u8>,
+        promote_prepared: bool,
+    ) -> Result<(), AndroidError> {
+        self.writer
+            .finalize_credential(&decode(&scope)?, promote_prepared)
+            .map_err(runtime)
+    }
+    /// Activate the independent transport role without receiving an author seed.
+    pub fn activate_credentials(
+        &self,
+        capability: Vec<u8>,
+        authenticated: Option<String>,
+    ) -> Result<(), AndroidError> {
+        let capability = zeroize::Zeroizing::new(capability);
+        let capability = decode(&capability)?;
+        self.writer
+            .activate_credentials(
+                capability,
+                authenticated.as_deref().map(digest).transpose()?,
+            )
+            .map_err(runtime)
+    }
+    /// No source author or key is returned to Binder or the application host.
+    pub fn activate_recovery_credentials(
+        &self,
+        source: Vec<u8>,
+        capability: Vec<u8>,
+    ) -> Result<(), AndroidError> {
+        let source = decode(&source)?;
+        let capability = zeroize::Zeroizing::new(capability);
+        self.writer
+            .activate_recovery_credentials(&source, decode(&capability)?)
+            .map_err(runtime)
     }
     /// Save one encrypted local-only collection.
     pub fn save_draft(&self, file: u64) -> Result<(), AndroidError> {
@@ -471,6 +549,75 @@ impl CipherPersistence for RemoteDocument {
 #[cfg(test)]
 mod tests;
 impl taypeer_runtime::platform_worker::PlatformDocument for RemoteDocument {
+    fn portable_credentials(&self) -> bool {
+        true
+    }
+    fn credential(
+        &self,
+        scope: &taypeer_storage::LocalCredentialScope,
+        prepared: bool,
+    ) -> Result<Option<Vec<u8>>, taypeer_runtime::RuntimeError> {
+        let result = self
+            .port
+            .credential(encode(scope).map_err(recovery::remote_error)?, prepared)
+            .map_err(recovery::remote_error)?;
+        if result
+            .as_ref()
+            .is_some_and(|cipher| cipher.len() > 128 * 1024)
+        {
+            return Err(taypeer_runtime::RuntimeError::TooLarge);
+        }
+        Ok(result)
+    }
+    fn publish_credential(
+        &self,
+        scope: &taypeer_storage::LocalCredentialScope,
+        cipher: &[u8],
+        prepared: bool,
+    ) -> Result<(), taypeer_runtime::RuntimeError> {
+        self.port
+            .publish_credential(
+                encode(scope).map_err(recovery::remote_error)?,
+                cipher.to_vec(),
+                prepared,
+            )
+            .map_err(recovery::remote_error)
+    }
+    fn finalize_credential(
+        &self,
+        scope: &taypeer_storage::LocalCredentialScope,
+        promote_prepared: bool,
+    ) -> Result<(), taypeer_runtime::RuntimeError> {
+        self.port
+            .finalize_credential(
+                encode(scope).map_err(recovery::remote_error)?,
+                promote_prepared,
+            )
+            .map_err(recovery::remote_error)
+    }
+    fn activate_credentials(
+        &self,
+        capability: taypeer_runtime::profile::TransportCapability,
+        authenticated: Option<Digest>,
+    ) -> Result<(), taypeer_runtime::RuntimeError> {
+        let bytes = zeroize::Zeroizing::new(encode(&capability).map_err(recovery::remote_error)?);
+        self.port
+            .activate_credentials(bytes.to_vec(), authenticated.map(|id| id.to_string()))
+            .map_err(recovery::remote_error)
+    }
+    fn activate_recovery_credentials(
+        &self,
+        source: &taypeer_runtime::RecoverySource,
+        capability: taypeer_runtime::profile::TransportCapability,
+    ) -> Result<(), taypeer_runtime::RuntimeError> {
+        let bytes = zeroize::Zeroizing::new(encode(&capability).map_err(recovery::remote_error)?);
+        self.port
+            .activate_recovery_credentials(
+                encode(source).map_err(recovery::remote_error)?,
+                bytes.to_vec(),
+            )
+            .map_err(recovery::remote_error)
+    }
     fn selected_input(
         &self,
         id: u64,
@@ -510,28 +657,6 @@ impl taypeer_runtime::platform_worker::PlatformDocument for RemoteDocument {
         });
         result.map_err(|error| taypeer_services::ServiceError::Storage(storage(error)).into())
     }
-    fn author(
-        &self,
-        authenticated: Option<Digest>,
-    ) -> Result<Option<taypeer_trust::AuthorKey>, taypeer_runtime::RuntimeError> {
-        let seed = zeroize::Zeroizing::new(
-            self.port
-                .author(authenticated.map(|id| id.to_string()))
-                .map_err(|_| taypeer_runtime::RuntimeError::Transport)?,
-        );
-        let seed: &[u8; 32] = seed
-            .as_slice()
-            .try_into()
-            .map_err(|_| taypeer_runtime::RuntimeError::Protocol)?;
-        Ok(Some(taypeer_trust::AuthorKey::from_seed(seed)))
-    }
-    fn transport_public(&self) -> Result<taypeer_trust::PublicKey, taypeer_runtime::RuntimeError> {
-        self.port
-            .transport_public()
-            .map_err(|_| taypeer_runtime::RuntimeError::Transport)?
-            .parse()
-            .map_err(|_| taypeer_runtime::RuntimeError::Protocol)
-    }
     fn freeze_recovery(
         &self,
         operation: Digest,
@@ -549,12 +674,6 @@ impl taypeer_runtime::platform_worker::PlatformDocument for RemoteDocument {
     > {
         recovery::source(self, operation)
     }
-    fn author_recovery(
-        &self,
-        source: &taypeer_runtime::RecoverySource,
-    ) -> Result<taypeer_trust::AuthorKey, taypeer_runtime::RuntimeError> {
-        recovery::author(self, source)
-    }
     fn recovery_candidate(
         &self,
         intent: &taypeer_runtime::RecoveryIntent,
@@ -567,6 +686,15 @@ impl taypeer_runtime::platform_worker::PlatformDocument for RemoteDocument {
         seed: ArchiveSeed,
     ) -> Result<taypeer_runtime::RecoveryPublication, taypeer_runtime::RuntimeError> {
         recovery::publish(self, intent, seed)
+    }
+    fn publish_recovery_credentials(
+        &self,
+        intent: &taypeer_runtime::RecoveryIntent,
+        seed: ArchiveSeed,
+        cipher: Vec<u8>,
+        capability: taypeer_runtime::profile::TransportCapability,
+    ) -> Result<taypeer_runtime::RecoveryPublication, taypeer_runtime::RuntimeError> {
+        recovery::publish_credentials(self, intent, seed, cipher, capability)
     }
     fn confirm_recovery(
         &self,

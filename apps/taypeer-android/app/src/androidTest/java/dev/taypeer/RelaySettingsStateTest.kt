@@ -4,7 +4,6 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.taypeer.bridge.Host
 import dev.taypeer.bridge.RelayPreference
-import dev.taypeer.platform.KeystoreCredentials
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -36,7 +35,7 @@ class RelaySettingsStateTest {
         val profile = File(context.noBackupFilesDir, "PUBLIC-relay-state-${UUID.randomUUID()}")
         val exact = RelayPreference.Custom("https://relay.example.test/PUBLIC/path?Keep=Case")
         try {
-            Host(profile.path, KeystoreCredentials(context)).use { host ->
+            Host.portable(profile.path).use { host ->
                 host.setRelayPreference(RelayPreference.Disabled)
                 withState(host) { state ->
                     assertEquals(RelayPreference.Disabled, state.preference)
@@ -62,7 +61,7 @@ class RelaySettingsStateTest {
                     assertEquals(exact, state.preference)
                 }
             }
-            Host(profile.path, KeystoreCredentials(context)).use { restored ->
+            Host.portable(profile.path).use { restored ->
                 withState(restored) { assertEquals(exact, it.preference) }
             }
         } finally { assertTrue(profile.deleteRecursively()) }
@@ -71,7 +70,7 @@ class RelaySettingsStateTest {
     @Test fun damagedPreferenceCannotDefaultOrApplyAndExplicitReloadRecoversOnlyConfirmedData() {
         val profile = File(context.noBackupFilesDir, "PUBLIC-relay-failure-${UUID.randomUUID()}")
         try {
-            Host(profile.path, KeystoreCredentials(context)).use { host ->
+            Host.portable(profile.path).use { host ->
                 host.setRelayPreference(RelayPreference.Disabled)
                 withState(host) { state ->
                     val file = File(profile, "network.json")

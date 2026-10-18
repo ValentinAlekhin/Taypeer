@@ -254,11 +254,38 @@ impl DocumentPersistence for Port {
     fn create(&self, _: CipherSeed) -> Result<(), AndroidError> {
         panic!("Fixture genesis is already published")
     }
-    fn author(&self, _: Option<String>) -> Result<Vec<u8>, AndroidError> {
-        panic!("Ciphertext reply tests never request author credentials")
+    fn credential(&self, scope: Vec<u8>, prepared: bool) -> Result<Option<Vec<u8>>, AndroidError> {
+        self.writer.credential(scope, prepared)
     }
-    fn transport_public(&self) -> Result<String, AndroidError> {
-        Ok(self.writer.transport_public())
+    fn publish_credential(
+        &self,
+        scope: Vec<u8>,
+        cipher: Vec<u8>,
+        prepared: bool,
+    ) -> Result<(), AndroidError> {
+        self.writer.publish_credential(scope, cipher, prepared)
+    }
+    fn finalize_credential(
+        &self,
+        scope: Vec<u8>,
+        promote_prepared: bool,
+    ) -> Result<(), AndroidError> {
+        self.writer.finalize_credential(scope, promote_prepared)
+    }
+    fn activate_credentials(
+        &self,
+        capability: Vec<u8>,
+        authenticated: Option<String>,
+    ) -> Result<(), AndroidError> {
+        self.writer.activate_credentials(capability, authenticated)
+    }
+    fn activate_recovery_credentials(
+        &self,
+        source: Vec<u8>,
+        capability: Vec<u8>,
+    ) -> Result<(), AndroidError> {
+        self.writer
+            .activate_recovery_credentials(source, capability)
     }
     fn save_draft(&self, _: u64) -> Result<(), AndroidError> {
         panic!("Ciphertext reply tests never mutate local forms")

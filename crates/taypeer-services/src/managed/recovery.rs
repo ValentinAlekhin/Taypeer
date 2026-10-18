@@ -205,6 +205,12 @@ impl DatabaseService {
         if metadata.recovery.receipt.as_ref() != Some(&receipt)
             || chain.head().database != session.database
             || chain.head().manager != identity.device
+            || chain
+                .head()
+                .members
+                .get(&identity.device)
+                .map(|member| member.identity)
+                != Some(*identity)
             || chain.head().trust_set == source.chain().head().trust_set
         {
             return Err(taypeer_trust::Error::OperationMismatch.into());
@@ -228,13 +234,34 @@ impl DatabaseService {
     ) -> Result<ArchiveSeed, ServiceError> {
         let state = self.checked(session)?;
         let managed = state.managed.as_ref().ok_or(ServiceError::InvalidContext)?;
+        let author = managed
+            .open
+            .as_ref()
+            .ok_or(ServiceError::Locked)?
+            .author
+            .as_ref()
+            .ok_or(ServiceError::Credentials)?;
+        self.prepare_trust_recovery_with_author(session, password, identity, author, operation)
+    }
+
+    /// Explicit recovery enrolls a new independent author from any authenticated
+    /// readable copy; it never grants admission to the original trust set.
+    pub fn prepare_trust_recovery_with_author(
+        &self,
+        session: &SessionToken,
+        password: &[u8],
+        identity: Identity,
+        author: &AuthorKey,
+        operation: Digest,
+    ) -> Result<ArchiveSeed, ServiceError> {
+        let state = self.checked(session)?;
+        let managed = state.managed.as_ref().ok_or(ServiceError::InvalidContext)?;
         managed.check_format_write()?;
         let snapshot = managed.port.snapshot()?;
         if snapshot.fingerprint() != managed.snapshot.fingerprint() {
             return Err(StorageError::Changed.into());
         }
         let open = managed.open.as_ref().ok_or(ServiceError::Locked)?;
-        let author = open.author.as_ref().ok_or(ServiceError::Credentials)?;
         if author.device_id() != identity.device {
             return Err(ServiceError::Unauthorized);
         }

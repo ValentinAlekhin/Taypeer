@@ -1,10 +1,13 @@
 //! Password-authenticated per-database credentials and independent host state.
-#[cfg(all(test, target_os = "linux"))]
+#[cfg(test)]
 mod tests;
 
 use super::*;
 use std::{collections::BTreeMap, sync::Mutex};
-use taypeer_storage::{LocalCredentialStore, LocalStateKey, LocalStateStore, ReadKey};
+use taypeer_storage::{
+    LocalCredential, LocalCredentialScope, LocalCredentialStore, LocalStateKey, LocalStateStore,
+    ReadKey,
+};
 
 /// Private worker-to-host transport authority. Contains no author or database key.
 #[derive(Serialize, Deserialize)]
@@ -14,21 +17,13 @@ pub struct TransportCapability {
     pub database: DatabaseId,
     /// Pinned genesis control hash.
     pub root: Digest,
+    /// Explicit local enrollment permits transport. Durable read-only bookkeeping
+    /// never starts an endpoint or supplies an author.
+    pub enrolled: bool,
     /// Independent endpoint secret, usable only for ciphertext exchange.
     pub transport_seed: Zeroizing<[u8; 32]>,
     /// Independent local-state key; absent for a read/export-only copied archive.
     pub local_state_seed: Option<Zeroizing<[u8; 32]>>,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct LocalCredential {
-    version: u16,
-    database: DatabaseId,
-    root: Digest,
-    epoch: u64,
-    author: Zeroizing<[u8; 32]>,
-    local_state: Zeroizing<[u8; 32]>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -135,7 +130,6 @@ fn private_directory(path: &Path) -> Result<(), ProfileError> {
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
         .map_err(|_| ProfileError::Io)
 }
-#[cfg(target_os = "linux")]
 pub(super) fn acquire(directory: &Path) -> Result<ProfileLease, ProfileError> {
     private_directory(directory)?;
     let directory = directory.canonicalize().map_err(|_| ProfileError::Io)?;
@@ -153,15 +147,18 @@ pub(super) fn acquire(directory: &Path) -> Result<ProfileLease, ProfileError> {
     taypeer_storage::try_lock_exclusive(&lock).map_err(ProfileError::from)?;
     let path = directory.join("profile.json");
     let profile = if path.try_exists().map_err(|_| ProfileError::Io)? {
-        NativeProfile::load_with(&directory, Credentials::LazyLinux)?
+        NativeProfile::load_with(&directory, Credentials::Portable)?
     } else {
         // This nonsecret placeholder identifies the profile, never an enrolled endpoint.
         let placeholder = TransportKey::generate().map_err(|_| ProfileError::Credentials)?;
         let profile = NativeProfile {
             directory,
-            credentials: Credentials::LazyLinux,
+            credentials: Credentials::Portable,
+            scope: None,
+            enrolled: false,
+            capability: None,
             public: PublicProfile {
-                version: 1,
+                version: 2,
                 id: random_id()?,
                 transport: placeholder.public(),
             },
@@ -175,6 +172,91 @@ pub(super) fn acquire(directory: &Path) -> Result<ProfileLease, ProfileError> {
     })
 }
 impl NativeProfile {
+    /// Read bounded ciphertext for an isolated worker. No key is acquired here.
+    pub fn read_credential(
+        &self,
+        scope: &LocalCredentialScope,
+        prepared: bool,
+    ) -> Result<Option<Vec<u8>>, ProfileError> {
+        let path = self.credential_path(scope, prepared);
+        match File::open(path) {
+            Ok(file) => {
+                let mut bytes = Vec::new();
+                file.take(128 * 1024 + 1)
+                    .read_to_end(&mut bytes)
+                    .map_err(|_| ProfileError::Io)?;
+                if bytes.is_empty() || bytes.len() > 128 * 1024 {
+                    return Err(ProfileError::Invalid);
+                }
+                Ok(Some(bytes))
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(_) => Err(ProfileError::Io),
+        }
+    }
+
+    /// Durably publish worker-encrypted credentials; existing active enrollment is
+    /// never replaced by a different creation request.
+    pub fn publish_credential(
+        &self,
+        scope: &LocalCredentialScope,
+        ciphertext: &[u8],
+        prepared: bool,
+    ) -> Result<(), ProfileError> {
+        if ciphertext.is_empty() || ciphertext.len() > 128 * 1024 {
+            return Err(ProfileError::Invalid);
+        }
+        let path = self.credential_path(scope, prepared);
+        let directory = path.parent().ok_or(ProfileError::Invalid)?;
+        private_directory(directory)?;
+        let previous = self.read_credential(scope, prepared)?;
+        if !prepared && previous.as_deref().is_some_and(|bytes| bytes != ciphertext) {
+            return Err(ProfileError::Invalid);
+        }
+        let mut file = tempfile::NamedTempFile::new_in(directory).map_err(|_| ProfileError::Io)?;
+        file.write_all(ciphertext).map_err(|_| ProfileError::Io)?;
+        let mode = if previous.is_some() {
+            taypeer_storage::PublicationMode::Replace
+        } else {
+            taypeer_storage::PublicationMode::Create
+        };
+        taypeer_storage::publish_file(file, &path, mode).map_err(storage)
+    }
+
+    /// Complete a worker-verified epoch transition. Callers authenticate the
+    /// resulting record before acknowledging success after a lost response.
+    pub fn finalize_credential(&self, scope: &LocalCredentialScope) -> Result<(), ProfileError> {
+        let prepared = self.credential_path(scope, true);
+        if prepared.try_exists().map_err(|_| ProfileError::Io)? {
+            std::fs::rename(prepared, self.credential_path(scope, false))
+                .map_err(|_| ProfileError::CommitUncertain)?;
+        } else if self.read_credential(scope, false)?.is_none() {
+            return Err(ProfileError::Invalid);
+        }
+        self.confirm_active_credential(scope)
+    }
+
+    /// Confirm an authenticated active record without promoting unrelated staging.
+    pub fn confirm_active_credential(
+        &self,
+        scope: &LocalCredentialScope,
+    ) -> Result<(), ProfileError> {
+        let directory = self.database_directory(&scope.database, scope.root);
+        File::open(self.credential_path(scope, false))
+            .and_then(|file| file.sync_all())
+            .and_then(|()| File::open(directory).and_then(|file| file.sync_all()))
+            .map_err(|_| ProfileError::CommitUncertain)
+    }
+
+    fn credential_path(&self, scope: &LocalCredentialScope, prepared: bool) -> PathBuf {
+        self.database_directory(&scope.database, scope.root)
+            .join(if prepared {
+                "credentials.prepared"
+            } else {
+                "credentials"
+            })
+    }
+
     pub(crate) fn join_summaries(
         &self,
     ) -> Result<BTreeMap<Digest, crate::network::PendingJoinSummary>, ProfileError> {
@@ -210,9 +292,9 @@ impl NativeProfile {
         pending: &crate::network::PendingJoin,
         password: &[u8],
     ) -> Result<(), ProfileError> {
-        let directory = self.database_directory(&pending.invitation.database);
+        let directory = self.directory.join("joins").join(request.to_string());
         private_directory(&directory)?;
-        let path = directory.join("join.request");
+        let path = directory.join("request");
         let clear = Zeroizing::new(serde_json::to_vec(pending).map_err(|_| ProfileError::Invalid)?);
         if path.try_exists().map_err(|_| ProfileError::Io)? {
             let mut store = taypeer_storage::FileStore::open(&path).map_err(storage)?;
@@ -245,8 +327,10 @@ impl NativeProfile {
         let summary = summaries.get(&request).ok_or(ProfileError::Invalid)?;
         let mut store = taypeer_storage::FileStore::open(
             &self
-                .database_directory(&summary.database)
-                .join("join.request"),
+                .directory
+                .join("joins")
+                .join(request.to_string())
+                .join("request"),
         )
         .map_err(storage)?;
         let (_, clear) = store.unlock(password).map_err(storage)?;
@@ -271,7 +355,7 @@ impl NativeProfile {
         invitation: &taypeer_trust::Invitation,
         password: &[u8],
     ) -> Result<(AuthorKey, TransportCapability), ProfileError> {
-        let directory = self.database_directory(&invitation.database);
+        let directory = self.database_directory(&invitation.database, invitation.root);
         private_directory(&directory)?;
         let path = directory.join("join.credentials");
         let value = if path.try_exists().map_err(|_| ProfileError::Io)? {
@@ -302,6 +386,7 @@ impl NativeProfile {
         let capability = TransportCapability {
             database: value.database,
             root: value.root,
+            enrolled: true,
             transport_seed: value.transport,
             local_state_seed: Some(value.local_state),
         };
@@ -317,7 +402,10 @@ impl NativeProfile {
         key: &ReadKey,
     ) -> Result<(), ProfileError> {
         let database = &snapshot.chain().head().database;
-        let directory = self.database_directory(database);
+        let directory = self.database_directory(
+            database,
+            snapshot.chain().root().map_err(|_| ProfileError::Invalid)?,
+        );
         let path = directory.join("join.credentials");
         if !path.try_exists().map_err(|_| ProfileError::Io)?
             || directory
@@ -346,17 +434,17 @@ impl NativeProfile {
         {
             return Err(ProfileError::Invalid);
         }
-        let credential = LocalCredential {
-            version: 1,
-            database: value.database,
-            root: value.root,
-            epoch: snapshot.chain().head().epoch,
-            author: value.author,
-            local_state: value.local_state,
-        };
-        let clear =
-            Zeroizing::new(serde_json::to_vec(&credential).map_err(|_| ProfileError::Invalid)?);
-        LocalCredentialStore::create(&directory.join("credentials"), key, &clear)
+        let credential = LocalCredential::new(
+            LocalCredentialScope {
+                database: value.database,
+                root: value.root,
+                epoch: snapshot.chain().head().epoch,
+            },
+            &author,
+            &transport,
+            &LocalStateKey::from_secret(&value.local_state),
+        );
+        LocalCredentialStore::create_record(&directory.join("credentials"), key, &credential)
             .map_err(storage)?;
         Ok(())
     }
@@ -364,22 +452,22 @@ impl NativeProfile {
     pub(crate) fn prepare_credential_rotation(
         &self,
         database: &DatabaseId,
+        root: Digest,
         old: &ReadKey,
         new: &ReadKey,
         epoch: u64,
     ) -> Result<(), taypeer_storage::Error> {
-        let directory = self.database_directory(database);
+        let directory = self.database_directory(database, root);
         let current = LocalCredentialStore::open(&directory.join("credentials"))?;
-        let clear = current.unlock(old)?;
-        let mut value: LocalCredential =
-            serde_json::from_slice(&clear).map_err(|_| taypeer_storage::Error::InvalidFile)?;
-        if value.database != *database || value.epoch.checked_add(1) != Some(epoch) {
-            return Err(taypeer_storage::Error::Changed);
-        }
-        value.epoch = epoch;
-        let clear = Zeroizing::new(
-            serde_json::to_vec(&value).map_err(|_| taypeer_storage::Error::InvalidFile)?,
-        );
+        let scope = LocalCredentialScope {
+            database: database.clone(),
+            root,
+            epoch: epoch
+                .checked_sub(1)
+                .ok_or(taypeer_storage::Error::Changed)?,
+        };
+        let mut value = current.unlock_record(old, &scope)?;
+        value.set_epoch(epoch);
         let prepared = directory.join("credentials.prepared");
         if prepared
             .try_exists()
@@ -387,9 +475,9 @@ impl NativeProfile {
         {
             // An earlier preparation is never silently replaced with a different intent.
             let mut prior = LocalCredentialStore::open(&prepared)?;
-            prior.save(new, &clear)?;
+            prior.save_record(new, &value)?;
         } else {
-            LocalCredentialStore::create(&prepared, new, &clear)?;
+            LocalCredentialStore::create_record(&prepared, new, &value)?;
         }
         Ok(())
     }
@@ -397,16 +485,36 @@ impl NativeProfile {
     pub(crate) fn finalize_credential_rotation(
         &self,
         database: &DatabaseId,
+        root: Digest,
+        key: &ReadKey,
+        epoch: u64,
     ) -> Result<(), taypeer_storage::Error> {
-        let directory = self.database_directory(database);
-        std::fs::rename(
-            directory.join("credentials.prepared"),
-            directory.join("credentials"),
-        )
-        .map_err(|_| taypeer_storage::Error::CommitUncertain)?;
-        File::open(&directory)
-            .and_then(|file| file.sync_all())
-            .map_err(|_| taypeer_storage::Error::CommitUncertain)
+        let directory = self.database_directory(database, root);
+        let scope = LocalCredentialScope {
+            database: database.clone(),
+            root,
+            epoch,
+        };
+        let prepared = directory.join("credentials.prepared");
+        let promote = if prepared.try_exists()? {
+            LocalCredentialStore::open(&prepared)?
+                .unlock_record(key, &scope)
+                .is_ok()
+        } else {
+            false
+        };
+        if promote {
+            self.finalize_credential(&scope)
+        } else {
+            LocalCredentialStore::open(&directory.join("credentials"))?
+                .unlock_record(key, &scope)?;
+            self.confirm_active_credential(&scope)
+        }
+        .map_err(|error| match error {
+            ProfileError::CommitUncertain => taypeer_storage::Error::CommitUncertain,
+            ProfileError::Io => taypeer_storage::Error::Io,
+            _ => taypeer_storage::Error::InvalidFile,
+        })
     }
     /// Publish a recovered/learned epoch only after the host verified the working copy.
     pub(crate) fn finalize_authenticated_credentials(
@@ -416,49 +524,40 @@ impl NativeProfile {
         key: &ReadKey,
         epoch: u64,
     ) -> Result<(), ProfileError> {
-        let directory = self.database_directory(database);
+        let directory = self.database_directory(database, root);
         let prepared = directory.join("credentials.prepared");
         if !prepared.try_exists().map_err(|_| ProfileError::Io)? {
             return Ok(());
         }
         let store = LocalCredentialStore::open(&prepared).map_err(storage)?;
-        let clear = match store.unlock(key) {
-            Ok(clear) => clear,
+        let scope = LocalCredentialScope {
+            database: database.clone(),
+            root,
+            epoch,
+        };
+        match store.unlock_record(key, &scope) {
+            Ok(_) => {}
             // A preparation for an epoch which never committed is preserved for retry.
             Err(taypeer_storage::Error::Authentication) => return Ok(()),
             Err(error) => return Err(storage(error)),
-        };
-        let value: LocalCredential =
-            serde_json::from_slice(&clear).map_err(|_| ProfileError::Invalid)?;
-        if value.version != 1
-            || value.database != *database
-            || value.root != root
-            || value.epoch != epoch
-        {
-            return Err(ProfileError::Invalid);
         }
         drop(store);
-        self.finalize_credential_rotation(database).map_err(storage)
+        self.finalize_credential_rotation(database, root, key, epoch)
+            .map_err(storage)
     }
-    /// Production Linux starts without acquiring any database transport secret.
-    pub fn is_linux_lazy(&self) -> bool {
-        #[cfg(target_os = "linux")]
-        {
-            matches!(self.credentials, Credentials::LazyLinux)
-        }
-        #[cfg(not(target_os = "linux"))]
-        {
-            false
-        }
+    /// A dormant portable profile starts without any database transport secret.
+    pub fn is_portable(&self) -> bool {
+        matches!(self.credentials, Credentials::Portable)
     }
     /// Whether this handle may persist registered state. Lazy roots have no active secrets.
     pub fn is_persistent(&self) -> bool {
-        !self.is_linux_lazy() && !matches!(self.credentials, Credentials::Transient(_))
+        !self.is_portable() && !matches!(self.credentials, Credentials::Transient(_))
     }
-    fn database_directory(&self, database: &DatabaseId) -> PathBuf {
+    pub(crate) fn database_directory(&self, database: &DatabaseId, root: Digest) -> PathBuf {
         self.directory
             .join("databases")
             .join(Digest::of(database.as_str().as_bytes()).to_string())
+            .join(root.to_string())
     }
     /// Build a host context from authenticated worker authority, excluding author access.
     pub fn activate(
@@ -471,7 +570,9 @@ impl NativeProfile {
             Some(seed) => LocalStateKey::from_secret(seed),
             None => LocalStateKey::generate().map_err(storage)?,
         };
-        let path = self.database_directory(&capability.database).join("state");
+        let path = self
+            .database_directory(&capability.database, capability.root)
+            .join("state");
         let mut initial = State::default();
         initial.values.insert(
             "transport".into(),
@@ -531,6 +632,18 @@ impl NativeProfile {
                     ..self.public.clone()
                 },
                 credentials,
+                scope: Some((capability.database.clone(), capability.root)),
+                enrolled: capability.enrolled,
+                capability: Some(Arc::new(TransportCapability {
+                    database: capability.database.clone(),
+                    root: capability.root,
+                    enrolled: capability.enrolled,
+                    transport_seed: Zeroizing::new(*capability.transport_seed),
+                    local_state_seed: capability
+                        .local_state_seed
+                        .as_ref()
+                        .map(|seed| Zeroizing::new(**seed)),
+                })),
             },
             transport,
         ))
@@ -545,28 +658,38 @@ impl NativeProfile {
         author: &AuthorKey,
         transport: &TransportKey,
     ) -> Result<TransportCapability, ProfileError> {
-        let directory = self.database_directory(database);
+        let directory = self.database_directory(database, root);
         private_directory(&directory)?;
         let local = LocalStateKey::generate().map_err(storage)?;
-        let value = LocalCredential {
-            version: 1,
-            database: database.clone(),
-            root,
-            epoch,
-            author: author.secret_seed(),
-            local_state: Zeroizing::new(*local.secret_bytes()),
-        };
-        let clear = Zeroizing::new(serde_json::to_vec(&value).map_err(|_| ProfileError::Invalid)?);
-        let store = LocalCredentialStore::create(&directory.join("credentials"), key, &clear)
-            .map_err(storage)?;
+        let value = LocalCredential::new(
+            LocalCredentialScope {
+                database: database.clone(),
+                root,
+                epoch,
+            },
+            author,
+            transport,
+            &local,
+        );
+        let store =
+            LocalCredentialStore::create_record(&directory.join("credentials"), key, &value)
+                .map_err(storage)?;
         drop(store);
         let capability = TransportCapability {
             database: database.clone(),
             root,
+            enrolled: true,
             transport_seed: transport.secret_seed(),
             local_state_seed: Some(Zeroizing::new(*local.secret_bytes())),
         };
         let (active, _) = self.activate(&capability)?;
+        let identity = Identity::new(author.public(), transport.public())
+            .map_err(|_| ProfileError::Invalid)?;
+        active.credentials.set(
+            &active.service(),
+            "identity",
+            &serde_json::to_vec(&identity).map_err(|_| ProfileError::Invalid)?,
+        )?;
         drop(active);
         Ok(capability)
     }
@@ -579,68 +702,92 @@ impl NativeProfile {
         key: &ReadKey,
         history: &[(u64, ReadKey)],
     ) -> Result<(Option<AuthorKey>, TransportCapability), ProfileError> {
-        let directory = self.database_directory(database);
+        let directory = self.database_directory(database, root);
         let path = directory.join("credentials");
         if !path.try_exists().map_err(|_| ProfileError::Io)? {
-            let transport = TransportKey::generate().map_err(|_| ProfileError::Credentials)?;
-            return Ok((
-                None,
-                TransportCapability {
-                    database: database.clone(),
-                    root,
-                    transport_seed: transport.secret_seed(),
-                    local_state_seed: None,
-                },
-            ));
+            private_directory(&directory)?;
+            let scope = LocalCredentialScope {
+                database: database.clone(),
+                root,
+                epoch,
+            };
+            let prepared = directory.join("credentials.prepared");
+            let value = if prepared.try_exists().map_err(|_| ProfileError::Io)? {
+                let store = LocalCredentialStore::open(&prepared).map_err(storage)?;
+                let value = store.unlock_record(key, &scope).map_err(storage)?;
+                if value.author().is_some() {
+                    return Err(ProfileError::Invalid);
+                }
+                value
+            } else {
+                let transport = TransportKey::generate().map_err(|_| ProfileError::Credentials)?;
+                let local = LocalStateKey::generate().map_err(storage)?;
+                let value = LocalCredential::read_only(scope.clone(), &transport, &local);
+                LocalCredentialStore::create_record(&prepared, key, &value).map_err(storage)?;
+                value
+            };
+            let transport = value.transport();
+            let local = value.local_state_key();
+            let capability = TransportCapability {
+                database: database.clone(),
+                root,
+                enrolled: false,
+                transport_seed: transport.secret_seed(),
+                local_state_seed: Some(Zeroizing::new(*local.secret_bytes())),
+            };
+            // Only local bookkeeping is enrolled; this transport is not admitted
+            // by any signed control chain and never starts an endpoint.
+            let (active, _) = self.activate(&capability)?;
+            drop(active);
+            self.finalize_credential(&scope)?;
+            return Ok((None, capability));
         }
         let store = LocalCredentialStore::open(&path).map_err(storage)?;
-        let mut clear = store.unlock(key);
-        if clear.is_err() {
+        let scope = LocalCredentialScope {
+            database: database.clone(),
+            root,
+            epoch,
+        };
+        let mut value = store.unlock_record(key, &scope);
+        if value.is_err() {
             let prepared = directory.join("credentials.prepared");
             if prepared.try_exists().map_err(|_| ProfileError::Io)? {
                 let prepared_store = LocalCredentialStore::open(&prepared).map_err(storage)?;
-                clear = prepared_store.unlock(key);
+                value = prepared_store.unlock_record(key, &scope);
             }
         }
         let mut historic = None;
-        if clear.is_err() {
+        if value.is_err() {
             for (old_epoch, old_key) in history {
                 if *old_epoch == epoch {
                     continue;
                 }
-                if let Ok(candidate) = store.unlock(old_key) {
-                    clear = Ok(candidate);
+                let old_scope = LocalCredentialScope {
+                    epoch: *old_epoch,
+                    ..scope.clone()
+                };
+                if let Ok(candidate) = store.unlock_record(old_key, &old_scope) {
+                    value = Ok(candidate);
                     historic = Some(*old_epoch);
                     break;
                 }
             }
         }
-        let clear = clear.map_err(storage)?;
-        let mut value: LocalCredential =
-            serde_json::from_slice(&clear).map_err(|_| ProfileError::Invalid)?;
-        if value.version != 1
-            || value.database != *database
-            || value.root != root
-            || value.epoch != historic.unwrap_or(epoch)
-        {
-            return Err(ProfileError::Invalid);
-        }
+        let mut value = value.map_err(storage)?;
         if historic.is_some() {
-            value.epoch = epoch;
-            let clear =
-                Zeroizing::new(serde_json::to_vec(&value).map_err(|_| ProfileError::Invalid)?);
+            value.set_epoch(epoch);
             let prepared = directory.join("credentials.prepared");
             if prepared.try_exists().map_err(|_| ProfileError::Io)? {
                 LocalCredentialStore::open(&prepared)
                     .map_err(storage)?
-                    .save(key, &clear)
+                    .save_record(key, &value)
                     .map_err(storage)?;
             } else {
-                LocalCredentialStore::create(&prepared, key, &clear).map_err(storage)?;
+                LocalCredentialStore::create_record(&prepared, key, &value).map_err(storage)?;
             }
         }
         drop(store);
-        let local = LocalStateKey::from_secret(&value.local_state);
+        let local = value.local_state_key();
         let clear = LocalStateStore::read(&directory.join("state"), &local).map_err(storage)?;
         let state: StateEnvelope =
             serde_json::from_slice(&clear).map_err(|_| ProfileError::Invalid)?;
@@ -655,13 +802,19 @@ impl NativeProfile {
             .as_slice()
             .try_into()
             .map_err(|_| ProfileError::Invalid)?;
+        if *seed != *value.transport().secret_seed() {
+            return Err(ProfileError::Invalid);
+        }
+        let author = value.author();
+        let enrolled = author.is_some();
         Ok((
-            Some(AuthorKey::from_seed(&value.author)),
+            author,
             TransportCapability {
                 database: database.clone(),
                 root,
+                enrolled,
                 transport_seed: Zeroizing::new(*seed),
-                local_state_seed: Some(value.local_state),
+                local_state_seed: Some(Zeroizing::new(*local.secret_bytes())),
             },
         ))
     }

@@ -98,6 +98,7 @@ internal class RecoveryState(
                     // Detach the UI before intentionally closing its old source process.
                     detached()
                 }
+                if (epoch != expected) return@launch
                 val result = withContext(Dispatchers.IO) { owner.adoptRecovery(receipt, selected.source.database) }
                 if (epoch != expected) return@launch
                 worker = null; ownsReader = false; publication = null; attempt = null; frozen = false; busy = false; showing = false

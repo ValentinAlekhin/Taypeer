@@ -24,7 +24,13 @@ pub fn run_worker(
     reader: impl Read + Send + 'static,
     writer: impl Write + Send + 'static,
 ) -> Result<(), RuntimeError> {
-    run_with_open(reader, writer, open_native)
+    run_with_profile(
+        reader,
+        writer,
+        open_native,
+        crate::profile::NativeProfile::load,
+        true,
+    )
 }
 
 type LoadProfile =
@@ -49,9 +55,11 @@ pub fn run_test_worker(
             )
         },
         crate::profile::NativeProfile::load_test,
+        true,
     )
 }
 
+#[cfg(test)]
 fn run_with_open(
     reader: impl Read + Send + 'static,
     writer: impl Write + Send + 'static,
@@ -61,7 +69,13 @@ fn run_with_open(
         &mut DatabaseService,
     ) -> Result<SessionToken, RuntimeError>,
 ) -> Result<(), RuntimeError> {
-    run_with_profile(reader, writer, open, crate::profile::NativeProfile::load)
+    run_with_profile(
+        reader,
+        writer,
+        open,
+        crate::profile::NativeProfile::load,
+        false,
+    )
 }
 
 fn run_with_profile(
@@ -73,6 +87,7 @@ fn run_with_profile(
         &mut DatabaseService,
     ) -> Result<SessionToken, RuntimeError>,
     load: LoadProfile,
+    profile_credentials: bool,
 ) -> Result<(), RuntimeError> {
     let (reader, _lifetime) = input::Incoming::start(reader);
     let channel = Arc::new(Mutex::new(Channel::new(reader, writer)));
@@ -83,7 +98,7 @@ fn run_with_profile(
     if let Some(invitation) = boot.invitation.take() {
         let result = (|| {
             let profile = load(&boot.profile)?;
-            let (author, transport) = if profile.is_linux_lazy() {
+            let (author, transport) = if profile.is_portable() {
                 let (author, capability) =
                     profile.prepare_join_credentials(&invitation, boot.password.as_bytes())?;
                 let transport =
@@ -132,14 +147,14 @@ fn run_with_profile(
                             &snapshot, &password,
                         )?;
                         let profile = load(&boot.profile)?;
-                        if profile.is_linux_lazy() {
+                        if profile.is_portable() {
                             profile.bind_join_credentials(
                                 &snapshot,
                                 boot.password.as_bytes(),
                                 &key,
                             )?;
-                            let history = DatabaseService::authenticate_archive_keyring(
-                                &snapshot, &password,
+                            let history = DatabaseService::authenticate_archive_keyring_with_key(
+                                &snapshot, &key,
                             )?;
                             let _verified = profile.database_credentials(
                                 &snapshot.chain().head().database,
@@ -198,7 +213,14 @@ fn run_with_profile(
         .lock()
         .map_err(|_| RuntimeError::Transport)?
         .response(value(&session.database))?;
-    let outcome = serve(&channel, &mut service, &session, &boot, load);
+    let outcome = serve(
+        &channel,
+        &mut service,
+        &session,
+        &boot,
+        load,
+        profile_credentials,
+    );
     // EOF and protocol errors also revoke access. A broken parent cannot receive
     // a draft failure, but the process must still stop holding the document.
     let closed = service.lock_all_checked().map_err(RuntimeError::from);
@@ -235,8 +257,8 @@ fn open_profile(
                 policy: Default::default(),
             })
     });
-    if profile.is_linux_lazy() {
-        return open_linux(boot, channel, service, profile, form, wrap);
+    if profile.is_portable() {
+        return open_portable(boot, channel, service, profile, form, wrap);
     }
     let seed = match form {
         Some(form) => {
@@ -274,7 +296,7 @@ fn open_profile(
         .map_err(RuntimeError::from)
 }
 
-fn open_linux(
+fn open_portable(
     boot: &mut Boot,
     channel: &Arc<Mutex<Channel>>,
     service: &mut DatabaseService,
@@ -283,75 +305,13 @@ fn open_linux(
     wrap: fn(RemotePersistence) -> Box<dyn taypeer_storage::CipherPersistence>,
 ) -> Result<SessionToken, RuntimeError> {
     use crate::cipher_ipc::{IoRequest, IoValue};
-    use taypeer_storage::ArchiveSnapshot;
-    use taypeer_trust::{AuthorKey, Identity, TransportKey};
-    let (seed, author, capability, authenticated, credential_key) = if let Some(form) = form {
-        let author = AuthorKey::generate().map_err(|_| RuntimeError::Protocol)?;
-        let transport = TransportKey::generate().map_err(|_| RuntimeError::Protocol)?;
-        let identity = Identity::new(author.public(), transport.public())
-            .map_err(|_| RuntimeError::Protocol)?;
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|_| RuntimeError::Protocol)?
-            .as_millis();
-        let seed = DatabaseService::prepare_managed_form(
-            form,
-            boot.password.as_bytes(),
-            &author,
-            identity,
-            now.try_into().map_err(|_| RuntimeError::Protocol)?,
-        )?;
-        let head = seed.controls.last().ok_or(RuntimeError::Protocol)?;
-        let root = seed
-            .controls
-            .first()
-            .ok_or(RuntimeError::Protocol)?
-            .hash()
-            .map_err(|_| RuntimeError::Protocol)?;
-        let checkpoint = seed
-            .objects
-            .iter()
-            .find(|object| object.descriptor().digest == seed.checkpoint)
-            .ok_or(RuntimeError::Protocol)?;
-        let key = checkpoint
-            .unlock_key(boot.password.as_bytes())
-            .map_err(crate::cipher_ipc::storage)?;
-        let capability = profile.create_database_credentials(
-            &head.body.database,
-            root,
-            head.body.epoch,
-            &key,
-            &author,
-            &transport,
-        )?;
-        (Some(seed), Some(author), capability, None, Some(key))
-    } else {
-        // Authentication and local-key acquisition occur in this worker, before host activation.
-        let snapshot =
-            ArchiveSnapshot::open(&boot.path, None).map_err(crate::cipher_ipc::storage)?;
-        let key =
-            DatabaseService::authenticate_archive_credentials(&snapshot, boot.password.as_bytes())?;
-        profile.bind_join_credentials(&snapshot, boot.password.as_bytes(), &key)?;
-        let history =
-            DatabaseService::authenticate_archive_keyring(&snapshot, boot.password.as_bytes())?;
-        let (author, capability) = profile.database_credentials(
-            &snapshot.chain().head().database,
-            snapshot
-                .chain()
-                .root()
-                .map_err(|_| RuntimeError::Protocol)?,
-            snapshot.chain().head().epoch,
-            &key,
-            &history,
-        )?;
-        (
-            None,
-            author,
-            capability,
-            Some(snapshot.fingerprint()),
-            Some(key),
-        )
-    };
+    let crate::profile::PreparedOpen {
+        seed,
+        author,
+        capability,
+        authenticated,
+        key,
+    } = profile.prepare_open(&boot.path, boot.password.as_bytes(), form)?;
     let persistent = capability.local_state_seed.is_some();
     let epoch = seed
         .as_ref()
@@ -384,7 +344,7 @@ fn open_linux(
         profile.finalize_authenticated_credentials(
             &current.chain().head().database,
             current.chain().root().map_err(|_| RuntimeError::Protocol)?,
-            credential_key.as_ref().ok_or(RuntimeError::Protocol)?,
+            &key,
             epoch,
         )?;
         let reply = channel
@@ -406,15 +366,25 @@ fn serve(
     session: &SessionToken,
     boot: &Boot,
     load: LoadProfile,
+    profile_credentials: bool,
 ) -> Result<(), RuntimeError> {
+    let profile = if profile_credentials {
+        Some(load(&boot.profile)?)
+    } else {
+        None
+    };
+    let portable_profile = profile.as_ref().filter(|profile| profile.is_portable());
     loop {
         let command: Command = channel
             .lock()
             .map_err(|_| RuntimeError::Transport)?
             .read()?;
         let lock = matches!(command, Command::Lock);
-        let credential_rotation = matches!(&command, Command::RotatePassword { .. })
-            && load(&boot.profile)?.is_linux_lazy();
+        let credential_rotation = portable_profile.is_some()
+            && matches!(
+                &command,
+                Command::RotatePassword { .. } | Command::SetDatabasePolicy { .. }
+            );
         let result = match command {
             Command::RecoverTrust {
                 path,
@@ -436,9 +406,12 @@ fn serve(
                 operation,
                 password,
                 revoke,
-            } if cfg!(target_os = "linux") => {
-                let profile = load(&boot.profile)?;
-                if profile.is_linux_lazy() {
+            } => {
+                if let Some(profile) = portable_profile {
+                    let root = service
+                        .session_authority(session)?
+                        .root()
+                        .map_err(taypeer_services::ServiceError::from)?;
                     service
                         .rotate_password_with_credentials(
                             session,
@@ -446,35 +419,18 @@ fn serve(
                             &password,
                             revoke,
                             |stage, old, new, epoch| {
-                                use crate::cipher_ipc::{IoRequest, IoValue};
-                                use taypeer_services::{EpochCredentialStage, ServiceError};
-                                let request = match stage {
-                                    EpochCredentialStage::Prepare => {
-                                        profile.prepare_credential_rotation(
-                                            &session.database,
-                                            old,
-                                            new,
-                                            epoch,
-                                        )?;
-                                        IoRequest::PrepareCredentials { epoch }
-                                    }
-                                    EpochCredentialStage::Finalize => {
-                                        profile.finalize_credential_rotation(&session.database)?;
-                                        IoRequest::FinalizeCredentials { epoch }
-                                    }
-                                };
-                                let reply = channel
-                                    .lock()
-                                    .map_err(|_| ServiceError::Credentials)?
-                                    .io(request)
-                                    .map_err(|error| match error {
-                                        RuntimeError::Service(error) => error,
-                                        _ => ServiceError::Credentials,
-                                    })?;
-                                if !matches!(reply, IoValue::Done) {
-                                    return Err(ServiceError::Credentials);
-                                }
-                                Ok(())
+                                credential_stage(
+                                    profile,
+                                    channel,
+                                    &taypeer_storage::LocalCredentialScope {
+                                        database: session.database.clone(),
+                                        root,
+                                        epoch,
+                                    },
+                                    stage,
+                                    old,
+                                    new,
+                                )
                             },
                         )
                         .map(|()| Value::Null)
@@ -487,6 +443,51 @@ fn serve(
                             operation,
                             password,
                             revoke,
+                        },
+                    )
+                }
+            }
+            Command::SetDatabasePolicy {
+                operation,
+                policy,
+                password,
+            } => {
+                if let Some(profile) = portable_profile {
+                    let root = service
+                        .session_authority(session)?
+                        .root()
+                        .map_err(taypeer_services::ServiceError::from)?;
+                    service
+                        .set_database_policy_with_credentials(
+                            session,
+                            operation,
+                            policy,
+                            password.as_deref().map(Vec::as_slice),
+                            |stage, old, new, epoch| {
+                                credential_stage(
+                                    profile,
+                                    channel,
+                                    &taypeer_storage::LocalCredentialScope {
+                                        database: session.database.clone(),
+                                        root,
+                                        epoch,
+                                    },
+                                    stage,
+                                    old,
+                                    new,
+                                )
+                            },
+                        )
+                        .map(|()| Value::Null)
+                        .map_err(RuntimeError::from)
+                } else {
+                    dispatch(
+                        service,
+                        session,
+                        Command::SetDatabasePolicy {
+                            operation,
+                            policy,
+                            password,
                         },
                     )
                 }
@@ -516,6 +517,46 @@ fn serve(
     }
 }
 
+fn credential_stage(
+    profile: &crate::profile::NativeProfile,
+    channel: &Mutex<Channel>,
+    scope: &taypeer_storage::LocalCredentialScope,
+    stage: taypeer_services::EpochCredentialStage,
+    old: &taypeer_storage::ReadKey,
+    new: &taypeer_storage::ReadKey,
+) -> Result<(), taypeer_services::ServiceError> {
+    use crate::cipher_ipc::{IoRequest, IoValue};
+    use taypeer_services::{EpochCredentialStage, ServiceError};
+    let request = match stage {
+        EpochCredentialStage::Prepare => {
+            profile.prepare_credential_rotation(
+                &scope.database,
+                scope.root,
+                old,
+                new,
+                scope.epoch,
+            )?;
+            IoRequest::PrepareCredentials { epoch: scope.epoch }
+        }
+        EpochCredentialStage::Finalize => {
+            profile.finalize_credential_rotation(&scope.database, scope.root, new, scope.epoch)?;
+            IoRequest::FinalizeCredentials { epoch: scope.epoch }
+        }
+    };
+    let reply = channel
+        .lock()
+        .map_err(|_| ServiceError::Credentials)?
+        .io(request)
+        .map_err(|error| match error {
+            RuntimeError::Service(error) => error,
+            _ => ServiceError::Credentials,
+        })?;
+    if !matches!(reply, IoValue::Done) {
+        return Err(ServiceError::Credentials);
+    }
+    Ok(())
+}
+
 struct Recovery<'a> {
     path: &'a std::path::Path,
     operation: taypeer_trust::Digest,
@@ -536,16 +577,32 @@ fn recover(
     } = request;
     use crate::cipher_ipc::{IoRequest, IoValue, Seed, spool_objects};
     let profile = load(&boot.profile)?;
-    let author = profile.author()?;
-    let identity = taypeer_trust::Identity::new(author.public(), profile.transport_public())
+    let portable = profile.is_portable();
+    let exists = path.try_exists().map_err(|_| RuntimeError::Transport)?;
+    let (author, transport, existing_capability) = if portable && exists {
+        let prepared = profile.prepare_open(path, password, None)?;
+        let author = prepared.author.ok_or(RuntimeError::Protocol)?;
+        let transport = taypeer_trust::TransportKey::from_seed(&prepared.capability.transport_seed);
+        (author, transport, Some(Box::new(prepared.capability)))
+    } else if portable {
+        (
+            taypeer_trust::AuthorKey::generate().map_err(|_| RuntimeError::Protocol)?,
+            taypeer_trust::TransportKey::generate().map_err(|_| RuntimeError::Protocol)?,
+            None,
+        )
+    } else {
+        (profile.author()?, profile.transport()?, None)
+    };
+    let identity = taypeer_trust::Identity::new(author.public(), transport.public())
         .map_err(|_| RuntimeError::Protocol)?;
-    if path.try_exists().map_err(|_| RuntimeError::Transport)? {
+    if exists {
         let root = service.trust_recovery_retry(session, path, password, &identity, operation)?;
         let reply = channel.lock().map_err(|_| RuntimeError::Transport)?.io(
             IoRequest::ConfirmRecovery {
                 path: path.to_owned(),
                 root,
                 operation,
+                capability: existing_capability,
             },
         )?;
         if !matches!(reply, IoValue::Done) {
@@ -553,13 +610,43 @@ fn recover(
         }
         return Ok(json!({"root": root, "database": session.database, "path": path}));
     }
-    let seed = service.prepare_trust_recovery(session, password, identity, operation)?;
+    let seed = if portable {
+        service
+            .prepare_trust_recovery_with_author(session, password, identity, &author, operation)?
+    } else {
+        service.prepare_trust_recovery(session, password, identity, operation)?
+    };
     let root = seed
         .controls
         .first()
         .ok_or(RuntimeError::Protocol)?
         .hash()
         .map_err(|_| RuntimeError::Protocol)?;
+    let capability = if portable {
+        let key = seed
+            .objects
+            .iter()
+            .find(|object| object.descriptor().digest == seed.checkpoint)
+            .ok_or(RuntimeError::Protocol)?
+            .unlock_key(password)
+            .map_err(crate::cipher_ipc::storage)?;
+        Some(Box::new(
+            profile.create_database_credentials(
+                &session.database,
+                root,
+                seed.controls
+                    .last()
+                    .ok_or(RuntimeError::Protocol)?
+                    .body
+                    .epoch,
+                &key,
+                &author,
+                &transport,
+            )?,
+        ))
+    } else {
+        None
+    };
     let mut spools = Vec::new();
     let objects = spool_objects(seed.objects, &boot.spool, &mut spools)?;
     let reply = channel
@@ -568,6 +655,7 @@ fn recover(
         .io(IoRequest::Recover {
             path: path.to_owned(),
             operation,
+            capability,
             seed: Seed {
                 controls: seed.controls,
                 objects,

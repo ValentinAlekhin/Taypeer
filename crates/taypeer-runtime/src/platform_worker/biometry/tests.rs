@@ -94,6 +94,9 @@ impl CipherPersistence for Document {
     }
 }
 impl PlatformDocument for Document {
+    fn portable_credentials(&self) -> bool {
+        false
+    }
     fn temporary(&self) -> TemporaryStorage {
         self.writer.context.ciphertext_staging()
     }

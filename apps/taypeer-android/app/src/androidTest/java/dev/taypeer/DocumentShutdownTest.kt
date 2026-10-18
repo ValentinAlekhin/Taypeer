@@ -11,7 +11,6 @@ import dev.taypeer.bridge.TextEdit
 import dev.taypeer.platform.BoundDocumentProcess
 import dev.taypeer.platform.CiphertextDescriptors
 import dev.taypeer.platform.DocumentManager
-import dev.taypeer.platform.KeystoreCredentials
 import dev.taypeer.platform.anonymousCiphertext
 import org.junit.Assert.*
 import org.junit.Test
@@ -61,7 +60,7 @@ class DocumentShutdownTest {
         process.afterControlStop = { stopped.countDown() }
         var session: DocumentSession? = null
         try {
-            Host(profile.path, KeystoreCredentials(context)).use { host ->
+            Host.portable(profile.path).use { host ->
                 try {
                     session = host.createDocument("PUBLIC shutdown", null, "PUBLIC shutdown create", password, held, files)
                     block(host, session!!, process, held, stopped)

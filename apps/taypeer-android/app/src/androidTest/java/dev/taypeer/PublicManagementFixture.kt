@@ -3,16 +3,13 @@ package dev.taypeer
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.taypeer.bridge.*
 import dev.taypeer.platform.DocumentManager
-import dev.taypeer.platform.KeystoreCredentials
 import org.junit.Assert.*
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 /** Two real profiles, Binder capabilities, isolated workers and authenticated direct Iroh endpoints. */
-internal class PublicManagementFixture(private val credentials: (Int) -> CredentialPort = {
-    KeystoreCredentials(InstrumentationRegistry.getInstrumentation().targetContext)
-}) : AutoCloseable {
+internal class PublicManagementFixture : AutoCloseable {
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
     private data class Replica(val host: Host, val documents: DocumentManager)
     private val directory = File(context.noBackupFilesDir, "PUBLIC-management-${UUID.randomUUID()}")
@@ -37,7 +34,7 @@ internal class PublicManagementFixture(private val credentials: (Int) -> Credent
         repeat(2) { replicas += replica(it) }
     }
     private fun replica(index: Int): Replica {
-        val host = Host(File(directory, "replica-$index").path, credentials(index))
+        val host = Host.portable(File(directory, "replica-$index").path)
         host.setRelayPreference(RelayPreference.Disabled)
         return Replica(host, DocumentManager(context, host))
     }
@@ -57,7 +54,7 @@ internal class PublicManagementFixture(private val credentials: (Int) -> Credent
         database = sourceSession.databaseId()
         sourceCopy = sourceDocuments.catalog().single()
         replicas.forEach { it.host.startExchange() }
-        val progress = peerDocuments.join(sourceSession.createInvitation())
+        val progress = peerDocuments.join(sourceSession.createInvitation(), password)
         assertTrue(progress is EnrollmentProgress.Pending)
         val request = (progress as EnrollmentProgress.Pending).request
         await("PUBLIC manager receives enrollment proof") {
@@ -66,7 +63,7 @@ internal class PublicManagementFixture(private val credentials: (Int) -> Credent
         }
         sourceSession.approveInvitation(request)
         await("PUBLIC recipient receives encrypted working copy") {
-            when (val state = peerDocuments.resumeJoin(request)) {
+            when (val state = peerDocuments.resumeJoin(request, password)) {
                 is EnrollmentProgress.Received -> { assertEquals(database, state.database); true }
                 is EnrollmentProgress.Pending -> false
                 is EnrollmentProgress.Rejected -> throw AssertionError("PUBLIC management fixture enrollment rejected")

@@ -1,4 +1,4 @@
-//! Platform credentials and password-authenticated per-database Linux registrations.
+//! Password-authenticated per-database credentials and protected registrations.
 use serde::{Deserialize, Serialize};
 use std::{
     fs::{File, OpenOptions},
@@ -14,9 +14,11 @@ use zeroize::Zeroizing;
 mod credentials;
 pub mod device_name;
 pub(crate) mod entry_access;
-mod linux;
+mod opening;
+mod portable;
 use credentials::Credentials;
-pub use linux::TransportCapability;
+pub(crate) use opening::PreparedOpen;
+pub use portable::TransportCapability;
 
 /// Platform-protected credential store, supplied by the application host.
 /// Implementations must authenticate encrypted values, bind them to service/account,
@@ -30,11 +32,11 @@ pub trait CredentialStore: Send + Sync {
     fn set(&self, service: &str, account: &str, bytes: &[u8]) -> Result<(), ProfileError>;
 }
 
-/// Sanitized profile/credential failures; keychain diagnostics never escape this boundary.
+/// Sanitized profile/credential failures; secret diagnostics never escape this boundary.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
 #[error("{self:?}")]
 pub enum ProfileError {
-    /// Native secure credential storage is unavailable or denied access.
+    /// Authenticated local credentials are unavailable or access was denied.
     Credentials,
     /// Public configuration or a protected registration is malformed.
     Invalid,
@@ -68,6 +70,9 @@ pub struct NativeProfile {
     directory: PathBuf,
     public: PublicProfile,
     credentials: Credentials,
+    scope: Option<(DatabaseId, Digest)>,
+    enrolled: bool,
+    capability: Option<Arc<TransportCapability>>,
 }
 /// Exclusive host ownership. Worker processes load only `NativeProfile`.
 pub struct ProfileLease {
@@ -118,15 +123,9 @@ impl NativeProfile {
         self.credentials
             .set(&self.service(), &format!("state:{key}"), &bytes)
     }
-    /// Open/create a native profile and reserve its endpoint for this host lifetime.
-    /// Only the transport role is acquired here; author access belongs to unlocked workers.
+    /// Open a dormant portable profile without acquiring database credentials.
     pub fn acquire(directory: &Path) -> Result<ProfileLease, ProfileError> {
-        #[cfg(target_os = "linux")]
-        {
-            linux::acquire(directory)
-        }
-        #[cfg(not(target_os = "linux"))]
-        Self::acquire_with(directory, Credentials::Native)
+        portable::acquire(directory)
     }
     /// Acquire the host profile using an explicitly supplied platform credential store.
     /// This does not grant an isolated worker filesystem or credential-store access.
@@ -167,6 +166,9 @@ impl NativeProfile {
             let profile = Self {
                 directory,
                 credentials,
+                scope: None,
+                enrolled: true,
+                capability: None,
                 public: PublicProfile {
                     version: 1,
                     id,
@@ -192,12 +194,7 @@ impl NativeProfile {
     }
     /// Load public configuration only. This is the worker-side operation before authentication.
     pub fn load(directory: &Path) -> Result<Self, ProfileError> {
-        #[cfg(target_os = "linux")]
-        {
-            Self::load_with(directory, Credentials::LazyLinux)
-        }
-        #[cfg(not(target_os = "linux"))]
-        Self::load_with(directory, Credentials::Native)
+        Self::load_with(directory, Credentials::Portable)
     }
     /// Load only an explicitly selected synthetic fixture profile.
     #[cfg(feature = "ui-test-support")]
@@ -219,22 +216,42 @@ impl NativeProfile {
             .map_err(|_| ProfileError::Io)?;
         let public: PublicProfile =
             serde_json::from_slice(&bytes).map_err(|_| ProfileError::Invalid)?;
-        if public.version != 1 {
+        let expected_version = if matches!(credentials, Credentials::Portable) {
+            2
+        } else {
+            1
+        };
+        if public.version != expected_version {
             return Err(ProfileError::Invalid);
         }
         public
             .transport
             .validate()
             .map_err(|_| ProfileError::Invalid)?;
+        let enrolled = !matches!(credentials, Credentials::Portable);
         Ok(Self {
             directory,
             public,
             credentials,
+            scope: None,
+            enrolled,
+            capability: None,
         })
     }
     /// Local profile directory; encrypted credentials and state never enter portable archives.
     pub fn directory(&self) -> &Path {
         &self.directory
+    }
+    pub(crate) fn active_root(&self) -> Option<Digest> {
+        self.scope.as_ref().map(|(_, root)| *root)
+    }
+    /// Only explicit enrollment can start an exchange endpoint. Read-only local
+    /// state may be durable without supplying transport or author authority.
+    pub fn permits_exchange(&self) -> bool {
+        self.enrolled
+    }
+    pub(crate) fn recovery_capability(&self) -> Result<&TransportCapability, ProfileError> {
+        self.capability.as_deref().ok_or(ProfileError::Credentials)
     }
     /// Public endpoint key available while every database is locked.
     pub fn transport_public(&self) -> PublicKey {
@@ -311,11 +328,7 @@ impl NativeProfile {
             }
             return Ok(registration);
         }
-        let registration = Registration {
-            database: snapshot.chain().head().database.clone(),
-            root: snapshot.chain().root().map_err(|_| ProfileError::Invalid)?,
-            working_copy: random_id()?,
-        };
+        let registration = self.bootstrap_registration(snapshot)?;
         self.anchor(&registration)
             .save(&Anchor {
                 accepted: Some(snapshot.fingerprint()),
@@ -344,11 +357,7 @@ impl NativeProfile {
         }
         // An interrupted pre-publication intent has no working file to replace.
         // Its orphaned marker cannot grant admission to the fresh genesis below.
-        let registration = Registration {
-            database,
-            root,
-            working_copy: random_id()?,
-        };
+        let registration = self.registration_identity(database, root)?;
         self.anchor(&registration)
             .save(&Anchor {
                 accepted: None,
@@ -395,7 +404,43 @@ impl NativeProfile {
         Ok(registration)
     }
     fn service(&self) -> String {
-        format!("org.taypeer.dev4.{}", self.public.id)
+        format!(
+            "org.taypeer.profile{}.{}",
+            self.public.version, self.public.id
+        )
+    }
+
+    /// Nonsecret bootstrap binding. It grants no author, writer or network authority;
+    /// opening must authenticate the matching encrypted registration and anchors.
+    pub fn bootstrap_registration(
+        &self,
+        snapshot: &ArchiveSnapshot,
+    ) -> Result<Registration, ProfileError> {
+        self.registration_identity(
+            snapshot.chain().head().database.clone(),
+            snapshot.chain().root().map_err(|_| ProfileError::Invalid)?,
+        )
+    }
+
+    fn registration_identity(
+        &self,
+        database: DatabaseId,
+        root: Digest,
+    ) -> Result<Registration, ProfileError> {
+        let working_copy = if self.public.version == 2 {
+            Digest::object(
+                b"taypeer/portable-working-copy/1",
+                &(self.public.id, &database, root),
+            )
+            .map_err(|_| ProfileError::Invalid)?
+        } else {
+            random_id()?
+        };
+        Ok(Registration {
+            database,
+            root,
+            working_copy,
+        })
     }
 }
 struct NativeAnchor {
@@ -475,41 +520,4 @@ fn write_public(path: &Path, profile: &PublicProfile) -> Result<(), ProfileError
             _ => ProfileError::Io,
         },
     )
-}
-#[cfg(target_os = "macos")]
-mod native {
-    use super::*;
-    use security_framework::passwords::{
-        PasswordOptions, generic_password, set_generic_password_options,
-    };
-    fn options(service: &str, account: &str) -> PasswordOptions {
-        let mut options = PasswordOptions::new_generic_password(service, account);
-        options.set_access_synchronized(Some(false));
-        options
-    }
-    pub fn get(service: &str, account: &str) -> Result<Option<Zeroizing<Vec<u8>>>, ProfileError> {
-        match generic_password(options(service, account)) {
-            Ok(bytes) if bytes.len() <= 64 * 1024 => Ok(Some(Zeroizing::new(bytes))),
-            Ok(bytes) => {
-                drop(Zeroizing::new(bytes));
-                Err(ProfileError::Invalid)
-            }
-            Err(error) if error.code() == -25300 => Ok(None), // errSecItemNotFound, distinct from denied access.
-            Err(_) => Err(ProfileError::Credentials),
-        }
-    }
-    pub fn set(service: &str, account: &str, bytes: &[u8]) -> Result<(), ProfileError> {
-        set_generic_password_options(bytes, options(service, account))
-            .map_err(|_| ProfileError::Credentials)
-    }
-}
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
-mod native {
-    use super::*;
-    pub fn get(_: &str, _: &str) -> Result<Option<Zeroizing<Vec<u8>>>, ProfileError> {
-        Err(ProfileError::Credentials)
-    }
-    pub fn set(_: &str, _: &str, _: &[u8]) -> Result<(), ProfileError> {
-        Err(ProfileError::Credentials)
-    }
 }

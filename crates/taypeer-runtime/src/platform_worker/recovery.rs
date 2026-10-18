@@ -14,6 +14,12 @@ pub(super) struct WorkingRecovery {
     frozen: Option<(RecoverySource, ArchiveSnapshot)>,
     prepared: Option<TrustRecoveryPreparation>,
     seed: Option<ArchiveSeed>,
+    identity: Option<taypeer_trust::Identity>,
+    authority: Option<(
+        AuthorKey,
+        taypeer_trust::TransportKey,
+        taypeer_storage::LocalStateKey,
+    )>,
 }
 pub(super) struct Request {
     pub(super) operation: Digest,
@@ -25,6 +31,7 @@ pub(super) fn resume(
     original: ArchiveSnapshot,
     name: String,
     password: &[u8],
+    identity: Option<taypeer_trust::Identity>,
 ) -> WorkingRecovery {
     WorkingRecovery {
         operation: source.operation,
@@ -34,6 +41,8 @@ pub(super) fn resume(
         frozen: Some((source, original)),
         prepared: None,
         seed: None,
+        identity,
+        authority: None,
     }
 }
 fn mismatch() -> RuntimeError {
@@ -92,6 +101,8 @@ pub(super) fn recover(
             frozen: None,
             prepared: None,
             seed: None,
+            identity: None,
+            authority: None,
         });
     }
     let state = pending.as_mut().ok_or(RuntimeError::Protocol)?;
@@ -104,9 +115,34 @@ pub(super) fn recover(
         state.frozen = Some(document.freeze_recovery(operation, original.fingerprint())?);
     }
     let (source, snapshot) = state.frozen.as_ref().ok_or(RuntimeError::Protocol)?;
-    let author = document.author_recovery(source)?;
-    let identity = taypeer_trust::Identity::new(author.public(), document.transport_public()?)
-        .map_err(|_| RuntimeError::Protocol)?;
+    if document.portable_credentials() && state.identity.is_none() {
+        let author = AuthorKey::generate().map_err(|_| RuntimeError::Protocol)?;
+        let transport =
+            taypeer_trust::TransportKey::generate().map_err(|_| RuntimeError::Protocol)?;
+        let local =
+            taypeer_storage::LocalStateKey::generate().map_err(crate::cipher_ipc::storage)?;
+        state.identity = Some(
+            taypeer_trust::Identity::new(author.public(), transport.public())
+                .map_err(|_| RuntimeError::Protocol)?,
+        );
+        state.authority = Some((author, transport, local));
+    }
+    let legacy_author = if document.portable_credentials() {
+        None
+    } else {
+        Some(document.author_recovery(source)?)
+    };
+    let identity = match state.identity {
+        Some(identity) => identity,
+        None => taypeer_trust::Identity::new(
+            legacy_author
+                .as_ref()
+                .ok_or(RuntimeError::Protocol)?
+                .public(),
+            document.transport_public()?,
+        )
+        .map_err(|_| RuntimeError::Protocol)?,
+    };
     let intent = RecoveryIntent {
         source: source.clone(),
         identity,
@@ -114,6 +150,25 @@ pub(super) fn recover(
     let exact = named(&intent, &state.name);
     let existing = document.recovery_candidate(&intent)?;
     let candidate = if let Some(existing) = existing {
+        if document.portable_credentials() {
+            let key =
+                DatabaseService::authenticate_archive_credentials(&existing, &state.password)?;
+            let scope = credentials::scope(&existing)?;
+            let cipher = document
+                .credential(&scope, false)?
+                .ok_or(taypeer_services::ServiceError::Credentials)?;
+            let credential = taypeer_storage::LocalCredential::open(&cipher, &key, &scope)
+                .map_err(crate::cipher_ipc::storage)?;
+            if taypeer_trust::Identity::new(
+                credential.author().ok_or(RuntimeError::Protocol)?.public(),
+                credential.transport().public(),
+            )
+            .map_err(|_| RuntimeError::Protocol)?
+                != identity
+            {
+                return Err(mismatch());
+            }
+        }
         existing
     } else {
         if state.prepared.is_none() {
@@ -130,10 +185,51 @@ pub(super) fn recover(
             return Err(mismatch());
         }
         if state.seed.is_none() {
-            state.seed = Some(prepared.prepare(&author)?);
+            let author = state
+                .authority
+                .as_ref()
+                .map(|(author, _, _)| author)
+                .or(legacy_author.as_ref())
+                .ok_or(RuntimeError::Protocol)?;
+            state.seed = Some(prepared.prepare(author)?);
         }
         let seed = state.seed.as_ref().ok_or(RuntimeError::Protocol)?;
-        document.publish_recovery(&intent, seed_copy(seed))?;
+        if document.portable_credentials() {
+            let (author, transport, local) =
+                state.authority.as_ref().ok_or(RuntimeError::Protocol)?;
+            let head = seed.controls.last().ok_or(RuntimeError::Protocol)?;
+            let root = seed
+                .controls
+                .first()
+                .ok_or(RuntimeError::Protocol)?
+                .hash()
+                .map_err(|_| RuntimeError::Protocol)?;
+            let key = seed
+                .objects
+                .iter()
+                .find(|object| object.descriptor().digest == seed.checkpoint)
+                .ok_or(RuntimeError::Protocol)?
+                .unlock_key(&state.password)
+                .map_err(crate::cipher_ipc::storage)?;
+            let credential = taypeer_storage::LocalCredential::new(
+                taypeer_storage::LocalCredentialScope {
+                    database: head.body.database.clone(),
+                    root,
+                    epoch: head.body.epoch,
+                },
+                author,
+                transport,
+                local,
+            );
+            document.publish_recovery_credentials(
+                &intent,
+                seed_copy(seed),
+                credential.seal(&key).map_err(crate::cipher_ipc::storage)?,
+                credentials::capability(&credential),
+            )?;
+        } else {
+            document.publish_recovery(&intent, seed_copy(seed))?;
+        }
         document
             .recovery_candidate(&intent)?
             .ok_or(RuntimeError::Protocol)?
