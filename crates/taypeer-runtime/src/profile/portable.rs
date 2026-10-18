@@ -113,7 +113,7 @@ fn storage(error: taypeer_storage::Error) -> ProfileError {
         _ => ProfileError::Invalid,
     }
 }
-fn private_directory(path: &Path) -> Result<(), ProfileError> {
+fn create_private_directory(path: &Path) -> Result<(), ProfileError> {
     use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
     std::fs::DirBuilder::new()
         .recursive(true)
@@ -130,8 +130,48 @@ fn private_directory(path: &Path) -> Result<(), ProfileError> {
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
         .map_err(|_| ProfileError::Io)
 }
+fn private_directory(path: &Path, boundary: &Path) -> Result<(), ProfileError> {
+    private_directory_with_sync(path, boundary, |directory| {
+        File::open(directory)?.sync_all()
+    })
+}
+fn private_directory_with_sync(
+    path: &Path,
+    boundary: &Path,
+    mut sync: impl FnMut(&Path) -> std::io::Result<()>,
+) -> Result<(), ProfileError> {
+    let boundary = boundary.canonicalize().map_err(|_| ProfileError::Io)?;
+    let path = std::path::absolute(path).map_err(|_| ProfileError::Io)?;
+    let existing = path
+        .ancestors()
+        .find(|parent| parent.is_dir())
+        .ok_or(ProfileError::Invalid)?;
+    if !existing
+        .canonicalize()
+        .map_err(|_| ProfileError::Io)?
+        .starts_with(&boundary)
+    {
+        return Err(ProfileError::Invalid);
+    }
+    create_private_directory(&path)?;
+    let path = path.canonicalize().map_err(|_| ProfileError::Io)?;
+    if !path.starts_with(&boundary) {
+        return Err(ProfileError::Invalid);
+    }
+    // Visible directories may remain from a failed earlier barrier. Confirm the
+    // whole owned ancestry again, including each parent's entry for its child.
+    for directory in path.ancestors() {
+        sync(directory).map_err(|_| ProfileError::CommitUncertain)?;
+        if directory == boundary {
+            return Ok(());
+        }
+    }
+    Err(ProfileError::Invalid)
+}
 pub(super) fn acquire(directory: &Path) -> Result<ProfileLease, ProfileError> {
-    private_directory(directory)?;
+    // The platform supplies the profile base; its initial provisioning durability
+    // needs native acceptance. Never traverse sandbox-inaccessible OS ancestors.
+    create_private_directory(directory)?;
     let directory = directory.canonicalize().map_err(|_| ProfileError::Io)?;
     use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
     let lock = OpenOptions::new()
@@ -208,7 +248,7 @@ impl NativeProfile {
         }
         let path = self.credential_path(scope, prepared);
         let directory = path.parent().ok_or(ProfileError::Invalid)?;
-        private_directory(directory)?;
+        private_directory(directory, &self.directory)?;
         let previous = self.read_credential(scope, prepared)?;
         if !prepared && previous.as_deref().is_some_and(|bytes| bytes != ciphertext) {
             return Err(ProfileError::Invalid);
@@ -293,7 +333,7 @@ impl NativeProfile {
         password: &[u8],
     ) -> Result<(), ProfileError> {
         let directory = self.directory.join("joins").join(request.to_string());
-        private_directory(&directory)?;
+        private_directory(&directory, &self.directory)?;
         let path = directory.join("request");
         let clear = Zeroizing::new(serde_json::to_vec(pending).map_err(|_| ProfileError::Invalid)?);
         if path.try_exists().map_err(|_| ProfileError::Io)? {
@@ -356,7 +396,7 @@ impl NativeProfile {
         password: &[u8],
     ) -> Result<(AuthorKey, TransportCapability), ProfileError> {
         let directory = self.database_directory(&invitation.database, invitation.root);
-        private_directory(&directory)?;
+        private_directory(&directory, &self.directory)?;
         let path = directory.join("join.credentials");
         let value = if path.try_exists().map_err(|_| ProfileError::Io)? {
             let mut store = taypeer_storage::FileStore::open(&path).map_err(storage)?;
@@ -580,7 +620,7 @@ impl NativeProfile {
         );
         let (store, values) =
             if persistent {
-                private_directory(path.parent().ok_or(ProfileError::Invalid)?)?;
+                private_directory(path.parent().ok_or(ProfileError::Invalid)?, &self.directory)?;
                 if path.try_exists().map_err(|_| ProfileError::Io)? {
                     let store = LocalStateStore::open(&path).map_err(storage)?;
                     let clear = store.unlock(&key).map_err(storage)?;
@@ -659,7 +699,7 @@ impl NativeProfile {
         transport: &TransportKey,
     ) -> Result<TransportCapability, ProfileError> {
         let directory = self.database_directory(database, root);
-        private_directory(&directory)?;
+        private_directory(&directory, &self.directory)?;
         let local = LocalStateKey::generate().map_err(storage)?;
         let value = LocalCredential::new(
             LocalCredentialScope {
@@ -705,7 +745,7 @@ impl NativeProfile {
         let directory = self.database_directory(database, root);
         let path = directory.join("credentials");
         if !path.try_exists().map_err(|_| ProfileError::Io)? {
-            private_directory(&directory)?;
+            private_directory(&directory, &self.directory)?;
             let scope = LocalCredentialScope {
                 database: database.clone(),
                 root,

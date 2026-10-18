@@ -5,6 +5,103 @@ use taypeer_sync::{Backend, Coordinator, CoordinatorPersistence, EndpointAddr};
 use taypeer_trust::{InvitationSecret, JoinProof};
 
 #[test]
+fn directory_symlink_escape_does_not_create_or_chmod_outside_the_profile() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+    let directory = tempfile::tempdir().unwrap();
+    let profile = directory.path().join("PUBLIC profile");
+    let outside = directory.path().join("PUBLIC preserved");
+    std::fs::create_dir(&profile).unwrap();
+    std::fs::create_dir(&outside).unwrap();
+    std::fs::set_permissions(&outside, std::fs::Permissions::from_mode(0o750)).unwrap();
+    symlink(&outside, profile.join("escape")).unwrap();
+    for path in [profile.join("escape"), profile.join("escape/new/leaf")] {
+        assert!(matches!(
+            private_directory(&path, &profile),
+            Err(ProfileError::Invalid)
+        ));
+    }
+    assert!(!outside.join("new").exists());
+    assert_eq!(
+        std::fs::metadata(outside).unwrap().permissions().mode() & 0o777,
+        0o750
+    );
+}
+
+#[test]
+fn bounded_profile_hierarchy_confirms_ancestry_up_to_its_provisioned_base() {
+    let directory = tempfile::tempdir().unwrap();
+    let base = directory.path().canonicalize().unwrap();
+    let profile = directory
+        .path()
+        .join("PUBLIC application")
+        .join("profiles")
+        .join("PUBLIC profile");
+    let mut confirmed = Vec::new();
+    private_directory_with_sync(&profile, &base, |path| {
+        confirmed.push(path.to_owned());
+        Ok(())
+    })
+    .unwrap();
+    let profile = profile.canonicalize().unwrap();
+    assert_eq!(
+        confirmed,
+        profile
+            .ancestors()
+            .take_while(|path| path.starts_with(&base))
+            .map(Path::to_owned)
+            .collect::<Vec<_>>()
+    );
+    use std::os::unix::fs::PermissionsExt;
+    assert_eq!(
+        std::fs::metadata(profile).unwrap().permissions().mode() & 0o777,
+        0o700
+    );
+}
+
+#[test]
+fn directory_retry_confirms_existing_names_and_stops_at_the_profile_boundary() {
+    let directory = tempfile::tempdir().unwrap();
+    let profile = directory.path().canonicalize().unwrap();
+    // Both credential and invitation paths create more than one new directory.
+    for relative in [
+        "databases/PUBLIC database/PUBLIC root",
+        "joins/PUBLIC request",
+    ] {
+        let leaf = profile.join(relative);
+        let rejected = leaf.parent().unwrap();
+        let mut attempted = Vec::new();
+        assert!(matches!(
+            private_directory_with_sync(&leaf, &profile, |path| {
+                attempted.push(path.to_owned());
+                if path == rejected {
+                    Err(std::io::Error::other("PUBLIC directory barrier denied"))
+                } else {
+                    Ok(())
+                }
+            }),
+            Err(ProfileError::CommitUncertain)
+        ));
+        assert!(leaf.is_dir());
+        assert_eq!(attempted, [leaf.clone(), rejected.to_owned()]);
+
+        let mut confirmed = Vec::new();
+        private_directory_with_sync(&leaf, &profile, |path| {
+            assert!(path.starts_with(&profile));
+            confirmed.push(path.to_owned());
+            Ok(())
+        })
+        .unwrap();
+        let expected: Vec<_> = leaf
+            .ancestors()
+            .take_while(|path| path.starts_with(&profile))
+            .map(Path::to_owned)
+            .collect();
+        assert_eq!(confirmed, expected);
+        assert_eq!(confirmed.last(), Some(&profile));
+    }
+}
+
+#[test]
 fn reader_state_creation_resumes_authenticated_preparation_without_authority() {
     for state_exists in [false, true] {
         let directory = tempfile::tempdir().unwrap();
@@ -22,7 +119,7 @@ fn reader_state_creation_resumes_authenticated_preparation_without_authority() {
         let local = LocalStateKey::generate().unwrap();
         let record = LocalCredential::read_only(scope.clone(), &transport, &local);
         let path = profile.database_directory(&database, root);
-        private_directory(&path).unwrap();
+        private_directory(&path, profile.directory()).unwrap();
         LocalCredentialStore::create_record(&path.join("credentials.prepared"), &key, &record)
             .unwrap();
         if state_exists {
